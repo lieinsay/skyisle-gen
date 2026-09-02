@@ -1,0 +1,48 @@
+# 九格表 ④⑤⑥ 的推导模板：(地形类, 湿度类) → 生产；地形类 → 组织/军事。
+# 依据 docs/02 第三节对照表。「特有物种」「特产」标待填（政治层/03）。
+
+[production.dense.humid]
+text = "连片水田与梯圃，集雨系统连岛成网；主粮为稻粟类，蛋白质以禽类与云带渔获为主。人口稠密，粮有盈余。"
+[production.dense.moderate]
+text = "连片旱作农耕，集雨面与蓄水池为公共工程之首；主粮为麦粟类，辅以禽畜。粮可自给而有余。"
+[production.dense.arid]
+text = "密集岛群但降水少，农耕依赖大规模集雨与配水，园艺化精耕；主粮耐旱谷类。丰歉系于雨。"
+[production.medium.humid]
+text = "各岛自耕自给，梯田与园圃并作；主粮谷类，蛋白质以禽类与近空渔获为主。邦际贸易补足所缺。"
+[production.medium.moderate]
+text = "农耕 + 贸易：主粮谷类自给，盐铁木材等仰赖航路。各岛皆有集雨蓄水之制。"
+[production.medium.arid]
+text = "耕地零碎且少雨，农耕勉强自给，贸易与手工补收；水窖与导水槽为一岛之命脉。"
+[production.sparse.humid]
+text = "耕地零碎，渔猎与采集为主，兼营中转贸易；粮不能自给，需以货易粮。"
+[production.sparse.moderate]
+text = "渔猎 + 中转贸易 + 劫掠；船即生计。粮秣多取于交易或掳掠，无固定耕作。"
+[production.sparse.arid]
+text = "近于不毛，逐水草与渔汛而居；以劫掠与转手贸易为生，全部粮秣外来。"
+[production.isolated.humid]
+text = "一岛自足：园圃、禽类、崖蜜与近空渔获；无外购渠道，物用皆自制。"
+[production.isolated.moderate]
+text = "自给自足的小共同体农耕；石木自取，盐靠雨水与土法熬取；与外界数年一通。"
+[production.isolated.arid]
+text = "艰难自给：集雨窖藏为生死大事；人口受水量硬约束。"
+
+[layered_suffix]
+text = "叠层地利：高下岛层物产垂直分异，同一邦内即有寒暖两作，物产较邻区多样。"
+
+[organization.dense]
+text = "集权官僚之制可行：编户、常备之军、统一配水。权力出于簿册与官署。"
+[organization.medium]
+text = "邦国之制：宗法分封，公室与世卿之家分掌；掌水者兼掌历与祭。权力出于世系与名分。"
+[organization.sparse]
+text = "流动船团：无固定中心，首领以航技与战绩服众，聚散不常。"
+[organization.isolated]
+text = "部落小共同体：长老与掌水者议事，人少事简，无常设之官。"
+
+[military.dense]
+text = "步卒常备军，粮械出于官仓；能远征，攻守兼备。"
+[military.medium]
+text = "贵族部曲，守强攻弱；岛岛相守，兼并极难。"
+[military.sparse]
+text = "快船突袭，来去如风；不可被征服（无中心可占），亦不能久占他人之地。"
+[military.isolated]
+text = "几乎无武备；远与险即是城墙。"

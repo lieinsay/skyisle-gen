@@ -1,0 +1,275 @@
+# ============================================================
+# 行星地形与文明生成器 · 默认配置
+# 所有数值可调；[skeleton] 是 docs/11 定稿骨架的结构参数（D/G/中心窗共用一份）。
+# 通过率矩阵的默认值 = docs/11 第六节全局障碍表（结构性占位，按第二层校准）。
+# ============================================================
+
+[run]
+# id = "my-run"        # 缺省为 seed<N>
+
+[shared]
+day_range_km = 500.0   # 1 天 = 中性风因子下的航程
+grid_res_deg = 1.0
+
+[shared.ships]         # 地形分类阈值与航程共用一组（docs/02 第三节：分类即能力阈值）
+bridge_days = 0.15     # 密接：可架索桥、短渡
+small_days = 1.0       # 中疏：小船单日可达；也是「宽空域」起算宽度
+big_days = 3.0         # 稀疏：需好船；大船最大单跳航程
+
+[skeleton]
+d_lon_west = -30.0            # 中央宽空域 D 的经度范围（①② 之间，≈中亚）
+d_lon_east = 10.0
+d_density_mult = 0.05
+eq_core_halfwidth_deg = 6.0   # 赤道永暴带无岛核心（障碍 A 的几何）
+g_delta_deg = 5.0             # G 纬度 = 信风/无风带剪切纬度 − δ（决策 3：由剪切边界派生）
+g_radius_deg = 4.0            # G 绝对阻断半径
+detour_arc_gap_deg = 2.0      # 绕道岛弧半径 = R_G + gap；弧上两侧弦长必须 ≤ 大船航程，
+                              # 「若无 G 本可直穿」才成立，G 的改道才是真实的（验收 6 的反事实）
+detour_arc_halfwidth_deg = 1.5
+detour_arc_boost = 4.0        # 弧上密度倍增（仍远低于带基线）
+center_window_deg = 40.0      # 文明中心窗宽（缺省 = D 宽）
+
+# ---------------- ① 行星 ----------------
+[s01.planet]
+rotation_period_hr = 24.0
+axial_tilt_deg = 20.0
+insolation_rel = 1.0
+radius_km = 6371.0
+held_hou_scaling = false      # true：带界随自转率缩放（快转→窄哈德莱圈）
+
+# ---------------- ② 大气环流 ----------------
+[s02.wind]
+eq_storm_top_deg = 8.0        # 赤道永暴带（风系）半宽
+trades_top_deg = 28.0
+calm_top_deg = 36.0
+westerlies_top_deg = 62.0
+trade_speed = 8.0             # m/s
+westerly_speed = 11.0
+polar_speed = 4.0
+hadley_inflow_speed = 2.0     # 信风带的向赤道分量
+g_vortex_speed = 25.0         # G 气旋切向峰速
+
+# ---------------- ③ 岛屿分布 ----------------
+[s03.islands]
+n_islands = 8000
+knn_k = 6
+n_far = 3                     # 每节点额外远程候选边（≤ big_days）
+noise_base_cells = 8
+noise_octaves = 5
+noise_persistence = 0.55
+noise_gamma = 3.0             # 密度 = 带基线 × exp(gamma × noise)：成簇程度
+area_lognorm_mu = 1.0         # ln(km²)
+area_lognorm_sigma = 1.2
+height_scale_m = 1500.0
+height_noise_cells = 5
+height_jitter_m = 150.0
+stack_zone_threshold = 0.55   # 叠层岛区：堆叠噪声超过此值的区域高度呈双层分布
+stack_range_m = 1200.0
+layered_height_std_m = 320.0  # 邻域高度标准差超过此值 → 叠层
+expedition_pairs = 6          # 跨赤道远征边数
+expedition_min_lon_sep_deg = 30.0
+
+[s03.islands.band_density]    # 相对密度基线（按纬度带）
+trades = 1.0
+subtropical_calm = 0.35
+westerlies = 0.05             # 稀疏岛链：这个世界的草原（docs/11 §四）
+polar = 0.012                 # 孤悬散岛
+equatorial_margin = 0.3       # 永暴带核心之外、风系带之内的边缘
+
+# ---------------- ④ 气候 ----------------
+[s04.climate]
+temp_eq_c = 28.0
+temp_pole_c = -18.0
+lapse_c_per_km = 6.0
+precip_base = 0.5
+precip_itcz_amp = 0.5
+precip_itcz_width_deg = 10.0
+precip_subtrop_dip = 0.38
+precip_subtrop_width_deg = 6.0
+precip_midlat_amp = 0.22
+precip_midlat_center_deg = 49.0
+precip_midlat_width_deg = 9.0
+precip_polar_dip = 0.3
+precip_noise_amp = 0.08
+storm_eq_amp = 1.0
+storm_shear_amp = 0.35
+storm_shear_width_deg = 2.5
+storm_midlat_amp = 0.55
+storm_midlat_width_deg = 8.0
+storm_g_amp = 1.0
+
+# ---------------- ⑤ 障碍（docs/11 第六节矩阵 + 边局部因子） ----------------
+[s05]
+perm_min = 1e-6               # 低于此通过率的边视为该模式不存在
+
+[s05.barriers.A]              # 赤道永暴带：吸收型。仅存极窄季节窗口，几代人一次远征
+kind = "eq_core"
+type = "absorbing"
+seasonal = true
+permeability = { daily = 0.0, trade = 0.0, envoy = 0.03, migrate = 0.0 }
+
+[s05.barriers.B]              # 副热带无风带（北）：农耕带 ↔ 西风带的过渡
+kind = "band"
+band = "subtropical_calm_n"
+type = "selective"
+permeability = { daily = 0.1, trade = 0.5, envoy = 0.8, migrate = 0.1 }
+
+[s05.barriers.C]              # 镜像（南）
+kind = "band"
+band = "subtropical_calm_s"
+type = "selective"
+permeability = { daily = 0.1, trade = 0.5, envoy = 0.8, migrate = 0.1 }
+
+[s05.barriers.D]              # 中央宽空域：「文书通、口音不通」的经典范本
+kind = "void"
+type = "selective"
+permeability = { daily = 0.05, trade = 0.6, envoy = 0.95, migrate = 0.05 }
+
+[s05.barriers.F_N]            # 中纬风暴带（北）：季节窗口
+kind = "band"
+band = "westerlies_n"
+type = "selective"
+seasonal = true
+permeability = { daily = 0.2, trade = 0.4, envoy = 0.7, migrate = 0.1 }
+
+[s05.barriers.F_S]
+kind = "band"
+band = "westerlies_s"
+type = "selective"
+seasonal = true
+permeability = { daily = 0.2, trade = 0.4, envoy = 0.7, migrate = 0.1 }
+
+[s05.barriers.G]              # 定点永暴：改道型。绝对阻断，但只阻断一个点
+kind = "disc"
+type = "deflecting"
+permeability = { daily = 0.0, trade = 0.0, envoy = 0.0, migrate = 0.0 }
+
+[s05.local.gap]               # 宽阔无岛空域（局部）：P^((span − small_days)/ref_days)
+ref_days = 1.0
+permeability = { daily = 0.15, trade = 0.7, envoy = 0.95, migrate = 0.2 }
+
+[s05.local.density_drop]      # 岛密度骤降：P^(|ln(ρu/ρv)| / ln ratio_ref)
+ratio_ref = 4.0
+permeability = { daily = 0.5, trade = 0.9, envoy = 1.0, migrate = 0.6 }
+
+[s05.local.climb]             # 高度落差：筛「谁付得起」，不筛贵贱（原则乙）
+h_thr_m = 800.0
+permeability = { daily = 0.5, trade = 0.9, envoy = 0.95, migrate = 0.6 }
+
+# [s05.political] 政治性障碍：人为、可变。默认为空。示例：
+# [[s05.political.overrides]]
+# lat_range = [10.0, 20.0]
+# lon_range = [40.0, 50.0]
+# permeability = { daily = 0.3, trade = 0.5, envoy = 1.0, migrate = 0.2 }
+
+# ---------------- ⑥ 航线网络 ----------------
+[s06.routes]
+tailwind_factor = 0.6         # 顺风成本系数（dir(c) 端点）
+headwind_factor = 2.0
+calm_v_ref = 5.0              # m/s，低于此风速开始加「无风」惩罚
+calm_kappa = 2.0
+calm_max = 3.0
+storm_kappa = 6.0             # 成本 ×(1 + κ·storm)
+climb_kappa = 0.5             # 成本 ×(1 + κ·max(0,Δh)/1000m)（仅爬升方向）
+edge_samples = 8              # 沿边大圆采样点数（取风暴最大值）
+alpha = { daily = 1.0, trade = 1.0, envoy = 0.2, migrate = 0.2 }  # 风因子指数（docs/11 E 行）
+betweenness_sources = 192
+betweenness_c_min_days = 3.0  # 只累计不短于此的 OD
+hub_top_frac = 0.02
+hub_g_top_frac = 0.30         # G 邻域内取流量前 30%（岛少，须放宽才能覆盖中转岛）
+g_neighborhood_radii = 2.5    # G 邻域 = 此倍数 × R_G
+
+# ---------------- ⑦ 文明中心与史前扩散 ----------------
+[s07.centers]
+tau_c = 0.5                   # 窗内最大适宜度 < τ_c × 全局最大 → 报错（原则庚）
+smooth_hops = 2
+origin = "north_east"         # 人类起源地：中心 id 或 "auto"
+prehist_wind_exponent = 2.0   # 史前抱石而渡：风因子指数（强单向）
+yr_per_day = 50.0             # 史前扩散 1 天航程 ≈ 多少年（叙事换算）
+n_secondary = 12              # 无约束次级极大（供次级起源）
+secondary_min_sep_days = 6.0
+
+[s07.regions]
+n_regions = 60                # 目标下限
+max_region_islands = 250      # 超过则分裂
+max_regions = 150             # 硬上限
+
+# ---------------- ⑧ 特征场扩散 ----------------
+[s08]
+engine = "field"              # "mc" 为保留接口（docs/12 第七节：可选）
+fast = false                  # true：每 (origin, mode) 一棵参考 λ 树（决策 1 的 C 方案）
+resistance_max = 0.98         # 收敛保证 r·R < 1
+fp_tol = 1e-6
+fp_max_iter = 500
+eps0 = 0.02                   # 槽位「本地自有」行的基础强度（原则己：处处有文化）
+eps_max = 0.3                 # 高隔离处的本地行强度（反射型：孤岛文化）
+iso_d0 = 3.0                  # 隔离度尺度（权重单位）
+iso_thr = 0.8                 # 超过此隔离度的连通分量 → 反射型 + 本地起源特征
+iso_min_component = 3
+local_slots_per_component = 3 # 每个高隔离分量生成几条本地起源特征
+k_sub = 2                     # 中/高阻力槽位每文明圈的次级起源数
+sub_origin_delay_days = 50.0  # 次级起源的 origin_time 延迟（仅可选先到层用）
+first_arrival_weight = false  # 可选「先到者优势」层，默认关（决策 2）
+
+[s08.half_distance_days]      # λ = ln2 / d_half；每特征在区间内对数均匀抖动
+daily = [5.0, 10.0]
+trade = [15.0, 30.0]
+envoy = [40.0, 80.0]
+migrate = [30.0, 60.0]
+
+[s08.resistance_range]        # docs/12 第三节三档
+low = [0.05, 0.2]
+mid = [0.3, 0.6]
+high = [0.7, 0.95]
+
+# ---------------- ⑨ 输出 ----------------
+[s09.output]
+projection = "rect"           # rect | mollweide
+center_lon = "auto"           # auto = G 经度
+dpi = 130
+
+# ---------------- 验收（docs/12 第八节） ----------------
+[check]
+# 1 相邻几乎相同
+adj_cost_days = 1.5
+adj_perm_min = 0.9
+adj_median_max = 0.02
+adj_p95_max = 0.05
+edge_bound_a = 0.03           # 硬项：D(e) ≤ a + b·(λ_max·cost + max_m L_m)
+edge_bound_b = 1.0
+# 2 走远才不同
+rays_per_center = 20
+ray_min_days = 10.0
+spearman_min = 0.8
+backstep_frac_max = 0.10
+# 3 同言线互不重合
+iso_theta = 0.5
+jaccard_mean_max = 0.25
+jaccard_free_mean_max = 0.15
+p3_bundle_ratio_min = 1.5     # 聚束边（b≥3）的平均障碍分 / 全体平均
+bundle_spearman_min = 0.3     # 仅参考值（会被自由区互斥型同言线稀释）
+lambda_ratio_distinct = 1.5
+# 4 文书通、口音不通
+p4_envoy_ratio = 0.5
+p4_gap_min = 0.4
+p4_daily_min = 0.3
+p4_share_min = 0.15
+p4_pass_frac = 0.8
+# 5 单向传播
+p5_centroid_frac = 0.75       # 部分次级起源的顺风向被障碍挡住（地理压过风向），0.9 过严
+p5_cost_ratio = 0.6
+p5_min_days = 3.0
+p5_strength_ratio = 2.0       # 全体上下风对的中位数达 2 倍不对称已是强证据（跨 seed 稳定于 2.6–3.2）
+# 6 改道产生贸易枢纽
+p6_bal_min = 0.3              # 少数圈份额 ≥ 多数圈的三成即「缝合」（撒马尔罕也非五五开）
+p6_pctile = 75.0              # 参照系：全体节点的 P75（P90 会选中整个 D 腹地，那本就是混合区）
+p6_flow_drop = 0.5            # 坍缩判定：反事实中流量下降超过此比例
+p6_collapse_frac = 0.25       # G 枢纽中至少这一比例因失去绕行而坍缩（门户型不坍缩是真实现象）
+# 7 传到了但不要
+p7_min_nodes = 20
+p7_strength_low_min = 0.4     # 同源器物在当地用得好好的
+p7_reach_high_min = 0.3       # 信息确实到了（daily 半衰 5–10 天 → 0.3 ≈ 12–17 天处）
+p7_adopt_max = 0.4
+p7_region_frac = 0.2          # 某地区 ≥ 此比例的岛是「拒绝点」→ 拒绝是地点性的
+# 骨架一致性（只报警）
+skeleton_tol = 0.15

@@ -1,0 +1,108 @@
+# 槽位表（docs/12 第二节 TraitSlot；docs/04 第三节的特征类型示例）。
+# category → (传播模式, 阻力档) 的绑定见 [categories]；
+# 加载时校验：同槽位所有非本地值同模式，阻力落在档位区间。
+# 值的语义为结构性占位（「结构是硬的，名字是软的」）。
+
+[categories.artifact]      # 器物、作物、药材、农具 —— 好用就用
+mode = "trade"
+resistance = "low"
+
+[categories.measure]       # 度量、货币
+mode = "trade"
+resistance = "low"
+
+[categories.script]        # 文字、历法、律法、建筑形制 —— 需要国家推行
+mode = "envoy"
+resistance = "mid"
+
+[categories.custom]        # 丧俗婚俗、称谓分寸、物的用法、礼序 —— 接受它等于否认自己
+mode = "daily"
+resistance = "high"
+
+[categories.kinship]       # 世系、语言底层 —— 随人走
+mode = "migrate"
+resistance = "high"
+
+[[slot]]
+id = "white_hemp"
+zh = "白麻的用途"
+category = "custom"
+phrase = "白麻作丧服"
+
+[[slot]]
+id = "greeting_order"
+zh = "进门礼序"
+category = "custom"
+phrase = "进门先拜主人后拜牌位"
+
+[[slot]]
+id = "guest_term"
+zh = "「客卿」的敬意"
+category = "custom"
+phrase = "以「客卿」为敬称"
+
+[[slot]]
+id = "newyear_food"
+zh = "岁首食俗"
+category = "custom"
+phrase = "岁首食新麦饼"
+
+[[slot]]
+id = "weight_shi"
+zh = "「一石」之量"
+category = "measure"
+phrase = "本地官斛之制"
+
+[[slot]]
+id = "coinage"
+zh = "通行货币"
+category = "measure"
+phrase = "通行此式钱币"
+
+[[slot]]
+id = "herb_names"
+zh = "药材名实"
+category = "artifact"
+phrase = "同名药材的所指"
+
+[[slot]]
+id = "plow_style"
+zh = "农具样式"
+category = "artifact"
+phrase = "此式耕具"
+
+[[slot]]
+id = "calendar"
+zh = "历法岁首"
+category = "script"
+phrase = "以此历定岁首"
+
+[[slot]]
+id = "glyph_forms"
+zh = "字形正讹"
+category = "script"
+phrase = "以此体为正字"
+
+[[slot]]
+id = "law_form"
+zh = "律法形制"
+category = "script"
+phrase = "以此式成文断狱"
+
+[[slot]]
+id = "hall_layout"
+zh = "堂室形制"
+category = "script"
+phrase = "堂室以此制营造"
+
+[[slot]]
+id = "lineage_claim"
+zh = "世系认宗"
+category = "kinship"
+phrase = "认此支为嫡系"
+
+[[slot]]
+id = "substrate_lang"
+zh = "语言底层"
+category = "kinship"
+phrase = "语言底层属此系"

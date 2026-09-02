@@ -1,0 +1,154 @@
+# 行星地形与文明生成器
+
+`docs/12-扩散模型.md` 的实现：按九步管线生成行星风系、岛屿分布、气候、障碍、
+航线网络、文明中心，并用 **Hägerstrand (1968) Model III 变体**把文化特征扩散成
+**连续场**——没有文化标签，没有 flood fill，任何一点的「文化」是百余条特征在该点
+的强度叠加。
+
+```
+strength(t, j) = reach(t, o→j) × adopt(t, j)
+  reach  = max over 航线路径 [ Π 障碍通过率(模式) × exp(−λ_t · 路径成本) ]
+  adopt  = 1 − resistance(t) × conflict(t, j)      （同槽位对称不动点）
+```
+
+## 安装与运行
+
+```bash
+# Python ≥ 3.11，依赖仅 numpy + matplotlib（测试另需 pytest）
+pip install numpy matplotlib pytest
+
+cd generator
+python -m zhouzhu_gen.cli run --seed 42          # 全九步，约 2–4 分钟
+python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
+```
+
+同一 seed 必产出同一世界（`tests/test_pipeline.py` 逐字节校验）。
+产物在 `out/seed42/`：
+
+| 目录 | 内容 |
+|---|---|
+| `s01_planet … s08_diffusion/` | 各阶段中间产物（npz + json + `_meta.json`），全部可单独可视化 |
+| `s09_output/world.json` | 世界汇总（行星、风带、障碍、中心、地区） |
+| `s09_output/fig/*.png` | 全套图层（见下） |
+| `s09_output/ninegrid/*.md` | 各地区九格表草稿（docs/08 格式）+ 溯源 json |
+| `s09_output/check.md` | 验收报告（docs/12 第八节七条现象 + 铁律自检） |
+
+## 九步管线
+
+```
+① 行星参数 → ② 大气环流 → ③ 岛屿分布 → ④ 气候 → ⑤ 障碍识别
+→ ⑥ 航线网络 → ⑦ 文明中心 → ⑧ 特征场扩散 → ⑨ 输出
+```
+
+每步产物是下一步输入，带缓存 key 链：只改 `[s08]` 参数重跑时 ①–⑦ 直接命中缓存
+（`zhouzhu run --explain` 查看命中情况；`zhouzhu stage 6` 强制从第 6 步重算）。
+
+要点实现（与规格的对应）：
+
+- **⑤ 障碍是选择性过滤器**（D34）：区域障碍（A 赤道永暴带 / B·C 副热带无风带 /
+  D 中央宽空域 / F 中纬风暴带）各有一张「四模式 × 通过率」矩阵（默认值即
+  docs/11 §六 那张表），用穿越坐标 Φ 归一化——跨越一条带无论走几跳，通过率
+  乘积恰为矩阵值。G 定点永暴为解析圆盘，全模式删边（改道型）。
+  边局部因子：宽空域 / 密度骤降 / 高度落差（只筛「谁付得起」）/ 政治关卡（配置）。
+- **⑥ 顺风廉价逆风昂贵**：成本 = 距离 × 风向因子^α(模式) × 无风惩罚 × 风暴 × 爬升；
+  使节/迁徙对风向不敏感（α=0.2，docs/11 E 行）。干线与枢纽由抽样介数得出，
+  不依赖文明中心（顺序不可倒）。
+- **⑦ 中心是涌现的**：适宜度 = 降水 × 稳定 × 岛密度（不含高度——原则乙），在
+  docs/11 定稿的三个骨架窗内取极大；推不出即报错（原则庚）。附史前扩散
+  （顺风单向抱石而渡）与地区划分（仅输出用，非文化边界）。
+- **⑧ adopt 用对称不动点**：`S_t = R_t(1 − r_t·max_{u≠t} S_u)` Jacobi 迭代，
+  r ≤ 0.98 保证收敛；势均力敌处产生**陡而连续**的过渡（同言线的第二种来源）。
+  每槽位含一行「本地自有」（强度随隔离度升高——反射型障碍：孤岛文化），
+  归一化后每点每槽位是恒正的比例分布（原则己）。
+  高隔离连通分量还会生成「本地起源」特征。
+
+## 可视化（调试全靠看中间层）
+
+```bash
+python -m zhouzhu_gen.cli viz wind|islands|climate|barriers|routes|centers|iso --run out/seed42
+python -m zhouzhu_gen.cli viz perm --mode daily        # 某模式的通过率图
+python -m zhouzhu_gen.cli viz trait calendar@north_east # 单特征 reach/adopt/strength 三联图
+python -m zhouzhu_gen.cli viz slot white_hemp           # 槽位比例分布（每值一张）
+python -m zhouzhu_gen.cli viz isogloss [mode]           # 同言线 + 聚束热图
+python -m zhouzhu_gen.cli viz distance 6468             # 从某点出发的文化距离（按模式分面）
+```
+
+每张图正常应长什么样：风带图应是木星式横条 + G 漩涡；航线图的干线应沿信风带
+东西延伸并在 G 处南北分流（红星 = 中转岛）；同言线图各特征的环**不重合**，
+聚束（深色）只出现在赤道带、G、无风带边界；distance 图里 envoy 面板应比 daily
+面板平得多（文书通、口音不通）。反例即错：干线穿过 G、同言线全部叠在一条线上、
+相邻两点距离跳变。
+
+## 探针
+
+```bash
+python -m zhouzhu_gen.cli probe node 6468        # 属性 + 出边通过率 + 各槽位强度表
+python -m zhouzhu_gen.cli probe edge 100 105     # 因子 × 模式分解
+python -m zhouzhu_gen.cli probe path 100 200 --mode daily   # 逐跳累计 reach
+python -m zhouzhu_gen.cli probe trait calendar@north_east --node 6468  # 谁砍掉了 reach
+```
+
+## 调参
+
+所有参数在 `config/default.toml`（可用 `--config my.toml` 叠加、`--set a.b.c=v` 覆盖，
+生效值写入 `out/<run>/config.resolved.toml`）：
+
+| 你想调 | 改哪里 |
+|---|---|
+| 障碍通过率 | `[s05.barriers.*]`（就是 docs/11 §六 那张表）、`[s05.local.*]` |
+| 采纳阻力三档 | `[s08.resistance_range]` |
+| 距离衰减（每模式半衰日程） | `[s08.half_distance_days]`（校验强制 daily ≤ trade ≤ migrate ≤ envoy） |
+| 骨架（D 位置、G 半径、绕道岛弧、中心窗） | `[skeleton]` |
+| 岛数 / 密度 / 分类阈值 | `[s03.islands]`、`[shared.ships]` |
+| 特征表 | `config/slots.toml`；或写 `config/traits.toml` 手工指定（优先于模板） |
+| 验收阈值 | `[check]` |
+
+调参回路：改参数 → `run`（缓存自动只重算受影响阶段）→ `check` → 看对应图层 →
+`probe` 定位到点。`check --calibrate` 输出「走三天 / 走十天」处的文化距离中位数，
+对照 docs/04 §三 的口径调 λ。
+
+`check` 的 `SK-perm` 是障碍实测穿越率与 docs/11 占位矩阵的对照（只报警）：
+A/B/D 应基本吻合；C/F 偏低是正常的——穿进稀疏的西风带除了带本身还要付宽空域
+的代价（草原不只有风暴，还稀疏）。
+
+## 验收
+
+`check` 实现 docs/12 §八 的七条现象（阈值全部外置）：
+
+1. 相邻两地几乎相同（含硬项 P1b：任何边的文化差异必须由该边的成本与通过率解释——铁律五的代码化）
+2. 沿航线差异单调累积
+3. 同言线互不重合；聚束处 = 障碍所在
+4. 隔 D 而有官方航路的两地：文书通、口音不通
+5. 单向传播（顺风起源的特征重心顺风偏移；上风传下风易、反向难）
+6. G 邻域中转岛是两文明圈的混合体，且其流量在「无 G 的反事实世界」中坍缩
+7. 存在 reach 高而 adopt 低的地点（传到了但不要），并注明被谁挡住
+
+外加铁律自检（浮石/地质零字段、height 不进社会推导、处处有人、share 恒归一）。
+退出码：0 全过 / 1 现象未达 / 2 违反铁律。
+
+## 与规格的已声明偏离
+
+1. **reach 的路径取「最大 reach 路径」**（`λ·cost − ln perm` 加权最短路），而非
+   「物理最短路再乘通过率」。后者在物理最短路穿过 G 时会得到 reach = 0；
+   前者与规格在无障碍时等价，有障碍时自动改道（docs/02 §五：障碍改变的不只是
+   强度，还有路径）。`s08.fast = true` 切换为每 (origin, mode) 一棵参考 λ 树的
+   近似（快 3–5 倍，λ 抖动幅度内几乎无差）。
+2. **adopt 的循环依赖用对称不动点解**（conflict 读作同时平衡），「先到者优势」
+   不做默认——到达顺序在顺序翻转处会产生不连续跳变，违反铁律五。
+   Monte Carlo 引擎（`s08.engine = "mc"`）为保留接口，未实现（规格 §七：可选）。
+3. 九格表为**草稿**：④ 特有物种、⑧ 世仇通婚细节、⑦ 外观等超出地理推导范围的
+   格子标【待填】，交给政治层 / docs/03。
+
+## 目录
+
+```
+config/           default.toml · slots.toml · production_templates.toml · (traits.toml)
+zhouzhu_gen/
+  stages/         s01_planet … s09_output（九步）
+  graph.py        Dijkstra / 抽样介数 / 连通分量（纯 numpy + heapq）
+  culture.py      槽位份额 / TV 文化距离 / 同言线
+  check.py        七条验收 + 铁律自检 + 骨架一致性
+  ninegrid.py     九格表草稿生成（docs/08）
+  probe.py  viz.py  weights.py  noise.py  sphere.py  rng.py  config.py  pipeline.py
+tests/            公式单测 + 确定性/缓存链集成测试
+```
