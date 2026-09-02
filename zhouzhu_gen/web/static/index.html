@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>州渚 · 行星操作台</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600&family=Noto+Sans+SC:wght@400;600&display=swap">
+<!-- 完全离线：不加载任何远程资源；globe.gl 随包内置于 vendor/，单文件导出时内嵌 -->
 <style>
 /* 单一视觉世界：深空控制台（行星在黑底上；不随宿主主题切换，所有颜色显式） */
 :root{--bg:#0b0e14;--panel:#141922;--line:#26303f;--ink:#e6e9ef;--dim:#8a94a6;--acc:#f0b35a;--acc2:#5aa9f0;
   --daily:#4d9de0;--trade:#f39c3c;--envoy:#3fbf7f;--migrate:#e05a5a;color-scheme:dark}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-variant-numeric:tabular-nums}
-header h1{font-family:"Noto Serif SC","Microsoft YaHei",serif}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+header h1{font-family:"Source Han Serif SC","Noto Serif CJK SC","SimSun",serif}
 #app{display:grid;grid-template-rows:44px 1fr 26px;grid-template-columns:290px 1fr 380px;height:100%}
 header{grid-column:1/4;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--line)}
 header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.5px}
@@ -152,7 +152,7 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
 </div>
 
 <!--INLINE-->
-<script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js"></script>
+<script src="vendor/globe.gl.min.js"></script><!--VENDOR-->
 <script>
 'use strict';
 // ------------------------------------------------------------ 工具

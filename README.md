@@ -86,6 +86,9 @@ python -m zhouzhu_gen.cli serve            # 打开 http://127.0.0.1:8642/
 python -m zhouzhu_gen.cli viz web --run out/seed42   # 导出单文件 viewer.html（无需服务器，无重跑）
 ```
 
+**完全离线**：globe.gl（MIT）随包内置于 `zhouzhu_gen/web/static/vendor/`，页面不加载任何远程资源；
+单文件导出把它内嵌进 HTML，拷到没有网络的机器上双击即可。
+
 浏览器里是一颗可旋转缩放的 3D 行星（globe.gl，贴图由风/风暴/降水场渲染），三栏操作：
 
 | 栏 | 能做什么 |

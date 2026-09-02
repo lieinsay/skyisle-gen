@@ -113,6 +113,12 @@ class Handler(BaseHTTPRequestHandler):
             p = url.path
             if p in ("/", "/index.html"):
                 self._send((STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+            elif p.startswith("/vendor/"):
+                f = (STATIC / "vendor" / Path(p).name)
+                if f.exists():
+                    self._send(f.read_bytes(), "application/javascript; charset=utf-8")
+                else:
+                    self._send(b"not found", "text/plain", 404)
             elif p == "/api/runs":
                 self._json({"runs": self.app.runs(), "job": self.app.job})
             elif p == "/api/run/status":
@@ -236,5 +242,9 @@ def export_static(ctx, out_file: Path, body_only: bool = False) -> Path:
               "ninegrid": grids, "check": check, "config": ctx.cfg}
     payload = "<script>window.__INLINE__=" + dumps(inline).replace("</", "<\\/") + ";</script>"
     html = html.replace("<!--INLINE-->", payload)
+    # 内嵌 globe.gl：单文件完全离线
+    vendor = (STATIC / "vendor" / "globe.gl.min.js").read_text(encoding="utf-8")
+    html = html.replace('<script src="vendor/globe.gl.min.js"></script><!--VENDOR-->',
+                        "<script>" + vendor.replace("</script", "<\\/script") + "</script>")
     out_file.write_text(html, encoding="utf-8")
     return out_file
