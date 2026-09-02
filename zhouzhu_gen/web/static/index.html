@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>州渚 · 行星操作台</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600&family=Noto+Sans+SC:wght@400;600&display=swap">
+<style>
+/* 单一视觉世界：深空控制台（行星在黑底上；不随宿主主题切换，所有颜色显式） */
+:root{--bg:#0b0e14;--panel:#141922;--line:#26303f;--ink:#e6e9ef;--dim:#8a94a6;--acc:#f0b35a;--acc2:#5aa9f0;
+  --daily:#4d9de0;--trade:#f39c3c;--envoy:#3fbf7f;--migrate:#e05a5a;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+header h1{font-family:"Noto Serif SC","Microsoft YaHei",serif}
+#app{display:grid;grid-template-rows:44px 1fr 26px;grid-template-columns:290px 1fr 380px;height:100%}
+header{grid-column:1/4;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.5px}
+header .sp{flex:1}
+header select,header input,header button{background:#0f131a;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:4px 8px;font:inherit}
+button{cursor:pointer}
+button.primary{background:var(--acc);color:#1b1408;border-color:var(--acc);font-weight:600}
+button:disabled{opacity:.45;cursor:default}
+aside{background:var(--panel);overflow:auto;padding:10px 12px;border-right:1px solid var(--line)}
+aside.right{border-right:0;border-left:1px solid var(--line);padding:0}
+#globe{position:relative;overflow:hidden;background:#05070d}
+#globe canvas{display:block}
+footer{grid-column:1/4;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--panel);border-top:1px solid var(--line);color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden}
+.sec{margin-bottom:14px}
+.sec h3{font-size:12px;color:var(--dim);margin:0 0 6px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+.row{display:flex;align-items:center;gap:8px;margin:4px 0;flex-wrap:wrap}
+.row label{min-width:64px;color:var(--dim)}
+.row select,.row input[type=number],.row input[type=text]{flex:1;min-width:0;background:#0f131a;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit}
+.row input[type=range]{flex:1}
+.chk{display:flex;align-items:center;gap:6px;margin:3px 0;cursor:pointer}
+.tabs{display:flex;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:2}
+.tabs button{flex:1;background:none;border:0;color:var(--dim);padding:9px 0;font:inherit;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--acc)}
+.tab{display:none;padding:10px 12px}
+.tab.on{display:block}
+table.kv{border-collapse:collapse;width:100%;font-size:12px}
+table.kv td{padding:2px 4px;border-bottom:1px solid #1d2430;vertical-align:top}
+table.kv td:first-child{color:var(--dim);white-space:nowrap}
+.bar{display:inline-block;height:8px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;background:#1f2937;color:var(--ink);margin:1px 2px}
+.pill.pass{background:#1d4d33;color:#9be0b6}.pill.fail{background:#5a2323;color:#f0a2a2}.pill.warn{background:#5a4a1a;color:#f0d88a}
+.mode-daily{color:var(--daily)}.mode-trade{color:var(--trade)}.mode-envoy{color:var(--envoy)}.mode-migrate{color:var(--migrate)}
+.md h1{font-size:15px;margin:6px 0}.md h2{font-size:13px;margin:10px 0 4px;color:var(--acc)}
+.md table{border-collapse:collapse;width:100%;font-size:12px;margin:6px 0}
+.md td,.md th{border:1px solid var(--line);padding:3px 5px;vertical-align:top}
+.md blockquote{color:var(--dim);border-left:3px solid var(--line);margin:6px 0;padding:2px 8px}
+.md ul{margin:4px 0;padding-left:16px}
+.legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);margin-top:4px}
+.legend .grad{flex:1;height:8px;border-radius:2px}
+#log{font-family:Consolas,monospace;font-size:11px;white-space:pre-wrap;background:#0f131a;border:1px solid var(--line);padding:6px;max-height:180px;overflow:auto;color:var(--dim)}
+.param-grid{display:grid;grid-template-columns:auto repeat(4,1fr);gap:3px 6px;align-items:center;font-size:12px}
+.param-grid input{width:100%;background:#0f131a;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:2px 4px;font:inherit}
+.param-grid .h{color:var(--dim);text-align:center}
+.small{font-size:11px;color:var(--dim)}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.btnrow button{background:#1f2937;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:4px 9px;font:inherit}
+#tip{position:absolute;pointer-events:none;background:rgba(10,13,20,.92);border:1px solid var(--line);padding:5px 8px;border-radius:4px;font-size:12px;display:none;z-index:5;max-width:280px}
+#loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:14px;background:#05070d;z-index:6}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>州渚 · 行星操作台</h1>
+  <span class="small" id="runinfo"></span>
+  <span class="sp"></span>
+  <label class="small">run</label><select id="runsel"></select>
+  <button id="btnView">重置视角</button>
+  <button id="btnRotate">自转</button>
+  <span id="checkBadge"></span>
+</header>
+
+<aside class="left">
+  <div class="sec"><h3>图层</h3>
+    <label class="chk"><input type="checkbox" id="lyIslands" checked> 岛屿</label>
+    <label class="chk"><input type="checkbox" id="lyEdges" checked> 航线（边）</label>
+    <label class="chk"><input type="checkbox" id="lyHubs" checked> 枢纽与文明中心</label>
+    <label class="chk"><input type="checkbox" id="lyTrunks" checked> 中心间干线</label>
+    <label class="chk"><input type="checkbox" id="lyGeo" checked> 障碍几何（A / D / G）</label>
+    <label class="chk"><input type="checkbox" id="lyIso"> 同言线（跨 θ 的边）</label>
+  </div>
+  <div class="sec"><h3>岛屿着色</h3>
+    <div class="row"><label>依据</label>
+      <select id="colorBy">
+        <option value="cls">地形类</option>
+        <option value="region">地区</option>
+        <option value="share">槽位份额</option>
+        <option value="trait">特征场</option>
+        <option value="dist">文化距离（以家为基准）</option>
+        <option value="iso">隔离度</option>
+        <option value="suit">适宜度</option>
+        <option value="precip">降水</option>
+        <option value="stab">稳定度</option>
+        <option value="arrival">史前到达</option>
+        <option value="flow">流量</option>
+      </select></div>
+    <div class="row" id="rowSlot"><label>槽位</label><select id="slotSel"></select></div>
+    <div class="row" id="rowValue"><label>值</label><select id="valueSel"></select></div>
+    <div class="row" id="rowTrait"><label>特征</label><select id="traitSel"></select></div>
+    <div class="row" id="rowField"><label>量</label>
+      <select id="fieldSel"><option value="strength">strength</option><option value="reach">reach</option><option value="adopt">adopt</option><option value="share">share</option></select></div>
+    <div class="row" id="rowMode"><label>模式</label>
+      <select id="modeSel"><option value="all">全部</option><option value="daily">日常往来</option><option value="trade">商旅</option><option value="envoy">使节学问</option><option value="migrate">人口迁徙</option></select></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="sec"><h3>边着色与筛选</h3>
+    <div class="row"><label>着色</label>
+      <select id="edgeColor">
+        <option value="perm">通过率（按模式）</option>
+        <option value="flow">流量</option>
+        <option value="barrier">所属障碍</option>
+        <option value="plain">单色</option>
+      </select></div>
+    <div class="row"><label>模式</label>
+      <select id="edgeMode"><option value="daily">日常往来</option><option value="trade">商旅</option><option value="envoy">使节学问</option><option value="migrate">人口迁徙</option></select></div>
+    <div class="row"><label>筛选</label>
+      <select id="edgeFilter">
+        <option value="top">流量前 N</option>
+        <option value="barrier">跨障碍边</option>
+        <option value="blocked">该模式不可通</option>
+        <option value="gblock">G 阻断边</option>
+        <option value="all">全部（慢）</option>
+      </select></div>
+    <div class="row"><label>N</label><input type="range" id="edgeN" min="500" max="12000" step="500" value="4000"><span id="edgeNv">4000</span></div>
+    <div class="row" id="rowTheta"><label>θ</label><input type="range" id="theta" min="0.2" max="0.8" step="0.05" value="0.5"><span id="thetav">0.5</span></div>
+  </div>
+  <div class="sec small" id="hint">点击岛屿 → 探针。右侧「参数」改数值后重新生成。</div>
+</aside>
+
+<div id="globe"><div id="tip"></div><div id="loading">加载中…</div></div>
+
+<aside class="right">
+  <div class="tabs">
+    <button data-tab="probe" class="on">探针</button>
+    <button data-tab="grid">九格表</button>
+    <button data-tab="params">参数</button>
+    <button data-tab="check">验收</button>
+  </div>
+  <div class="tab on" id="tab-probe"><div class="small">点击岛屿查看。</div></div>
+  <div class="tab" id="tab-grid"><div class="small">在探针里点「九格表」，或在下方选地区。</div>
+    <div class="row"><label>地区</label><select id="regionSel"></select></div>
+    <div class="md" id="gridBody"></div></div>
+  <div class="tab" id="tab-params"></div>
+  <div class="tab" id="tab-check"></div>
+</aside>
+
+<footer><span id="status">就绪</span><span class="sp"></span><span id="coords"></span></footer>
+</div>
+
+<!--INLINE-->
+<script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js"></script>
+<script>
+'use strict';
+// ------------------------------------------------------------ 工具
+const $ = id => document.getElementById(id);
+const INLINE = window.__INLINE__ || null;
+const MODES = ['daily','trade','envoy','migrate'];
+const MODE_ZH = {daily:'日常往来',trade:'商旅',envoy:'使节学问',migrate:'人口迁徙'};
+const MODE_COLOR = {daily:'#4d9de0',trade:'#f39c3c',envoy:'#3fbf7f',migrate:'#e05a5a'};
+const CLASS_COLOR = ['#b06be0','#3fbf7f','#f0c34d','#e05a5a'];
+const TAB20 = ['#1f77b4','#aec7e8','#ff7f0e','#ffbb78','#2ca02c','#98df8a','#d62728','#ff9896','#9467bd','#c5b0d5','#8c564b','#c49c94','#e377c2','#f7b6d2','#7f7f7f','#c7c7c7','#bcbd22','#dbdb8d','#17becf','#9edae5'];
+const BARRIER_COLOR = ['#e05a5a','#f0c34d','#f0c34d','#b06be0','#5aa9f0','#5aa9f0'];
+
+function decode(a){
+  const bin = atob(a.b64); const buf = new ArrayBuffer(bin.length); const u8 = new Uint8Array(buf);
+  for (let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+  const T = {float32:Float32Array,uint8:Uint8Array,int32:Int32Array,int16:Int16Array,int8:Int8Array}[a.dtype];
+  const arr = new T(buf); arr.shape = a.shape; return arr;
+}
+function viridis(t){ // 近似 viridis
+  t = Math.max(0,Math.min(1,t));
+  const stops=[[68,1,84],[72,40,120],[62,74,137],[49,104,142],[38,130,142],[31,158,137],[53,183,121],[109,205,89],[180,222,44],[253,231,37]];
+  const x=t*(stops.length-1), i=Math.min(stops.length-2,Math.floor(x)), f=x-i;
+  const c=stops[i].map((v,k)=>Math.round(v+(stops[i+1][k]-v)*f)); return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function rdylgn(t){ t=Math.max(0,Math.min(1,t)); const r=t<.5?215:Math.round(255-(t-.5)*2*(255-26)); const g=t<.5?Math.round(48+t*2*(220-48)):Math.round(220-(t-.5)*2*(220-150)); const b=t<.5?39:Math.round(20+(t-.5)*2*(80-20)); return `rgb(${r},${g},${b})`; }
+function plasma(t){ t=Math.max(0,Math.min(1,t)); const s=[[13,8,135],[126,3,168],[204,71,120],[248,149,64],[240,249,33]]; const x=t*4,i=Math.min(3,Math.floor(x)),f=x-i; const c=s[i].map((v,k)=>Math.round(v+(s[i+1][k]-v)*f)); return `rgb(${c[0]},${c[1]},${c[2]})`; }
+function wrap(d){ return ((d+180)%360+360)%360-180; }
+function fmt(x,n=2){ return (x===undefined||x===null||isNaN(x))?'—':Number(x).toFixed(n); }
+function q(p){ if(p>=.9)return'近乎全部';if(p>=.7)return'约七八成';if(p>=.55)return'约六成';if(p>=.45)return'约半';if(p>=.3)return'约三四成';if(p>=.15)return'约两成';if(p>=.05)return'零星';return'几乎无人'; }
+async function api(path){ const r = await fetch(path); if(!r.ok) throw new Error(path+': '+r.status); return r; }
+function setStatus(s){ $('status').textContent = s; }
+
+// ------------------------------------------------------------ 状态
+let W=null, F=null, A=null, FA=null, cfg=null, checkData=null, globe=null, currentRun=null;
+let home=null, selected=null, pathData=null;
+let distCache=null; // Float32Array 文化距离（以 home 为基准）
+let rotating=false;
+
+// ------------------------------------------------------------ 数据加载
+async function loadRunList(){
+  if (INLINE){ currentRun = INLINE.world.run_id; $('runsel').innerHTML = `<option>${currentRun}</option>`; return; }
+  const j = await (await api('/api/runs')).json();
+  const sel = $('runsel'); const prev = sel.value;
+  sel.innerHTML = j.runs.map(r=>`<option value="${r.run_id}">${r.run_id}（seed ${r.seed}）</option>`).join('');
+  if (prev && j.runs.some(r=>r.run_id===prev)) sel.value = prev;
+  currentRun = sel.value;
+}
+async function loadRun(rid){
+  $('loading').style.display='flex'; setStatus('读取 '+rid+' …');
+  currentRun = rid;
+  if (INLINE){ W = INLINE.world; F = INLINE.fields; cfg = INLINE.config; checkData = INLINE.check; }
+  else {
+    W = await (await api('/api/world?run='+rid)).json();
+    F = await (await api('/api/fields?run='+rid)).json();
+    cfg = await (await api('/api/config?run='+rid)).json();
+    checkData = await (await api('/api/check?run='+rid)).json();
+  }
+  A = {}; for (const k in W.arrays) A[k] = decode(W.arrays[k]);
+  FA = {}; for (const k in F.arrays) FA[k] = decode(F.arrays[k]);
+  home=null; selected=null; distCache=null; pathData=null;
+  $('runinfo').textContent = `${W.n_islands} 岛 · ${W.n_edges} 边 · ${W.traits.length} 特征 · ${W.slots.length} 槽位`;
+  buildSelectors(); buildParams(); buildCheck();
+  const tex = INLINE ? INLINE.texture : '/api/texture?run='+rid;
+  initGlobe(tex);
+  $('loading').style.display='none'; setStatus('就绪：'+rid);
+}
+
+// ------------------------------------------------------------ 场访问
+const N = () => W.n_islands;
+function fieldRow(kind, ti){ const arr = FA[kind]; const n=N(); return arr.subarray(ti*n, ti*n+n); }
+function localShareRow(si){ const n=N(); return FA.local_share.subarray(si*n, si*n+n); }
+function slotRowsOf(slot){ return F.slot_rows[slot]; }
+// 文化距离（TV 均值，可按模式过滤）
+function cultureDistance(h, modeFilter){
+  const n=N(); const out=new Float32Array(n); let ns=0;
+  W.slots.forEach((slot,si)=>{
+    if (modeFilter && modeFilter!=='all' && W.slot_mode[slot]!==modeFilter) return;
+    ns++;
+    const rows = slotRowsOf(slot);
+    const acc = new Float32Array(n);
+    for (const ti of rows){ const r=fieldRow('share',ti); const hv=r[h]; for(let j=0;j<n;j++) acc[j]+=Math.abs(r[j]-hv); }
+    const l = localShareRow(si); const hv=l[h]; for(let j=0;j<n;j++) acc[j]+=Math.abs(l[j]-hv);
+    for(let j=0;j<n;j++) out[j]+=acc[j]/255/2;
+  });
+  if (ns) for(let j=0;j<n;j++) out[j]/=ns;
+  return out;
+}
+function pairDistance(a,b){ const res={}; for (const m of ['all',...MODES]){ let s=0,ns=0; W.slots.forEach((slot,si)=>{ if(m!=='all'&&W.slot_mode[slot]!==m)return; ns++; let tv=0; for(const ti of slotRowsOf(slot)){const r=fieldRow('share',ti); tv+=Math.abs(r[a]-r[b]);} const l=localShareRow(si); tv+=Math.abs(l[a]-l[b]); s+=tv/255/2;}); res[m]=ns?s/ns:NaN;} return res; }
+
+// ------------------------------------------------------------ 选择器
+function buildSelectors(){
+  $('slotSel').innerHTML = W.slots.map(s=>`<option value="${s}">${W.slot_meta[s].zh}（${MODE_ZH[W.slot_mode[s]]}）</option>`).join('');
+  $('traitSel').innerHTML = W.traits.map(t=>`<option value="${t.index}">${t.id}</option>`).join('');
+  $('regionSel').innerHTML = W.region_names.map((nm,i)=>`<option value="${i}">${nm}</option>`).join('');
+  fillValueSel();
+}
+function fillValueSel(){
+  const slot=$('slotSel').value; const rows=slotRowsOf(slot);
+  $('valueSel').innerHTML = rows.map(ti=>`<option value="${ti}">${W.traits[ti].id}</option>`).join('') + `<option value="local">（本地自有）</option>`;
+}
+function updateRowVisibility(){
+  const by=$('colorBy').value;
+  $('rowSlot').style.display = by==='share'?'':'none';
+  $('rowValue').style.display = by==='share'?'':'none';
+  $('rowTrait').style.display = by==='trait'?'':'none';
+  $('rowField').style.display = by==='trait'?'':'none';
+  $('rowMode').style.display = (by==='dist'||by==='iso')?'':'none';
+  $('rowTheta').style.display = $('lyIso').checked?'':'none';
+}
+
+// ------------------------------------------------------------ 着色
+function islandColorFn(){
+  const by=$('colorBy').value; const n=N();
+  let legend='';
+  let fn;
+  if (by==='cls'){ fn=i=>CLASS_COLOR[A.cls[i]]; legend=W.class_names.map((c,k)=>`<span class="pill" style="background:${CLASS_COLOR[k]};color:#000">${W.class_zh[c]}</span>`).join(''); }
+  else if (by==='region'){ fn=i=>TAB20[A.region[i]%20]; legend='地区（着色仅为区分，不是文化边界）'; }
+  else if (by==='share'){ const v=$('valueSel').value; const row = v==='local'?localShareRow(W.slots.indexOf($('slotSel').value)):fieldRow('share',+v); fn=i=>viridis(row[i]/255); legend=grad('0','1','share'); }
+  else if (by==='trait'){ const ti=+$('traitSel').value; const k=$('fieldSel').value; const row=fieldRow(k,ti); fn=i=>viridis(row[i]/255); legend=grad('0','1',k); }
+  else if (by==='dist'){ if(home===null){ fn=()=> '#556'; legend='先在探针里「以此为家」'; } else { if(!distCache||distCache.mode!==$('modeSel').value){ distCache=cultureDistance(home,$('modeSel').value); distCache.mode=$('modeSel').value; } const d=distCache; fn=i=>i===home?'#ffffff':viridis(d[i]); legend=grad('相同','完全不同','文化距离 TV'); } }
+  else if (by==='iso'){ const m=$('modeSel').value; const mi = m==='all'?0:MODES.indexOf(m); fn=i=>viridis(A.iso[mi*n+i]/255); legend=grad('0','1','隔离度 '+(m==='all'?'daily':MODE_ZH[m])); }
+  else if (by==='suit'){ fn=i=>viridis(A.suitability[i]/255); legend=grad('低','高','适宜度'); }
+  else if (by==='precip'){ fn=i=>viridis(A.precip[i]/255); legend=grad('干','湿','降水'); }
+  else if (by==='stab'){ fn=i=>viridis(A.stability[i]/255); legend=grad('风暴','稳定','稳定度'); }
+  else if (by==='arrival'){ let mx=0; for(let i=0;i<n;i++) mx=Math.max(mx,A.arrival_yr[i]); fn=i=>viridis(1-A.arrival_yr[i]/mx); legend=grad('最晚','最早','史前到达'); }
+  else if (by==='flow'){ let mx=0; for(let i=0;i<n;i++) mx=Math.max(mx,A.node_flow[i]); fn=i=>plasma(Math.log10(1+A.node_flow[i])/Math.log10(1+mx)); legend=grad('0','高','log 流量'); }
+  $('legend').innerHTML = legend;
+  return fn;
+}
+function grad(lo,hi,label){ return `<span>${lo}</span><span class="grad" style="background:linear-gradient(90deg,${viridis(0)},${viridis(.5)},${viridis(1)})"></span><span>${hi}</span><span>· ${label}</span>`; }
+
+function repaintIslands(){
+  if(!globe) return;
+  const fn = islandColorFn();
+  const pts=[]; const n=N(); const show=$('lyIslands').checked;
+  if (show) for(let i=0;i<n;i++){ pts.push({i, lat:A.lat[i], lng:A.lon[i], c:fn(i), r: (A.layered[i]?0.22:0.16) * (i===selected?2.2:1) * (i===home?2.2:1)}); }
+  globe.pointsData(pts).pointColor(d=>d.c).pointRadius(d=>d.r);
+}
+
+// ------------------------------------------------------------ 边
+function edgeSet(){
+  const E=W.n_edges; const mode=$('edgeMode').value; const mi=MODES.indexOf(mode); const filt=$('edgeFilter').value; const nMax=+$('edgeN').value;
+  let idx=[];
+  if (filt==='all'){ for(let e=0;e<E;e++) idx.push(e); }
+  else if (filt==='barrier'){ for(let e=0;e<E;e++) if(A.e_barrier[e]>=0) idx.push(e); }
+  else if (filt==='blocked'){ for(let e=0;e<E;e++) if(A.e_perm[e*4+mi]===0) idx.push(e); }
+  else if (filt==='gblock'){ for(let e=0;e<E;e++) if(A.e_gblock[e]) idx.push(e); }
+  else { for(let e=0;e<E;e++) idx.push(e); idx.sort((a,b)=>A.e_flow[b]-A.e_flow[a]); idx=idx.slice(0,nMax); }
+  if (idx.length>nMax && filt!=='all') idx=idx.slice(0,nMax);
+  return idx;
+}
+function edgeColorFn(){
+  const by=$('edgeColor').value; const mi=MODES.indexOf($('edgeMode').value);
+  if (by==='perm') return e=>{ const p=A.e_perm[e*4+mi]/255; return p===0?'rgba(20,20,20,.9)':rdylgn(p); };
+  if (by==='flow'){ let mx=0; for(let e=0;e<W.n_edges;e++) mx=Math.max(mx,A.e_flow[e]); return e=>plasma(Math.log10(1+A.e_flow[e])/Math.log10(1+mx)); }
+  if (by==='barrier') return e=>{ const b=A.e_barrier[e]; return b<0?'rgba(120,130,150,.35)':BARRIER_COLOR[b]; };
+  return ()=>'rgba(160,170,190,.35)';
+}
+function repaintEdges(){
+  if(!globe) return;
+  const paths=[];
+  if ($('lyEdges').checked){
+    const cf=edgeColorFn();
+    for (const e of edgeSet()){ const s=A.e_src[e], d=A.e_dst[e]; paths.push({pts:[[A.lat[s],A.lon[s],0.004],[A.lat[d],A.lon[d],0.004]], c:cf(e), w:1}); }
+  }
+  // 障碍几何
+  if ($('lyGeo').checked){
+    const g=W.bands.G, core=W.skeleton.eq_core_halfwidth_deg;
+    const circ=[]; for(let k=0;k<=64;k++){const t=k/64*2*Math.PI; circ.push([g.lat+g.radius_deg*Math.sin(t), g.lon+g.radius_deg*Math.cos(t)/Math.cos(g.lat*Math.PI/180),0.01]);}
+    paths.push({pts:circ,c:'#ff3b3b',w:2});
+    for (const s of [1,-1]){ const line=[]; for(let k=0;k<=72;k++) line.push([s*core,-180+k*5,0.006]); paths.push({pts:line,c:'rgba(255,120,120,.8)',w:1.5}); }
+    const sk=W.skeleton, pb=W.planet.bands; const lo=sk.eq_core_halfwidth_deg, hi=pb.calm_top_deg;
+    const box=[[lo,sk.d_lon_west,0.006],[hi,sk.d_lon_west,0.006],[hi,sk.d_lon_east,0.006],[lo,sk.d_lon_east,0.006],[lo,sk.d_lon_west,0.006]];
+    paths.push({pts:box,c:'rgba(210,140,230,.8)',w:1.5});
+  }
+  // 中心间干线
+  if ($('lyTrunks').checked){ for (const k in W.center_trunks){ const p=W.center_trunks[k]; if(p.length>1) paths.push({pts:p.map(i=>[A.lat[i],A.lon[i],0.012]),c:'#5aa9f0',w:2}); } }
+  // 探针路径
+  if (pathData && pathData.path){ paths.push({pts:pathData.path.map(i=>[A.lat[i],A.lon[i],0.02]),c:'#ffffff',w:2.5}); }
+  // 同言线
+  if ($('lyIso').checked){
+    const th=+$('theta').value*255; const E=W.n_edges; const n=N();
+    const ti=+$('traitSel').value; const byMode = $('colorBy').value!=='trait';
+    const list = byMode ? W.traits.map(t=>t.index) : [ti];
+    let cnt=0;
+    for (const t of list){ const r=fieldRow('share',t); const col= byMode?MODE_COLOR[W.traits[t].mode]:'#ffffff';
+      for(let e=0;e<E&&cnt<20000;e++){ const a=r[A.e_src[e]],b=r[A.e_dst[e]]; if((a>=th&&b<th)||(b>=th&&a<th)){ const s=A.e_src[e],d=A.e_dst[e]; paths.push({pts:[[A.lat[s],A.lon[s],0.008],[A.lat[d],A.lon[d],0.008]],c:col,w:1.2}); cnt++; } } }
+  }
+  globe.pathsData(paths).pathPoints(d=>d.pts).pathColor(d=>d.c).pathStroke(d=>d.w*0.12).pathTransitionDuration(0);
+  repaintLabels();
+}
+function repaintLabels(){
+  const labels=[];
+  if ($('lyHubs').checked){
+    for (const k in W.centers){ const c=W.centers[k]; labels.push({lat:c.lat,lng:c.lon,text:c.zh,size:1.1,color:'#ffd27a',dot:0.45}); }
+    for (const h of W.hubs) labels.push({lat:h.lat,lng:h.lon,text:'',size:0,color:h.near_g?'#ff5c5c':'#ffd27a',dot:h.near_g?0.32:0.22});
+  }
+  if (home!==null) labels.push({lat:A.lat[home],lng:A.lon[home],text:'家',size:0.9,color:'#ffffff',dot:0.4});
+  globe.labelsData(labels).labelLat(d=>d.lat).labelLng(d=>d.lng).labelText(d=>d.text).labelSize(d=>d.size).labelColor(d=>d.color).labelDotRadius(d=>d.dot).labelAltitude(0.015).labelResolution(2);
+}
+
+// ------------------------------------------------------------ globe
+function initGlobe(texUrl){
+  const el=$('globe');
+  if (!globe){
+    globe = Globe()(el).backgroundColor('#05070d').showAtmosphere(true).atmosphereColor('#7fa6ff').atmosphereAltitude(0.18)
+      .pointLat(d=>d.lat).pointLng(d=>d.lng).pointAltitude(0.004).pointsMerge(true).pointResolution(6)
+      .onGlobeClick(({lat,lng})=>{ const i=nearest(lat,lng); if(i>=0) selectIsland(i); });
+    new ResizeObserver(()=>globe.width(el.clientWidth).height(el.clientHeight)).observe(el);
+    globe.width(el.clientWidth).height(el.clientHeight);
+    el.addEventListener('mousemove', onHover);
+    globe.controls().autoRotateSpeed=0.35;
+  }
+  globe.globeImageUrl(texUrl);
+  const g=W.bands.G; globe.pointOfView({lat:g.lat, lng:g.lon, altitude:2.2}, 0);
+  repaintIslands(); repaintEdges();
+}
+function nearest(lat,lng){
+  const n=N(); let best=-1,bd=1e9; const la=lat*Math.PI/180, lo=lng*Math.PI/180; const cl=Math.cos(la);
+  for(let i=0;i<n;i++){ const dl=wrap(A.lon[i]-lng)*Math.PI/180; const dphi=(A.lat[i]-lat)*Math.PI/180; const d=dphi*dphi+cl*cl*dl*dl; if(d<bd){bd=d;best=i;} }
+  return Math.sqrt(bd)*180/Math.PI < 2.5 ? best : -1;
+}
+let hoverT=0;
+function onHover(ev){
+  const now=performance.now(); if(now-hoverT<50) return; hoverT=now;
+  const rect=$('globe').getBoundingClientRect(); const c=globe.toGlobeCoords(ev.clientX-rect.left, ev.clientY-rect.top);
+  const tip=$('tip');
+  if(!c){ tip.style.display='none'; $('coords').textContent=''; return; }
+  $('coords').textContent=`${c.lat.toFixed(1)}°, ${c.lng.toFixed(1)}°`;
+  const i=nearest(c.lat,c.lng);
+  if(i<0){ tip.style.display='none'; return; }
+  tip.style.display='block'; tip.style.left=(ev.clientX-rect.left+14)+'px'; tip.style.top=(ev.clientY-rect.top+10)+'px';
+  let extra='';
+  const by=$('colorBy').value;
+  if (by==='dist'&&distCache) extra=`<br>文化距离 ${fmt(distCache[i])}`;
+  if (by==='share'){ const v=$('valueSel').value; const row=v==='local'?localShareRow(W.slots.indexOf($('slotSel').value)):fieldRow('share',+v); extra=`<br>share ${fmt(row[i]/255)}`; }
+  if (by==='trait'){ const ti=+$('traitSel').value; extra=`<br>reach ${fmt(fieldRow('reach',ti)[i]/255)} · adopt ${fmt(fieldRow('adopt',ti)[i]/255)} · strength ${fmt(fieldRow('strength',ti)[i]/255)}`; }
+  tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''}<br>${W.region_names[A.region[i]]}${extra}`;
+}
+
+// ------------------------------------------------------------ 探针
+function selectIsland(i){
+  selected=i; repaintIslands(); showTab('probe');
+  const n=N(); const box=$('tab-probe');
+  const rows=[];
+  rows.push(['节点',`#${i}（${fmt(A.lat[i],2)}°, ${fmt(A.lon[i],2)}°）`]);
+  rows.push(['地形',`${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'（叠层）':''} · 面积 ${fmt(A.area[i],1)} km²`]);
+  rows.push(['地区',`${W.region_names[A.region[i]]} <button class="mini" data-region="${A.region[i]}">九格表</button>`]);
+  rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`]);
+  rows.push(['史前',`谱系 L${A.lineage[i]} · 约 ${Math.round(A.arrival_yr[i])} 年前到达`]);
+  rows.push(['隔离度',MODES.map((m,k)=>`<span class="mode-${m}">${MODE_ZH[m]} ${fmt(A.iso[k*n+i]/255)}</span>`).join(' ')]);
+  rows.push(['流量',fmt(A.node_flow[i],0)]);
+  // 出边
+  const es=[]; for(let e=0;e<W.n_edges;e++){ if(A.e_src[e]===i||A.e_dst[e]===i) es.push(e); }
+  const edgeHtml = es.map(e=>{ const o=A.e_src[e]===i?A.e_dst[e]:A.e_src[e]; const c=A.e_src[e]===i?A.e_cost_ab[e]:A.e_cost_ba[e]; const p=[0,1,2,3].map(k=>fmt(A.e_perm[e*4+k]/255)).join('/'); const b=A.e_barrier[e]>=0?W.regional_order[A.e_barrier[e]]:''; return `<tr><td><button class="mini" data-node="${o}">#${o}</button></td><td>${fmt(c)} 日</td><td>${p}</td><td>${A.e_gblock[e]?'<b style="color:#f66">G</b>':b}</td></tr>`; }).join('');
+  // 槽位
+  let slotHtml='';
+  W.slots.forEach((slot,si)=>{
+    const rowsT=slotRowsOf(slot); const items=rowsT.map(ti=>({id:W.traits[ti].id,ti,s:fieldRow('share',ti)[i]/255,reach:fieldRow('reach',ti)[i]/255,adopt:fieldRow('adopt',ti)[i]/255}));
+    items.push({id:'（本地自有）',ti:-1,s:localShareRow(si)[i]/255,reach:NaN,adopt:NaN});
+    items.sort((a,b)=>b.s-a.s);
+    const top=items.slice(0,3).map(it=>`<div><span class="bar" style="width:${Math.round(it.s*90)}px;background:${viridis(it.s)}"></span>${fmt(it.s)} ${it.id}</div>`).join('');
+    const rej=items.filter(it=>it.ti>=0&&it.reach>=0.3&&it.adopt<=0.4).map(it=>{ const cb=FA.conflict_by[it.ti*n+i]; const who=cb>=0?W.traits[cb].id:'本地自有'; return `<div style="color:#f0a2a2">⚠ ${it.id}：reach ${fmt(it.reach)} 但 adopt ${fmt(it.adopt)} —— 传到了但不要，被 ${who} 挡住</div>`; }).join('');
+    slotHtml+=`<div style="margin:6px 0"><b class="mode-${W.slot_mode[slot]}">${W.slot_meta[slot].zh}</b> <span class="small">${MODE_ZH[W.slot_mode[slot]]}</span>${top}${rej}</div>`;
+  });
+  let pairHtml='';
+  if (home!==null && home!==i){ const d=pairDistance(home,i); pairHtml=`<div class="sec"><h3>与家（#${home}）的文化距离</h3>`+['all',...MODES].map(m=>`<div><span class="bar" style="width:${Math.round(d[m]*120)}px;background:${m==='all'?'#ccc':MODE_COLOR[m]}"></span>${fmt(d[m])} ${m==='all'?'全部':MODE_ZH[m]}</div>`).join('')+`<div class="btnrow"><button id="btnPath">画出家→此的最优路径</button><select id="pathMode">${MODES.map(m=>`<option value="${m}">${MODE_ZH[m]}</option>`).join('')}</select></div><div id="pathBox" class="small"></div></div>`; }
+  box.innerHTML = `<table class="kv">${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>
+    <div class="btnrow"><button id="btnHome">以此为家（文化距离着色）</button><button id="btnFly">飞到这里</button></div>
+    ${pairHtml}
+    <div class="sec"><h3>各槽位（比例分布）</h3>${slotHtml}</div>
+    <div class="sec"><h3>出边（${es.length}）</h3><table class="kv"><tr><td>对端</td><td>成本</td><td>日常/商旅/使节/迁徙</td><td>障碍</td></tr>${edgeHtml}</table></div>`;
+  $('btnHome').onclick=()=>{ home=i; distCache=null; $('colorBy').value='dist'; updateRowVisibility(); repaintIslands(); repaintLabels(); };
+  $('btnFly').onclick=()=>globe.pointOfView({lat:A.lat[i],lng:A.lon[i],altitude:0.6},800);
+  const bp=$('btnPath'); if(bp) bp.onclick=()=>drawPath(home,i,$('pathMode').value);
+  box.querySelectorAll('button[data-node]').forEach(b=>b.onclick=()=>selectIsland(+b.dataset.node));
+  box.querySelectorAll('button[data-region]').forEach(b=>b.onclick=()=>{ $('regionSel').value=b.dataset.region; loadGrid(+b.dataset.region); showTab('grid'); });
+}
+async function drawPath(a,b,mode){
+  if (INLINE){ $('pathBox').textContent='单文件模式不支持路径计算（需 zhouzhu serve）'; return; }
+  setStatus('计算路径…');
+  const j = await (await api(`/api/path?run=${currentRun}&a=${a}&b=${b}&mode=${mode}`)).json();
+  if(!j.reachable){ $('pathBox').textContent='该模式下不可达（沿途有通过率为 0 的障碍）'; pathData=null; repaintEdges(); return; }
+  pathData=j; repaintEdges();
+  $('pathBox').innerHTML=`reach = ${j.reach}（λ_ref ${fmt(j.lambda_ref,4)}）<table class="kv"><tr><td>跳</td><td>节点</td><td>成本</td><td>perm</td><td>累计 reach</td></tr>`+j.hops.map((h,k)=>`<tr><td>${k+1}</td><td>#${h.node}</td><td>${fmt(h.cost)}</td><td>${fmt(h.perm)}</td><td>${fmt(h.reach,3)}</td></tr>`).join('')+'</table>';
+  setStatus('就绪');
+}
+
+// ------------------------------------------------------------ 九格表
+function mdToHtml(md){
+  const lines=md.split('\n'); let out=[]; let inTable=false, inList=false;
+  const inline=s=>s.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/【(.+?)】/g,'<span class="pill">$1</span>');
+  for (let ln of lines){
+    if (/^\|/.test(ln)){ if(/^\|\s*-+/.test(ln)) continue; if(!inTable){out.push('<table>');inTable=true;} const cells=ln.split('|').slice(1,-1); out.push('<tr>'+cells.map(c=>`<td>${inline(c.trim())}</td>`).join('')+'</tr>'); continue; }
+    else if (inTable){ out.push('</table>'); inTable=false; }
+    if (/^\s*[·\-] /.test(ln)){ if(!inList){out.push('<ul>');inList=true;} out.push('<li>'+inline(ln.replace(/^\s*[·\-] /,''))+'</li>'); continue; }
+    else if (inList){ out.push('</ul>'); inList=false; }
+    if (/^# /.test(ln)) out.push('<h1>'+inline(ln.slice(2))+'</h1>');
+    else if (/^## /.test(ln)) out.push('<h2>'+inline(ln.slice(3))+'</h2>');
+    else if (/^> /.test(ln)) out.push('<blockquote>'+inline(ln.slice(2))+'</blockquote>');
+    else if (ln.trim()==='') continue;
+    else out.push('<p>'+inline(ln)+'</p>');
+  }
+  if(inTable) out.push('</table>'); if(inList) out.push('</ul>');
+  return out.join('\n');
+}
+async function loadGrid(r){
+  $('gridBody').innerHTML='<span class="small">生成中…</span>';
+  let md;
+  if (INLINE) md = INLINE.ninegrid[String(r)];
+  else md = await (await api(`/api/ninegrid?run=${currentRun}&region=${r}`)).text();
+  $('gridBody').innerHTML = mdToHtml(md);
+  // 高亮地区
+  $('colorBy').value='region'; updateRowVisibility(); repaintIslands();
+  const seed=W.region_seeds[r]; globe.pointOfView({lat:A.lat[seed],lng:A.lon[seed],altitude:0.7},800);
+}
+
+// ------------------------------------------------------------ 参数
+const PARAM_SPEC = [
+  {sec:'骨架 [skeleton]', items:[['skeleton.d_lon_west','D 西缘 °'],['skeleton.d_lon_east','D 东缘 °'],['skeleton.d_density_mult','D 密度倍率'],['skeleton.g_radius_deg','G 半径 °'],['skeleton.g_delta_deg','G 纬度偏移 δ °'],['skeleton.detour_arc_gap_deg','绕道弧间隙 °'],['skeleton.detour_arc_boost','绕道弧密度倍增'],['skeleton.center_window_deg','中心窗宽 °'],['skeleton.eq_core_halfwidth_deg','赤道无岛核心半宽 °']]},
+  {sec:'岛屿 [s03]', items:[['s03.islands.n_islands','岛数'],['s03.islands.noise_gamma','成簇程度 γ'],['s03.islands.band_density.trades','信风带密度'],['s03.islands.band_density.subtropical_calm','无风带密度'],['s03.islands.band_density.westerlies','西风带密度'],['s03.islands.band_density.polar','极地密度']]},
+  {sec:'航线 [s06]', items:[['s06.routes.tailwind_factor','顺风成本系数'],['s06.routes.headwind_factor','逆风成本系数'],['s06.routes.storm_kappa','风暴成本 κ'],['s06.routes.calm_max','无风惩罚上限']]},
+  {sec:'扩散 [s08]', items:[['s08.eps0','本地行 ε0'],['s08.eps_max','本地行 ε_max'],['s08.iso_d0','隔离度尺度'],['s08.iso_thr','孤岛文化阈值'],['s08.k_sub','每圈次级起源数'],['s08.resistance_max','阻力上限'],['s08.fast','快速模式(true/false)']]},
+];
+function getPath(obj,p){ return p.split('.').reduce((o,k)=>o&&o[k],obj); }
+function buildParams(){
+  const box=$('tab-params');
+  if (INLINE){ box.innerHTML='<div class="small">单文件模式不能重跑。用 <code>python -m zhouzhu_gen.cli serve</code> 打开完整操作台。</div>'; return; }
+  let html=`<div class="row"><label>seed</label><input type="number" id="pSeed" value="${W.seed}"></div>
+  <div class="row"><label>run id</label><input type="text" id="pRun" placeholder="留空自动"></div>`;
+  html+=`<div class="sec"><h3>障碍通过率矩阵 [s05.barriers]</h3><div class="param-grid"><div></div>${MODES.map(m=>`<div class="h mode-${m}">${MODE_ZH[m]}</div>`).join('')}`;
+  for (const b of ['A','B','C','D','F_N','F_S']){ html+=`<div>${b}</div>`+MODES.map(m=>`<div><input type="number" step="0.01" min="0" max="1" data-key="s05.barriers.${b}.permeability.${m}" value="${cfg.s05.barriers[b].permeability[m]}"></div>`).join(''); }
+  html+='</div></div>';
+  html+=`<div class="sec"><h3>局部因子 [s05.local]</h3><div class="param-grid"><div></div>${MODES.map(m=>`<div class="h mode-${m}">${MODE_ZH[m]}</div>`).join('')}`;
+  for (const b of ['gap','density_drop','climb']){ html+=`<div>${b}</div>`+MODES.map(m=>`<div><input type="number" step="0.01" min="0" max="1" data-key="s05.local.${b}.permeability.${m}" value="${cfg.s05.local[b].permeability[m]}"></div>`).join(''); }
+  html+='</div></div>';
+  html+=`<div class="sec"><h3>半衰日程 [s08.half_distance_days]（λ = ln2 / d）</h3><div class="param-grid" style="grid-template-columns:auto 1fr 1fr"><div></div><div class="h">下限</div><div class="h">上限</div>`;
+  for (const m of MODES){ const v=cfg.s08.half_distance_days[m]; html+=`<div class="mode-${m}">${MODE_ZH[m]}</div><div><input type="number" step="1" data-key="s08.half_distance_days.${m}" data-idx="0" value="${v[0]}"></div><div><input type="number" step="1" data-key="s08.half_distance_days.${m}" data-idx="1" value="${v[1]}"></div>`; }
+  html+='</div></div>';
+  html+=`<div class="sec"><h3>采纳阻力三档 [s08.resistance_range]</h3><div class="param-grid" style="grid-template-columns:auto 1fr 1fr"><div></div><div class="h">下限</div><div class="h">上限</div>`;
+  for (const t of ['low','mid','high']){ const v=cfg.s08.resistance_range[t]; html+=`<div>${t}</div><div><input type="number" step="0.05" data-key="s08.resistance_range.${t}" data-idx="0" value="${v[0]}"></div><div><input type="number" step="0.05" data-key="s08.resistance_range.${t}" data-idx="1" value="${v[1]}"></div>`; }
+  html+='</div></div>';
+  for (const sec of PARAM_SPEC){ html+=`<div class="sec"><h3>${sec.sec}</h3>`; for (const [k,label] of sec.items){ const v=getPath(cfg,k); html+=`<div class="row"><label style="min-width:120px">${label}</label><input type="text" data-key="${k}" value="${v}"></div>`; } html+='</div>'; }
+  html+=`<div class="btnrow"><button class="primary" id="btnRun">重新生成（缓存只重算受影响阶段）</button><button id="btnResetParams">恢复当前值</button></div>
+  <div class="small">耗时参考：只改 [s08] 约 15 s；改障碍/航线约 1 min；改岛数/骨架约 2 min（含全套图与九格表）。</div>
+  <div id="log"></div>`;
+  box.innerHTML=html;
+  box.querySelectorAll('input[data-key]').forEach(inp=>inp.dataset.orig=inp.value);
+  $('btnRun').onclick=startRun;
+  $('btnResetParams').onclick=()=>box.querySelectorAll('input[data-key]').forEach(inp=>inp.value=inp.dataset.orig);
+}
+function collectSets(){
+  const sets=[]; const pairs={};
+  document.querySelectorAll('#tab-params input[data-key]').forEach(inp=>{
+    if (inp.value===inp.dataset.orig) return;
+    if (inp.dataset.idx!==undefined){ const k=inp.dataset.key; pairs[k]=pairs[k]||getPath(cfg,k).slice(); pairs[k][+inp.dataset.idx]=+inp.value; }
+    else sets.push(`${inp.dataset.key}=${inp.value}`);
+  });
+  for (const k in pairs) sets.push(`${k}=[${pairs[k].join(',')}]`);
+  return sets;
+}
+async function startRun(){
+  const sets=collectSets(); const seed=+$('pSeed').value; const rid=$('pRun').value.trim()||null;
+  $('btnRun').disabled=true; $('log').textContent='提交：seed '+seed+'\n'+sets.join('\n')+'\n';
+  const r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seed,sets,run_id:rid})});
+  const j=await r.json(); if(j.error){ $('log').textContent+='错误：'+j.error; $('btnRun').disabled=false; return; }
+  const timer=setInterval(async()=>{
+    const s=await (await api('/api/run/status')).json();
+    $('log').textContent=s.log.join('\n'); $('log').scrollTop=1e9;
+    if(!s.running){ clearInterval(timer); $('btnRun').disabled=false;
+      if(s.error){ $('log').textContent+='\n失败：'+s.error; return; }
+      await loadRunList(); $('runsel').value=s.done_run; await loadRun(s.done_run); showTab('check'); }
+  },1000);
+}
+
+// ------------------------------------------------------------ 验收
+function buildCheck(){
+  const items=(checkData&&checkData.items)||[];
+  const hard=items.filter(i=>!i.pass&&i.hard).length, soft=items.filter(i=>!i.pass&&!i.hard&&!(i.note||'').startsWith('warn')).length;
+  $('checkBadge').innerHTML = items.length? `<span class="pill ${hard?'fail':(soft?'warn':'pass')}">验收 ${hard?'违反铁律':(soft?'现象未达':'全过')}</span>`:'';
+  $('tab-check').innerHTML = items.length? items.map(i=>`<div class="sec"><span class="pill ${i.pass?'pass':((i.note||'').startsWith('warn')?'warn':'fail')}">${i.pass?'PASS':((i.note||'').startsWith('warn')?'WARN':'FAIL')}</span> <b>${i.id}</b> ${i.hard?'【硬】':''}${i.name}<div class="small">值 ${JSON.stringify(i.value)}<br>阈 ${JSON.stringify(i.threshold)}${i.worst&&i.worst.length?'<br>样例 '+JSON.stringify(i.worst.slice(0,2)):''}</div></div>`).join('') : '<div class="small">该 run 尚无验收报告（跑到第 ⑨ 步才有）。</div>';
+}
+
+// ------------------------------------------------------------ UI 绑定
+function showTab(t){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t)); document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.id==='tab-'+t)); }
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+['colorBy','slotSel','valueSel','traitSel','fieldSel','modeSel'].forEach(id=>$(id).addEventListener('change',()=>{ if(id==='slotSel') fillValueSel(); if(id==='modeSel') distCache=null; updateRowVisibility(); repaintIslands(); if($('lyIso').checked) repaintEdges(); }));
+['lyIslands'].forEach(id=>$(id).addEventListener('change',repaintIslands));
+['lyEdges','lyHubs','lyTrunks','lyGeo','lyIso','edgeColor','edgeMode','edgeFilter','theta'].forEach(id=>$(id).addEventListener('change',()=>{ updateRowVisibility(); repaintEdges(); }));
+$('edgeN').addEventListener('input',()=>$('edgeNv').textContent=$('edgeN').value);
+$('edgeN').addEventListener('change',repaintEdges);
+$('theta').addEventListener('input',()=>$('thetav').textContent=$('theta').value);
+$('regionSel').addEventListener('change',()=>loadGrid(+$('regionSel').value));
+$('runsel').addEventListener('change',()=>loadRun($('runsel').value));
+$('btnView').onclick=()=>{ const g=W.bands.G; globe.pointOfView({lat:g.lat,lng:g.lon,altitude:2.2},800); };
+$('btnRotate').onclick=()=>{ rotating=!rotating; globe.controls().autoRotate=rotating; $('btnRotate').textContent=rotating?'停止自转':'自转'; };
+
+(async()=>{ try{ await loadRunList(); if(!currentRun){ $('loading').textContent='out/ 下没有可用 run，请先 zhouzhu run'; return; } updateRowVisibility(); await loadRun(currentRun); } catch(e){ $('loading').textContent='加载失败：'+e.message; console.error(e); } })();
+</script>
+</body>
+</html>

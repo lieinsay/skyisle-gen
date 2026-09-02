@@ -17,3 +17,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["zhouzhu_gen*"]
+
+[tool.setuptools.package-data]
+"zhouzhu_gen.web" = ["static/*.html"]

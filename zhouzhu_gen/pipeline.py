@@ -82,7 +82,7 @@ def _stage_key_chain(cfg: dict, seed: int) -> list[str]:
 
 
 def run(cfg: dict, seed: int, out_root: Path, upto: int = 9,
-        force_from: int | None = None, explain: bool = False) -> Path:
+        force_from: int | None = None, explain: bool = False, log=print) -> Path:
     run_id = str(cfg.get("run", {}).get("id") or f"seed{seed}")
     out_dir = Path(out_root) / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -109,11 +109,11 @@ def run(cfg: dict, seed: int, out_root: Path, upto: int = 9,
             hit = json.loads(meta_p.read_text(encoding="utf-8")).get("stage_key") == key
         if hit:
             if explain:
-                print(f"[{name}] cache hit ({key[:8]})")
+                log(f"[{name}] cache hit ({key[:8]})")
             continue
         chain_broken = True
         t0 = time.perf_counter()
-        print(f"[{name}] running …", flush=True)
+        log(f"[{name}] running …")
         summary = impls[idx].run(ctx) or {}
         dt = time.perf_counter() - t0
         meta = {
@@ -130,7 +130,7 @@ def run(cfg: dict, seed: int, out_root: Path, upto: int = 9,
         meta_p.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True, indent=1),
                           encoding="utf-8")
         line = "; ".join(f"{k}={v}" for k, v in summary.items() if not isinstance(v, (dict, list)))
-        print(f"[{name}] done in {dt:.1f}s  {line}", flush=True)
+        log(f"[{name}] done in {dt:.1f}s  {line}")
 
     manifest = {
         "run_id": run_id,

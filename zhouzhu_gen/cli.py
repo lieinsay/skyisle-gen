@@ -51,7 +51,7 @@ def main(argv=None):
 
     p_viz = sub.add_parser("viz", help="可视化某一层")
     p_viz.add_argument("layer", help="wind|islands|climate|barriers|perm|routes|centers|"
-                                     "trait|slot|isogloss|distance|all")
+                                     "trait|slot|isogloss|distance|all|web（单文件操作台）")
     p_viz.add_argument("arg", nargs="?", default=None, help="trait id / slot id / node id / mode")
     p_viz.add_argument("--run", default="out/seed42")
     p_viz.add_argument("--mode", default=None)
@@ -72,7 +72,17 @@ def main(argv=None):
     p_nine.add_argument("--run", default="out/seed42")
     p_nine.add_argument("--region", type=int, default=None)
 
+    p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
+    p_serve.add_argument("--out", default="out")
+    p_serve.add_argument("--port", type=int, default=8642)
+    p_serve.add_argument("--no-open", action="store_true")
+
     a = ap.parse_args(argv)
+
+    if a.cmd == "serve":
+        from .web.server import serve
+        serve(Path(a.out), a.port, open_browser=not a.no_open)
+        return 0
 
     if a.cmd in ("run", "stage"):
         cfg = load_config([Path(x) for x in a.config], a.sets)
@@ -84,6 +94,11 @@ def main(argv=None):
 
     ctx = _ctx_from_run(a.run)
     if a.cmd == "viz":
+        if a.layer == "web":
+            from .web.server import export_static
+            out = export_static(ctx, ctx.stage_dir(9) / "viewer.html")
+            print(f"已导出单文件操作台：{out}（双击打开，无需服务器；无重跑功能）")
+            return 0
         from .viz import render
         render(ctx, a.layer, a.arg, mode=a.mode, show=a.show)
         return 0
