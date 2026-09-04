@@ -1,4 +1,4 @@
-"""④ 气候：降水纬度分异、温度、风暴强度（含 G 尖峰）、稳定度、季节窗口。"""
+"""④ 气候：降水纬度分异、温度、风暴强度（含 G 尖峰）、稳定度、季节窗口、集雨容量。"""
 from __future__ import annotations
 
 import numpy as np
@@ -71,9 +71,17 @@ def run(ctx):
                  storm=storm.astype(np.float32), storm_no_g=storm_no_g.astype(np.float32),
                  stability=stability.astype(np.float32),
                  window=window.astype(np.float32))
+    # ---- 集雨容量（docs/02 §六：岛上没有长期河流，淡水全靠集雨面）----
+    # catch = 集雨面积 × 降水强度：一岛能养多少人的地理上限。
+    # 是 ⑥ 介数源权重、⑦ 适宜度、⑨ 九格表 ⑤⑧ 的人口／政治体量代理。
+    # 只用面积与降水，不含高度（原则乙）。
+    catch = isl["area_km2"].astype(np.float64) * precip_i
+
     ctx.save_npz(4, "climate_islands",
                  precip=precip_i.astype(np.float32), temp=temp_i.astype(np.float32),
                  storm=storm_i.astype(np.float32), stability=stability_i.astype(np.float32),
-                 window=window_i.astype(np.float32))
+                 window=window_i.astype(np.float32), catch=catch.astype(np.float32))
     return {"precip_range": [round(float(precip.min()), 2), round(float(precip.max()), 2)],
-            "storm_max": round(float(storm.max()), 2)}
+            "storm_max": round(float(storm.max()), 2),
+            "catch_median": round(float(np.median(catch)), 1),
+            "catch_p95": round(float(np.quantile(catch, 0.95)), 1)}

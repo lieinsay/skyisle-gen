@@ -152,3 +152,73 @@ def test_no_discrete_culture_assignment():
         text = (pkg / f).read_text(encoding="utf-8")
         assert "flood" not in text.lower()
         assert not re.search(r"culture_id|culture_label", text)
+
+
+# ---------------- 岛屿规模（面积 = 集雨面 = 政治体量，docs/02 §六/§七） ----------------
+def test_area_config_validation():
+    """面积参数的合法性校验。"""
+    with pytest.raises(ValueError):
+        load_config(sets=["s03.islands.area_lognorm_sigma=0"])
+    with pytest.raises(ValueError):
+        load_config(sets=["s03.islands.area_density_beta=-1"])
+    with pytest.raises(ValueError):
+        load_config(sets=["s07.centers.area_exponent=-0.5"])
+    with pytest.raises(ValueError):
+        load_config(sets=["s01.planet.radius_km=0"])
+
+
+def test_planet_default_is_earth_sized():
+    """默认行星 = 地球大小（半径 6371 km）。"""
+    cfg = load_config()
+    assert float(cfg["s01"]["planet"]["radius_km"]) == pytest.approx(6371.0)
+
+
+def test_area_anticorrelates_with_density():
+    """面积 ~ 密度反相关：密接区碎成小岛，孤悬区聚成大岛（β > 0 时）。"""
+    rng = np.random.default_rng(0)
+    n = 20000
+    dn = rng.uniform(0.0, 1.0, n)          # 归一化 log 密度
+    beta, mu, sigma = 1.5, 3.4, 0.95
+    area = np.exp(rng.normal(mu + beta * (0.5 - dn), sigma))
+    lo = np.median(area[dn > 0.8])         # 高密度处
+    hi = np.median(area[dn < 0.2])         # 低密度处
+    assert hi > lo, "低密度处的岛应更大"
+    assert 1.5 < hi / lo < 6.0, f"反相关强度失控：{hi / lo:.2f}×"
+
+
+def test_area_exponent_zero_recovers_old_suitability():
+    """γ=0 时适宜度退回 docs/12 §五 原式（完全不看面积）。"""
+    pn = np.array([0.8, 0.5, 0.2])
+    stab = np.array([0.9, 0.7, 0.6])
+    dn = np.array([1.0, 0.5, 0.25])
+    an = np.array([0.1, 0.9, 0.4])
+    base = pn * stab * dn
+    assert np.allclose(base * an ** 0.0, base)
+    assert not np.allclose(base * an ** 1.0, base)
+
+
+# ---------------- 缓存 key 链 ----------------
+def test_template_change_invalidates_only_ninegrid_stage():
+    """改生产模板只该让 ⑨ 失效，①–⑧ 必须继续命中缓存。"""
+    import copy
+    from zhouzhu_gen.pipeline import _stage_key_chain
+    cfg = load_config()
+    base = _stage_key_chain(cfg, 42)
+    c2 = copy.deepcopy(cfg)
+    c2["production_templates"]["organization"]["dense"]["text"] = "改了"
+    k2 = _stage_key_chain(c2, 42)
+    assert base[:8] == k2[:8], "改生产模板不该让 ①–⑧ 失效"
+    assert base[8] != k2[8], "改生产模板必须让 ⑨ 失效"
+
+
+def test_slots_change_invalidates_diffusion_stage():
+    """改槽位表必须让 ⑧⑨ 失效（否则旧特征场会被当成命中）。"""
+    import copy
+    from zhouzhu_gen.pipeline import _stage_key_chain
+    cfg = load_config()
+    base = _stage_key_chain(cfg, 42)
+    c2 = copy.deepcopy(cfg)
+    c2["slots"]["slot"][0]["zh"] = "改了"
+    k2 = _stage_key_chain(c2, 42)
+    assert base[:7] == k2[:7], "改槽位表不该让 ①–⑦ 失效"
+    assert base[7] != k2[7] and base[8] != k2[8], "改槽位表必须让 ⑧⑨ 失效"

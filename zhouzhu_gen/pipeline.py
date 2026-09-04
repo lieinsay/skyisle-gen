@@ -30,10 +30,12 @@ STAGES = [
 
 # 改动会使缓存失效的实现版本号（每阶段独立）
 STAGE_VERSIONS = {i: "1" for i, _ in STAGES}
-STAGE_VERSIONS[3] = "5"  # D 域下界=赤道核心边缘；G 邻域几何弦；G 盘/赤道核心解析排除
-STAGE_VERSIONS[4] = "2"  # storm_no_g
+STAGE_VERSIONS[3] = "6"  # D 域下界=赤道核心边缘；G 邻域几何弦；面积 ~ 密度反相关
+STAGE_VERSIONS[4] = "3"  # storm_no_g；集雨容量 catch
 STAGE_VERSIONS[5] = "3"  # perm_no_g；D 的 Φ 域与 s03 对齐
-STAGE_VERSIONS[6] = "3"  # betweenness_sources；cost_no_g
+STAGE_VERSIONS[6] = "4"  # betweenness_sources；cost_no_g；源权重改用集雨容量
+STAGE_VERSIONS[7] = "2"  # 适宜度含岛屿规模项
+STAGE_VERSIONS[9] = "2"  # 九格表 ①⑤⑧ 含面积/容量
 
 
 class Context:
@@ -72,11 +74,20 @@ class Context:
         return self.cfg.get(f"s{idx:02d}", {})
 
 
+# 独立配置文件只影响读它们的阶段：⑧ 由 slots/traits 生成特征表，⑨ 还要用生产模板写九格表。
+# 不放进所有阶段的 key，否则改一句模板会让 ①–⑦ 全部失效。
+STAGE_EXTRA_SECTIONS: dict[int, tuple[str, ...]] = {
+    8: ("slots", "traits_manual"),
+    9: ("slots", "traits_manual", "production_templates"),
+}
+
+
 def _stage_key_chain(cfg: dict, seed: int) -> list[str]:
     keys = []
     prev = "root"
     for idx, _name in STAGES:
-        prev = section_hash(prev, cfg, f"s{idx:02d}", seed, STAGE_VERSIONS[idx])
+        prev = section_hash(prev, cfg, f"s{idx:02d}", seed, STAGE_VERSIONS[idx],
+                            STAGE_EXTRA_SECTIONS.get(idx, ()))
         keys.append(prev)
     return keys
 

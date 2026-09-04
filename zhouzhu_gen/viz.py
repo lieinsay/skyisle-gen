@@ -121,6 +121,35 @@ def viz_wind(ctx, show=False):
     return _save(fig, ctx, "s02_wind", show)
 
 
+def _area_marker(area, lo=1.0, hi=14.0):
+    """点大小 ∝ √面积，在 p2/p98 处夹断（对数正态的尾巴会把 98% 的点压到最小端）。"""
+    s = np.sqrt(np.maximum(np.asarray(area, dtype=np.float64), 1e-9))
+    a, b = np.quantile(s, 0.02), np.quantile(s, 0.98)
+    return lo + (hi - lo) * np.clip((s - a) / max(1e-9, b - a), 0.0, 1.0)
+
+
+def viz_scale(ctx, show=False):
+    """岛屿规模：面积与集雨容量（docs/02 §六 一岛 = 一水共同体 = 一个基本政治单位）。"""
+    isl = ctx.load_npz(3, "islands")
+    clim = ctx.load_npz(4, "climate_islands")
+    center = _center_lon(ctx)
+    x = _recenter(isl["lon"], center)
+    y = isl["lat"]
+    fig, axes = plt.subplots(2, 1, figsize=(14, 12))
+    for ax, val, title in (
+            (axes[0], isl["area_km2"], "岛屿面积 km²（log10）"),
+            (axes[1], clim["catch"], "集雨容量 = 面积 × 降水（log10）")):
+        v = np.log10(np.maximum(np.asarray(val, dtype=np.float64), 1e-6))
+        sc = ax.scatter(x, y, s=3, c=v, cmap="viridis", linewidths=0)
+        _basemap(ax, ctx, center)
+        ax.set_title(title)
+        fig.colorbar(sc, ax=ax, shrink=0.8)
+    med = float(np.median(isl["area_km2"]))
+    mx = float(np.max(isl["area_km2"]))
+    _stamp(fig, ctx, f"③④ 岛屿规模（中位 {med:.0f} km²，最大 {mx:.0f} km²）")
+    return _save(fig, ctx, "s04_scale", show)
+
+
 def viz_islands(ctx, show=False):
     isl = ctx.load_npz(3, "islands")
     dg = ctx.load_npz(3, "density_grid")
@@ -128,16 +157,17 @@ def viz_islands(ctx, show=False):
     fig, axes = plt.subplots(2, 1, figsize=(14, 12))
     ax = axes[0]
     x = _recenter(isl["lon"], center)
+    msize = _area_marker(isl["area_km2"])
     for ci, cname in enumerate(CLASS_NAMES):
         m = isl["cls"] == ci
-        ax.scatter(x[m], isl["lat"][m], s=3, c=CLASS_COLORS[cname],
+        ax.scatter(x[m], isl["lat"][m], s=msize[m], c=CLASS_COLORS[cname],
                    label=f"{CLASS_ZH[cname]} ({int(m.sum())})", linewidths=0)
     lay = isl["layered"]
     ax.scatter(x[lay], isl["lat"][lay], s=8, facecolors="none", edgecolors="k",
                linewidths=0.4, label=f"叠层 ({int(lay.sum())})")
     _basemap(ax, ctx, center)
     ax.legend(loc="lower left", fontsize=8, markerscale=2)
-    ax.set_title("岛屿分布（按地形类）")
+    ax.set_title("岛屿分布（按地形类；点大小 ∝ √面积）")
     ax2 = axes[1]
     xs = _recenter(dg["lons"], center)
     order = np.argsort(xs)
@@ -449,6 +479,8 @@ def render(ctx, layer: str, arg=None, mode=None, show=False):
         p = viz_centers(ctx, show)
     elif layer == "iso":
         p = viz_iso(ctx, show)
+    elif layer == "scale":
+        p = viz_scale(ctx, show)
     elif layer == "trait":
         p = viz_trait(ctx, arg, show)
     elif layer == "slot":
@@ -467,7 +499,7 @@ def render(ctx, layer: str, arg=None, mode=None, show=False):
 
 def render_all(ctx) -> int:
     n = 0
-    for fn in (viz_wind, viz_islands, viz_climate, viz_barriers, viz_routes,
+    for fn in (viz_wind, viz_islands, viz_scale, viz_climate, viz_barriers, viz_routes,
                viz_centers, viz_iso):
         fn(ctx)
         n += 1

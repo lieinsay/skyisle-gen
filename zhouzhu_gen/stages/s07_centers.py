@@ -1,6 +1,7 @@
 """⑦ 文明中心（骨架窗内涌现 + 固定 id）、史前扩散、⑦b 地区划分与中心间干线。
 
-适宜度 = 降水 × 稳定气候 × 岛密度（docs/12 §五 ⑦）。不含高度（原则乙）。
+适宜度 = 降水 × 稳定气候 × 岛密度 × 岛屿规模^γ（docs/12 §五 ⑦ + docs/02 §六 集雨面）。
+不含高度（原则乙）；面积不是海拔，是集雨面与人口容量。
 铁律自检：本阶段的社会推导不读 height_m。
 """
 from __future__ import annotations
@@ -23,7 +24,12 @@ def _suitability(ctx, isl, clim, ce):
     dn = (dn - dn.min()) / max(1e-9, dn.max() - dn.min())
     p = clim["precip"].astype(np.float64)
     pn = p / p.max()
-    suit = pn * clim["stability"].astype(np.float64) * dn
+    # 岛屿规模：集雨面越大，越养得起一个中心（docs/02 §六「一岛 = 一水共同体」、
+    # §七「土地绝对有限」）。γ = 0 即退回 docs/12 §五 的原式，完全不看面积。
+    gamma = float(ctx.section(7)["centers"]["area_exponent"])
+    an = np.log(np.maximum(isl["area_km2"].astype(np.float64), 1e-9))
+    an = (an - an.min()) / max(1e-9, an.max() - an.min())
+    suit = pn * clim["stability"].astype(np.float64) * dn * an ** gamma
     # 候选边上 2 跳邻域平滑
     src, dst = ce["src"], ce["dst"]
     n = dens.size

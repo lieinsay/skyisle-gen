@@ -58,8 +58,11 @@ noise_base_cells = 8
 noise_octaves = 5
 noise_persistence = 0.55
 noise_gamma = 3.0             # 密度 = 带基线 × exp(gamma × noise)：成簇程度
-area_lognorm_mu = 1.0         # ln(km²)
-area_lognorm_sigma = 1.2
+# 面积 = 集雨面 = 人口容量 = 政治体量（docs/02 §六/§七），不是装饰字段。
+area_lognorm_mu = 3.4         # ln(km²)：面积中位数基线 ≈ e^3.4 ≈ 30 km²
+area_lognorm_sigma = 0.95     # 对数标准差：重尾，少数百 km² 级大岛作中心候选
+area_density_beta = 1.5       # 面积与岛密度反相关强度：密接区碎成小岛，孤悬区聚成大岛
+                              # （同样的浮石物质，碎得多则每块小）。0 = 面积与密度无关
 height_scale_m = 1500.0
 height_noise_cells = 5
 height_jitter_m = 150.0
@@ -183,6 +186,11 @@ g_neighborhood_radii = 2.5    # G 邻域 = 此倍数 × R_G
 [s07.centers]
 tau_c = 0.5                   # 窗内最大适宜度 < τ_c × 全局最大 → 报错（原则庚）
 smooth_hops = 2
+# 适宜度 = 降水 × 稳定 × 岛密度 × 岛屿规模^γ；γ=0 即完全不看面积。
+# γ 取 0.5 而非 1.0：归一化 log 面积与归一化 log 岛密度的标准差都是 ≈0.13、相关 −0.21，
+# γ=1 会让「面积」这个随机量与「岛密度」这个地理量等权且互相抵消，稀释中心涌现的地理结构
+# （实测 seed 2026 的 P7 从 238 个拒绝点掉到 31 个、地区覆盖不达标）。见 docs/DESIGN-NOTES §四点五。
+area_exponent = 0.5
 origin = "north_east"         # 人类起源地：中心 id 或 "auto"
 prehist_wind_exponent = 2.0   # 史前抱石而渡：风因子指数（强单向）
 yr_per_day = 50.0             # 史前扩散 1 天航程 ≈ 多少年（叙事换算）

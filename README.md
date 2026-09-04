@@ -53,7 +53,8 @@ python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
 - **⑥ 顺风廉价逆风昂贵**：成本 = 距离 × 风向因子^α(模式) × 无风惩罚 × 风暴 × 爬升；
   使节/迁徙对风向不敏感（α=0.2，docs/11 E 行）。干线与枢纽由抽样介数得出，
   不依赖文明中心（顺序不可倒）。
-- **⑦ 中心是涌现的**：适宜度 = 降水 × 稳定 × 岛密度（不含高度——原则乙），在
+- **⑦ 中心是涌现的**：适宜度 = 降水 × 稳定 × 岛密度 × 岛屿规模^γ（不含高度——原则乙；
+  面积是集雨面不是海拔，docs/02 §六「一岛 = 一水共同体 = 一个基本政治单位」），在
   docs/11 定稿的三个骨架窗内取极大；推不出即报错（原则庚）。附史前扩散
   （顺风单向抱石而渡）与地区划分（仅输出用，非文化边界）。
 - **⑧ adopt 用对称不动点**：`S_t = R_t(1 − r_t·max_{u≠t} S_u)` Jacobi 迭代，
@@ -65,7 +66,8 @@ python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
 ## 可视化（调试全靠看中间层）
 
 ```bash
-python -m zhouzhu_gen.cli viz wind|islands|climate|barriers|routes|centers|iso --run out/seed42
+python -m zhouzhu_gen.cli viz wind|islands|scale|climate|barriers|routes|centers|iso --run out/seed42
+python -m zhouzhu_gen.cli viz scale                     # 岛屿面积 + 集雨容量（log 着色）
 python -m zhouzhu_gen.cli viz perm --mode daily        # 某模式的通过率图
 python -m zhouzhu_gen.cli viz trait calendar@north_east # 单特征 reach/adopt/strength 三联图
 python -m zhouzhu_gen.cli viz slot white_hemp           # 槽位比例分布（每值一张）
@@ -93,7 +95,7 @@ python -m zhouzhu_gen.cli viz web --run out/seed42   # 导出单文件 viewer.ht
 
 | 栏 | 能做什么 |
 |---|---|
-| **图层与着色**（左） | 岛屿按地形类 / 地区 / 槽位份额 / 特征 reach·adopt·strength / 隔离度 / 适宜度 / 降水 / 史前到达 / 流量着色；边按某模式通过率 / 流量 / 所属障碍着色，可筛干线、跨障碍边、不可通边、G 阻断边；同言线（跨 θ 的边）按模式着色；障碍几何、枢纽、中心间干线开关 |
+| **图层与着色**（左） | 点大小按岛屿面积（可关）；岛屿按地形类 / 面积 / 集雨容量 / 地区 / 槽位份额 / 特征 reach·adopt·strength / 隔离度 / 适宜度 / 降水 / 史前到达 / 流量着色；边按某模式通过率 / 流量 / 所属障碍着色，可筛干线、跨障碍边、不可通边、G 阻断边；同言线（跨 θ 的边）按模式着色；障碍几何、枢纽、中心间干线开关 |
 | **探针**（右） | 点岛：属性、隔离度、出边表（四模式通过率 + 障碍）、各槽位比例分布、「传到了但不要」标记；「以此为家」→ 全球按文化距离着色（可按模式过滤）；再点一岛 → 双地按模式的文化距离 + 「画出最优路径」（逐跳成本/通过率/累计 reach） |
 | **九格表**（右） | 任一地区的九格表草稿即时生成并渲染；点岛可直接跳转 |
 | **参数**（右） | 障碍通过率矩阵、局部因子、半衰日程、阻力三档、骨架、岛数、风成本……改完「重新生成」：后台跑管线（缓存只重算受影响阶段），进度实时显示，完成后自动切到新 run 并显示验收结果 |
@@ -122,6 +124,9 @@ python -m zhouzhu_gen.cli probe trait calendar@north_east --node 6468  # 谁砍�
 | 距离衰减（每模式半衰日程） | `[s08.half_distance_days]`（校验强制 daily ≤ trade ≤ migrate ≤ envoy） |
 | 骨架（D 位置、G 半径、绕道岛弧、中心窗） | `[skeleton]` |
 | 岛数 / 密度 / 分类阈值 | `[s03.islands]`、`[shared.ships]` |
+| 行星大小 / 自转 / 倾角 | `[s01.planet]`（默认 `radius_km = 6371`，即地球）、`shared.day_range_km` |
+| 岛屿面积分布 | `[s03.islands]` 的 `area_lognorm_mu/sigma`、`area_density_beta`（面积与岛密度反相关） |
+| 面积在中心涌现中的权重 | `[s07.centers].area_exponent`（γ，默认 0.5；0 = 完全不看面积） |
 | 特征表 | `config/slots.toml`；或写 `config/traits.toml` 手工指定（优先于模板） |
 | 验收阈值 | `[check]` |
 

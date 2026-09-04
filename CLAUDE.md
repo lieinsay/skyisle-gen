@@ -12,7 +12,7 @@
   $py -m zhouzhu_gen.cli run --seed 42            # 九步全跑（约 2 分钟；只改 [s08] 约 15 s）
   $py -m zhouzhu_gen.cli stage 6 --seed 42        # 从第 6 步强制重算
   $py -m zhouzhu_gen.cli check --run out/seed42   # 七条验收 + 铁律自检（exit 0/1/2）
-  $py -m zhouzhu_gen.cli viz all|wind|routes|isogloss|slot <id>|trait <id>|distance <node> --run out/seed42
+  $py -m zhouzhu_gen.cli viz all|wind|islands|scale|routes|isogloss|slot <id>|trait <id>|distance <node> --run out/seed42
   $py -m zhouzhu_gen.cli probe node <id> | edge a b | path a b --mode m | trait <id> --node j
   $py -m zhouzhu_gen.cli ninegrid --run out/seed42 [--region K]
   $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）
@@ -40,17 +40,19 @@ zhouzhu_gen/
 config/default.toml（所有参数）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
-关键产物：`s03 islands.npz/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`。
+关键产物：`s03 islands.npz`（含 `area_km2`：面积 = 集雨面 = 政治体量）`/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s04 climate_islands.npz`（含 `catch` = 面积×降水，集雨容量）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`。
 
 ## 改代码时必须遵守
 
 1. **改了阶段代码就把 `pipeline.STAGE_VERSIONS[k]` +1**，否则旧缓存会被当成命中。只改配置不用改版本。
 2. **原则乙**：`s07/s08/ninegrid` 不得出现 `["height_m"]`（check 与 pytest 都有静态断言）。高度只进 s04 温度、s05 落差因子、s06 爬升成本。
+   **面积不受此限**：`area_km2` 是集雨面与人口容量（docs/02 §六），可以进社会推导——高度才是「地理决定贵贱」的禁区。
 3. **铁律五**：文化只以 share/strength 浮点场存在。不得从 argmax 派生地区/标签，不得 flood fill。P1b（每条边的 TV 差 ≤ a + b·(λ_max·cost + max L)）是硬项。
 4. **原则己**：每岛必须可达（史前扩散全覆盖）、每槽位 share 和为 1（本地行 ε>0 保证）。任何会造出孤岛的改动（采样、边集、G 阻断）都要查 `IL-ji`。
 5. 区域障碍必须走 **Φ 穿越归一化**（`s05.node_phi`），不得逐边乘因子（跨带通过率会随岛数指数衰减）。
 6. 随机数只从 `rng.stage_rng / entity_rng` 取；列表排序后使用；不迭代 set。
 7. 新增参数：写进 `config/default.toml` 对应阶段段落并给注释；操作台参数面板（`index.html` 的 `PARAM_SPEC` 或矩阵区块）按需加。
+8. `slots.toml` / `traits.toml` / `production_templates.toml` 不在 `default.toml` 里，通过 `pipeline.STAGE_EXTRA_SECTIONS` 进 ⑧⑨ 的缓存 key。新增这类独立配置文件要同步登记，否则改了不会失效。
 
 ## 当前默认值的由来（调参前先看）
 
@@ -58,6 +60,11 @@ config/default.toml（所有参数）slots.toml（槽位→模式/阻力档）pr
 - 分类阈值 = 船只参数：桥 0.15 天 / 小船 1 天 / 大船 3 天（1 天 = 500 km）。西风带密度 0.05、极地 0.012 才出稀疏/孤悬。
 - 半衰日程：daily 5–10、trade 15–30、migrate 30–60、envoy 40–80 天。阻力：低 .05–.2 / 中 .3–.6 / 高 .7–.95。
 - ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 2；每高隔离分量 3 条本地起源特征。
+- 行星：半径 6371 km（地球）、自转 24 h、倾角 20°、1 日航程 500 km → 绕行 80 日。半径只经 `days_per_rad` 影响所有边的天数。
+- 面积：对数正态 μ=3.4（中位 ≈ 30 km²）σ=0.95，μ 再按局部岛密度调整 `β·(0.5 − dn)`，β=1.5（密接区碎成小岛，孤悬区聚成大岛）。
+  集雨容量 `catch = 面积 × 降水`（s04）。用处：s06 介数源权重、s07 适宜度（× 规模^γ，**γ=0.5**）、s09 九格表 ①⑤⑧。γ=0 即退回旧式。
+  γ 不能取 1：归一化 log 面积与 log 岛密度的 std 都是 ≈0.13 且相关 −0.21，等权会抹平适宜度的地理结构（seed 2026 的 P7 会挂）。
+- **seed 2026 是 P7 的哨兵种子**（拒绝点数只有 seed 42/7 的零头）。改 ⑦ 适宜度或次级起源相关的东西，先拿它试。
 - 验收阈值中几个是按三 seed 校准过的：P5 强度比 2.0、重心顺风占比 0.75；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
 
 ## 未做 / 可改进（按价值排序）

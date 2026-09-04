@@ -48,6 +48,17 @@ def _wrap_dlon(a, b):
     return ((a - b + 180.0) % 360.0) - 180.0
 
 
+def _rank_q(v: np.ndarray) -> np.ndarray:
+    """各地区在全体地区中的分位 [0,1]（写相对不写绝对）。"""
+    n = v.size
+    if n <= 1:
+        return np.full(n, 0.5)
+    order = np.argsort(v, kind="stable")
+    q = np.empty(n)
+    q[order] = np.arange(n) / (n - 1)
+    return q
+
+
 class RegionData:
     """一次性汇总各地区的推导输入。"""
 
@@ -78,6 +89,17 @@ class RegionData:
                           if m.size else 1 for m in self.members]
         self.layered_share = [float(self.isl["layered"][m].mean()) if m.size else 0.0
                               for m in self.members]
+        # 面积与集雨容量（docs/02 §六/§七）：一岛 = 一水共同体 = 一个基本政治单位
+        area_i = self.isl["area_km2"]
+        catch_i = self.clim["catch"]
+        self.area_med = np.array([float(np.median(area_i[m])) if m.size else 0.0
+                                  for m in self.members])
+        self.area_max = np.array([float(area_i[m].max()) if m.size else 0.0
+                                  for m in self.members])
+        self.catch_med = np.array([float(np.median(catch_i[m])) if m.size else 0.0
+                                   for m in self.members])
+        self.area_q = _rank_q(self.area_med)
+        self.catch_q = _rank_q(self.catch_med)
         from .stages.s02_wind import band_id_of_lat
         planet = ctx.load_json(1, "planet")["bands"]
         self.band_of = band_id_of_lat(self.isl["lat"], planet)
@@ -173,7 +195,9 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
     # ---------- ①
     d_n = min((cross[t]["cost_out"] for t in neighbors), default=float("nan"))
     lay = rd.layered_share[r]
-    l1 = f"{CLASS_ZH[cls]}。与最近邻区相距约 {max(d_n, 0.1):.1f} 日。"
+    l1 = (f"{CLASS_ZH[cls]}。与最近邻区相距约 {max(d_n, 0.1):.1f} 日。"
+          f" 岛屿中位面积约 {rd.area_med[r]:.0f} km²，最大者 {rd.area_max[r]:.0f} km²"
+          f"（岛外即虚空，无垦荒无拓边）。")
     if lay > 0.15:
         tenths = "一二三四五六七八九"[min(8, max(0, int(lay * 10) - 1))]
         l1 += f" 约{tenths}成岛屿呈叠层堆叠。"
@@ -233,6 +257,10 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
         l4 += rd.prod.get("layered_suffix", {}).get("text", "")
     l4 += " 特有物种与专项特产【待填（政治层/03）】。"
     l5 = rd.prod.get("organization", {}).get(cls, {}).get("text", "【待填】")
+    scale_tier = "large" if rd.area_q[r] >= 0.66 else ("small" if rd.area_q[r] < 0.33 else "mid")
+    wp = rd.prod.get("water_polity", {}).get(scale_tier, {}).get("text", "")
+    if wp:
+        l5 += " " + wp
     l6 = rd.prod.get("military", {}).get(cls, {}).get("text", "【待填】")
     nb_dense = [t for t in neighbors if CLASS_NAMES[rd.cls_major[t]] == "dense"]
     nb_sparse = [t for t in neighbors if CLASS_NAMES[rd.cls_major[t]] == "sparse"]
@@ -249,6 +277,15 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
               f"（通婚方向）。世仇与盟约【待填（政治层）】。")
     else:
         l8 = "无邻区记录（孤悬）。外购几不可得。"
+    press_tier = "high" if rd.catch_q[r] < 0.33 else ("low" if rd.catch_q[r] >= 0.66 else "mid")
+    pp = rd.prod.get("population_pressure", {}).get(press_tier, {}).get("text", "")
+    if pp:
+        l8 += " " + pp
+    sources["scale"] = {"area_median_km2": round(float(rd.area_med[r]), 1),
+                        "area_quantile": round(float(rd.area_q[r]), 2),
+                        "catch_median": round(float(rd.catch_med[r]), 1),
+                        "catch_quantile": round(float(rd.catch_q[r]), 2),
+                        "water_polity_tier": scale_tier, "pressure_tier": press_tier}
 
     # ---------- ⑨（核心：写强度、写相对、错位由 ②b 解释）----------
     l9_lines = []

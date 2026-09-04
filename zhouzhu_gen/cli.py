@@ -50,8 +50,8 @@ def main(argv=None):
     p_stage.add_argument("--upto", type=int, default=9)
 
     p_viz = sub.add_parser("viz", help="可视化某一层")
-    p_viz.add_argument("layer", help="wind|islands|climate|barriers|perm|routes|centers|"
-                                     "trait|slot|isogloss|distance|all|web（单文件操作台）")
+    p_viz.add_argument("layer", help="wind|islands|scale|climate|barriers|perm|routes|centers|"
+                                     "iso|trait|slot|isogloss|distance|all|web（单文件操作台）")
     p_viz.add_argument("arg", nargs="?", default=None, help="trait id / slot id / node id / mode")
     p_viz.add_argument("--run", default="out/seed42")
     p_viz.add_argument("--mode", default=None)

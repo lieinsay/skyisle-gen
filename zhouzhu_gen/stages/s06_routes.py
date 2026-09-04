@@ -1,7 +1,7 @@
 """⑥ 航线网络：有向成本（顺风廉价逆风昂贵）、分模式成本、抽样介数 → 干线与枢纽。
 
 风是「轻度影响」（docs/02 §四）：只进成本，不进通过率。
-干线/枢纽只由地理量（密度×面积加权的抽样介数）决定，不读文明中心（⑦ 在后，不可倒序）。
+干线/枢纽只由地理量（密度×集雨容量加权的抽样介数）决定，不读文明中心（⑦ 在后，不可倒序）。
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ def run(ctx):
     ce = ctx.load_npz(3, "cand_edges")
     wind = ctx.load_npz(2, "wind")
     clim = ctx.load_npz(4, "climate_grid")
+    clim_i = ctx.load_npz(4, "climate_islands")
     pm = ctx.load_npz(5, "perm")
     g_info = ctx.load_json(2, "bands")["G"]
 
@@ -91,7 +92,9 @@ def run(ctx):
 
     # ---- 抽样介数（商旅可通的物理成本图）----
     rng = stage_rng(ctx.seed, 6)
-    w_src = isl["density_at"].astype(np.float64) * isl["area_km2"].astype(np.float64)
+    # 源权重 = 岛密度 × 集雨容量（= 面积 × 降水）：人往哪儿多，路就从哪儿起。
+    # 纯地理量（docs/02 §六），不读文明中心 —— ⑦ 在后，顺序不可倒。
+    w_src = isl["density_at"].astype(np.float64) * clim_i["catch"].astype(np.float64)
     w_src /= w_src.sum()
     n_s = min(int(r["betweenness_sources"]), N)
     sources = np.sort(rng.choice(N, size=n_s, replace=False, p=w_src))

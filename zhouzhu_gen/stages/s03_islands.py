@@ -1,4 +1,4 @@
-"""③ 岛屿分布：密度场 → 面积加权采样 → 分类 → 纯几何候选边集。
+"""③ 岛屿分布：密度场 → 面积加权采样 → 岛屿面积 → 分类 → 纯几何候选边集。
 
 密度 = 带基线 × exp(γ·噪声) × 骨架修饰（D 空域、绕道岛弧、赤道无岛核心）。
 候选边 = kNN 并集 + 远程边（≤ 大船航程）+ 跨赤道远征边 + 连通性回退。
@@ -110,7 +110,17 @@ def run(ctx):
     lat, lon = lat[order], lon[order]
     xyz = latlon_to_xyz(lat, lon)
 
-    area = np.exp(rng.normal(float(s["area_lognorm_mu"]), float(s["area_lognorm_sigma"]), n_target))
+    density_at = grid_interp(dens, lats_g, lons_g, lat, lon)
+
+    # ---- 面积：集雨面 = 人口容量 = 政治体量（docs/02 §六「一岛 = 一水共同体 = 一个
+    # 基本政治单位」、§七「土地绝对有限」）。不是装饰字段：进 ④ 集雨容量、⑥ 介数源
+    # 权重、⑦ 适宜度、⑨ 九格表 ①⑤⑧。
+    # 与局部岛密度反相关：同样的浮石物质，密接区碎成许多小岛，孤悬区聚成少数大岛。
+    dn_area = np.log(np.maximum(density_at, 1e-9))
+    dn_area = (dn_area - dn_area.min()) / max(1e-9, dn_area.max() - dn_area.min())
+    mu_area = (float(s["area_lognorm_mu"])
+               + float(s["area_density_beta"]) * (0.5 - dn_area))
+    area = np.exp(rng.normal(mu_area, float(s["area_lognorm_sigma"])))
     hfield = fractal_noise(rng, lats_g.size, lons_g.size,
                            base_cells=int(s["height_noise_cells"]), octaves=3)
     height = (0.5 + 0.5 * grid_interp(hfield, lats_g, lons_g, lat, lon)) * float(s["height_scale_m"])
@@ -121,7 +131,6 @@ def run(ctx):
     height = np.where(in_stack & (rng.uniform(0, 1, n_target) < 0.5),
                       height + float(s["stack_range_m"]), height)
     height = np.clip(height, 50.0, None)
-    density_at = grid_interp(dens, lats_g, lons_g, lat, lon)
 
     # ---- kNN 与候选边 ----
     k = int(s["knn_k"])
@@ -231,6 +240,12 @@ def run(ctx):
     ctx.save_npz(3, "density_grid", lats=lats_g, lons=lons_g, density=dens.astype(np.float32))
 
     share = {CLASS_NAMES[i]: round(float((cls == i).mean()), 3) for i in range(4)}
+    area_by_cls = {CLASS_NAMES[i]: round(float(np.median(area[cls == i])), 1)
+                   for i in range(4) if (cls == i).any()}
     return {"n_islands": n_target, "n_edges": len(keys), "n_expedition": n_exp,
             "n_fallback": n_fallback, "n_g_chords": n_chord, "class_share": share,
-            "layered_share": round(float(layered.mean()), 3)}
+            "layered_share": round(float(layered.mean()), 3),
+            "area_median_km2": round(float(np.median(area)), 1),
+            "area_p95_km2": round(float(np.quantile(area, 0.95)), 1),
+            "area_max_km2": round(float(area.max()), 1),
+            "area_median_by_class": area_by_cls}

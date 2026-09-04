@@ -116,18 +116,38 @@ def validate(cfg: dict) -> None:
                 f"半衰距离几何均值须满足 daily ≤ trade ≤ migrate ≤ envoy，得到 {gm}")
     if "eps0" in d8 and float(d8["eps0"]) <= 0:
         raise ValueError("s08.eps0 必须 > 0（每槽位本地行保证处处有文化，原则己）")
+    # ---- 行星尺度与岛屿规模 ----
+    p1 = cfg.get("s01", {}).get("planet", {})
+    if "radius_km" in p1 and float(p1["radius_km"]) <= 0:
+        raise ValueError("s01.planet.radius_km 必须 > 0（默认 6371 = 地球大小）")
+    if float(cfg.get("shared", {}).get("day_range_km", 1.0)) <= 0:
+        raise ValueError("shared.day_range_km 必须 > 0")
+    s3 = cfg.get("s03", {}).get("islands", {})
+    if "area_lognorm_sigma" in s3 and float(s3["area_lognorm_sigma"]) <= 0:
+        raise ValueError("s03.islands.area_lognorm_sigma 必须 > 0")
+    if "area_density_beta" in s3 and float(s3["area_density_beta"]) < 0:
+        raise ValueError(
+            "s03.islands.area_density_beta 必须 ≥ 0（负值会让密接区长出巨岛，与 docs/02 §七 相悖）")
+    c7 = cfg.get("s07", {}).get("centers", {})
+    if "area_exponent" in c7 and float(c7["area_exponent"]) < 0:
+        raise ValueError("s07.centers.area_exponent 必须 ≥ 0")
 
 
 def canonical(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def section_hash(prev_key: str, cfg: dict, section: str, seed: int, stage_version: str) -> str:
+def section_hash(prev_key: str, cfg: dict, section: str, seed: int, stage_version: str,
+                 extra_sections: tuple[str, ...] = ()) -> str:
+    """阶段缓存 key。extra_sections 用于 default.toml 之外的独立配置文件
+    （slots.toml / traits.toml / production_templates.toml）——它们只影响读它们的阶段，
+    不放进所有阶段的 key，避免过度失效。"""
     payload = "\x1f".join([
         prev_key,
         canonical(cfg.get(section, {})),
         canonical(cfg.get("shared", {})),
         canonical(cfg.get("skeleton", {})),
+        *[canonical(cfg.get(s, {})) for s in extra_sections],
         str(seed),
         stage_version,
     ])
