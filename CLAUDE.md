@@ -17,7 +17,7 @@
   $py -m zhouzhu_gen.cli ninegrid --run out/seed42 [--region K]
   $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）
   $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 19 个测试，约 4 s
+  $py -m pytest tests -q                          # 26 个测试，约 4 s
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
@@ -40,13 +40,14 @@ zhouzhu_gen/
 config/default.toml（所有参数）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
-关键产物：`s03 islands.npz`（含 `area_km2`：面积 = 集雨面 = 政治体量）`/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s04 climate_islands.npz`（含 `catch` = 面积×降水，集雨容量）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`。
+**节点 = 岛群（R10）**：`islands`/`n_islands`/`area_km2` 等字段名沿用，语义都是「群」——一个节点 = 一个岛群 = 一个邑 = 一个水共同体；群内数十小岛属第三层，不进管线。
+关键产物：`s03 islands.npz`（含 `area_km2`：群的总陆地 = 集雨面 = 政治体量；`territory_km2` 势力范围、`land_frac` 陆地占比、`arable_frac` 可用地率）`/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s04 climate_islands.npz`（含 `catch` = 可用地率×陆地×降水，集雨容量）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`。
 
 ## 改代码时必须遵守
 
 1. **改了阶段代码就把 `pipeline.STAGE_VERSIONS[k]` +1**，否则旧缓存会被当成命中。只改配置不用改版本。
 2. **原则乙**：`s07/s08/ninegrid` 不得出现 `["height_m"]`（check 与 pytest 都有静态断言）。高度只进 s04 温度、s05 落差因子、s06 爬升成本。
-   **面积不受此限**：`area_km2` 是集雨面与人口容量（docs/02 §六），可以进社会推导——高度才是「地理决定贵贱」的禁区。
+   **陆地不受此限**：`area_km2`/`arable_frac` 是集雨面与人口容量（docs/02 §六），可以进社会推导——高度才是「地理决定贵贱」的禁区。`arable_frac` 刻意不从 `height_m` 推（保持这条卫生习惯）。
 3. **铁律五**：文化只以 share/strength 浮点场存在。不得从 argmax 派生地区/标签，不得 flood fill。P1b（每条边的 TV 差 ≤ a + b·(λ_max·cost + max L)）是硬项。
 4. **原则己**：每岛必须可达（史前扩散全覆盖）、每槽位 share 和为 1（本地行 ε>0 保证）。任何会造出孤岛的改动（采样、边集、G 阻断）都要查 `IL-ji`。
 5. 区域障碍必须走 **Φ 穿越归一化**（`s05.node_phi`），不得逐边乘因子（跨带通过率会随岛数指数衰减）。
@@ -57,13 +58,19 @@ config/default.toml（所有参数）slots.toml（槽位→模式/阻力档）pr
 ## 当前默认值的由来（调参前先看）
 
 - 带界 8/28/36/62°；G = 剪切纬度(28) − 5 = 23°N，经度 = D 中央 (−10)；D = lon [−30, 10] × lat [6, 36]。
-- 分类阈值 = 船只参数：桥 0.15 天 / 小船 1 天 / 大船 3 天（1 天 = 500 km）。西风带密度 0.05、极地 0.012 才出稀疏/孤悬。
+- 分类阈值 = 船只参数：桥 0.15 天 / 小船 1 天 / 大船 3 天（1 天 = 500 km），量的是**群与群之间**的间距（群内永远密接）。西风带密度 0.05、极地 0.012 才出稀疏/孤悬。
 - 半衰日程：daily 5–10、trade 15–30、migrate 30–60、envoy 40–80 天。阻力：低 .05–.2 / 中 .3–.6 / 高 .7–.95。
 - ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 2；每高隔离分量 3 条本地起源特征。
 - 行星：半径 6371 km（地球）、自转 24 h、倾角 20°、1 日航程 500 km → 绕行 80 日。半径只经 `days_per_rad` 影响所有边的天数。
-- 面积：对数正态 μ=3.4（中位 ≈ 30 km²）σ=0.95，μ 再按局部岛密度调整 `β·(0.5 − dn)`，β=1.5（密接区碎成小岛，孤悬区聚成大岛）。
-  集雨容量 `catch = 面积 × 降水`（s04）。用处：s06 介数源权重、s07 适宜度（× 规模^γ，**γ=0.5**）、s09 九格表 ①⑤⑧。γ=0 即退回旧式。
-  γ 不能取 1：归一化 log 面积与 log 岛密度的 std 都是 ≈0.13 且相关 −0.21，等权会抹平适宜度的地理结构（seed 2026 的 P7 会挂）。
+- 尺度口径 `[shared.scale]`（BACKLOG 第一批拍板）：全世界陆地 25,000,000 km² / 可用地率 0.10 / 100 人/km² 可耕地 → 2.5 亿人。
+- 陆地（R8）：`area = 势力范围 × f`，势力范围 = 0.866 × (mean_nn × 500 km)²（与分类共用间距），
+  `f = min(0.35, f0 · (ρ/ρ_med)^α · lognormal(σ=0.5))`，α=1，f0 由 Σarea = 25M 二分反解（三 seed 均 ≈0.167）。
+  Σ势力范围 ≈ 356M km²（表面 70%），故平均 f ≈ 0.070（BACKLOG 里的 0.107 用的是另一种间距口径，见 DESIGN-NOTES 四点六）。
+  α=1 的含义：势力范围 ∝ 1/密度，未封顶的群陆地大致相等（一邑 ≈ 3,000 km²），密接群岛贴顶 0.35 后反而更小（≈1,100 km²）；
+  四个地形类的 f 恰落在印尼 0.35 / 菲律宾 0.15 / 夏威夷 0.007 / 孤悬 0.002。
+- 可用地率（R9）：`arable_frac` 均值 0.10、对数正态 σ 0.35、夹 [0.03, 0.30]，纯标量、不生成岛内地形。
+  集雨容量 `catch = 可用地率 × 陆地 × 降水`（s04）。用处：s06 介数源权重、s07 适宜度（× 陆地规模^γ，**γ=0.5**）、s09 九格表 ①⑤⑧。γ=0 即退回旧式。
+  γ 不能取 1：归一化 log 陆地与 log 岛密度的 std ≈0.12–0.13 且相关 ≈ −0.3（旧模型 −0.21），等权会抹平适宜度的地理结构（seed 2026 的 P7 会挂）。R8 换模型后 γ=0.5 三 seed 直接通过，没有重校。
 - **seed 2026 是 P7 的哨兵种子**（拒绝点数只有 seed 42/7 的零头）。改 ⑦ 适宜度或次级起源相关的东西，先拿它试。
 - 验收阈值中几个是按三 seed 校准过的：P5 强度比 2.0、重心顺风占比 0.75；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
 

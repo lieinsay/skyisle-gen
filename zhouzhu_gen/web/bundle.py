@@ -64,6 +64,8 @@ def build_world(ctx) -> dict:
             "lat": _arr(isl["lat"], "float32"), "lon": _arr(isl["lon"], "float32"),
             "cls": _arr(isl["cls"], "uint8"), "layered": _arr(isl["layered"], "uint8"),
             "area": _arr(isl["area_km2"], "float32"),
+            "land_frac": _arr(isl["land_frac"], "float32"),
+            "arable_frac": _arr(isl["arable_frac"], "float32"),
             "catch": _arr(clim["catch"], "float32"),
             "region": _arr(w.regions["region"], "int32"),
             "precip": _q8(clim["precip"]), "stability": _q8(clim["stability"]),

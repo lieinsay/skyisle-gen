@@ -72,10 +72,12 @@ def run(ctx):
                  stability=stability.astype(np.float32),
                  window=window.astype(np.float32))
     # ---- 集雨容量（docs/02 §六：岛上没有长期河流，淡水全靠集雨面）----
-    # catch = 集雨面积 × 降水强度：一岛能养多少人的地理上限。
+    # catch = 可用地率 × 群陆地 × 降水强度：一个岛群能养多少人的地理上限（R9：雨落在
+    # 全部陆地上，但只有可耕地吃得下水与人；口径 P1 的人口密度按可耕地计）。
     # 是 ⑥ 介数源权重、⑦ 适宜度、⑨ 九格表 ⑤⑧ 的人口／政治体量代理。
-    # 只用面积与降水，不含高度（原则乙）。
-    catch = isl["area_km2"].astype(np.float64) * precip_i
+    # 只用陆地、可用地率与降水，不含高度（原则乙）。
+    catch = (isl["arable_frac"].astype(np.float64) * isl["area_km2"].astype(np.float64)
+             * precip_i)
 
     ctx.save_npz(4, "climate_islands",
                  precip=precip_i.astype(np.float32), temp=temp_i.astype(np.float32),

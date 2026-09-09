@@ -77,7 +77,7 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
 <aside class="left">
   <div class="sec"><h3>图层</h3>
     <label class="chk"><input type="checkbox" id="lyIslands" checked> 岛屿</label>
-    <label class="chk"><input type="checkbox" id="lyScale" checked> 点大小按岛屿面积</label>
+    <label class="chk"><input type="checkbox" id="lyScale" checked> 点大小按岛群陆地</label>
     <label class="chk"><input type="checkbox" id="lyEdges" checked> 航线（边）</label>
     <label class="chk"><input type="checkbox" id="lyHubs" checked> 枢纽与文明中心</label>
     <label class="chk"><input type="checkbox" id="lyTrunks" checked> 中心间干线</label>
@@ -88,8 +88,8 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
     <div class="row"><label>依据</label>
       <select id="colorBy">
         <option value="cls">地形类</option>
-        <option value="area">岛屿面积</option>
-        <option value="catch">集雨容量（面积×降水）</option>
+        <option value="area">岛群陆地</option>
+        <option value="catch">集雨容量（可用地率×陆地×降水）</option>
         <option value="region">地区</option>
         <option value="share">槽位份额</option>
         <option value="trait">特征场</option>
@@ -297,8 +297,8 @@ function islandColorFn(){
   let legend='';
   let fn;
   if (by==='cls'){ fn=i=>CLASS_COLOR[A.cls[i]]; legend=W.class_names.map((c,k)=>`<span class="pill" style="background:${CLASS_COLOR[k]};color:#000">${W.class_zh[c]}</span>`).join(''); }
-  else if (by==='area'){ const g=logNorm('area',A.area); fn=i=>viridis(g[i]); legend=grad('小','大','岛屿面积 km²（log）'); }
-  else if (by==='catch'){ const g=logNorm('catch',A.catch); fn=i=>viridis(g[i]); legend=grad('低','高','集雨容量 = 面积×降水（log）'); }
+  else if (by==='area'){ const g=logNorm('area',A.area); fn=i=>viridis(g[i]); legend=grad('小','大','岛群陆地 km²（log）'); }
+  else if (by==='catch'){ const g=logNorm('catch',A.catch); fn=i=>viridis(g[i]); legend=grad('低','高','集雨容量 = 可用地率×陆地×降水（log）'); }
   else if (by==='region'){ fn=i=>TAB20[A.region[i]%20]; legend='地区（着色仅为区分，不是文化边界）'; }
   else if (by==='share'){ const v=$('valueSel').value; const row = v==='local'?localShareRow(W.slots.indexOf($('slotSel').value)):fieldRow('share',+v); fn=i=>viridis(row[i]/255); legend=grad('0','1','share'); }
   else if (by==='trait'){ const ti=+$('traitSel').value; const k=$('fieldSel').value; const row=fieldRow(k,ti); fn=i=>viridis(row[i]/255); legend=grad('0','1',k); }
@@ -424,9 +424,9 @@ function onHover(ev){
   if (by==='dist'&&distCache) extra=`<br>文化距离 ${fmt(distCache[i])}`;
   if (by==='share'){ const v=$('valueSel').value; const row=v==='local'?localShareRow(W.slots.indexOf($('slotSel').value)):fieldRow('share',+v); extra=`<br>share ${fmt(row[i]/255)}`; }
   if (by==='trait'){ const ti=+$('traitSel').value; extra=`<br>reach ${fmt(fieldRow('reach',ti)[i]/255)} · adopt ${fmt(fieldRow('adopt',ti)[i]/255)} · strength ${fmt(fieldRow('strength',ti)[i]/255)}`; }
-  if (by==='area') extra=`<br>面积 ${fmt(A.area[i],1)} km²`;
+  if (by==='area') extra=`<br>群陆地 ${fmt(A.area[i],0)} km²`;
   if (by==='catch') extra=`<br>集雨容量 ${fmt(A.catch[i],1)}`;
-  tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''} · ${fmt(A.area[i],1)} km²<br>${W.region_names[A.region[i]]}${extra}`;
+  tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''} · ${fmt(A.area[i],0)} km²<br>${W.region_names[A.region[i]]}${extra}`;
 }
 
 // ------------------------------------------------------------ 探针
@@ -437,8 +437,8 @@ function selectIsland(i){
   rows.push(['节点',`#${i}（${fmt(A.lat[i],2)}°, ${fmt(A.lon[i],2)}°）`]);
   const qOf=(arr,v)=>{ let c=0; for(let k=0;k<arr.length;k++) if(arr[k]<=v) c++; return c/arr.length; };
   rows.push(['地形',`${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'（叠层）':''}`]);
-  rows.push(['规模',`面积 ${fmt(A.area[i],1)} km²（分位 ${fmt(qOf(A.area,A.area[i]),2)}）· 集雨容量 ${fmt(A.catch[i],1)}（分位 ${fmt(qOf(A.catch,A.catch[i]),2)}）`
-    + `<div class="small">一岛 = 一水共同体 = 一个基本政治单位（docs/02 §六）</div>`]);
+  rows.push(['规模',`群陆地 ${fmt(A.area[i],0)} km²（分位 ${fmt(qOf(A.area,A.area[i]),2)}）· 陆地占比 ${A.land_frac?fmt(A.land_frac[i],3):'-'} · 可用地率 ${A.arable_frac?fmt(A.arable_frac[i],2):'-'} · 集雨容量 ${fmt(A.catch[i],1)}（分位 ${fmt(qOf(A.catch,A.catch[i]),2)}）`
+    + `<div class="small">节点 = 岛群 = 一水共同体 = 一个基本政治单位（docs/02 §六；群内数十岛半小时可达，属第三层）</div>`]);
   rows.push(['地区',`${W.region_names[A.region[i]]} <button class="mini" data-region="${A.region[i]}">九格表</button>`]);
   rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`]);
   rows.push(['史前',`谱系 L${A.lineage[i]} · 约 ${Math.round(A.arrival_yr[i])} 年前到达`]);
@@ -513,8 +513,9 @@ async function loadGrid(r){
 const PARAM_SPEC = [
   {sec:'行星 [s01.planet]', items:[['s01.planet.radius_km','半径 km（地球 6371）'],['s01.planet.rotation_period_hr','自转周期 hr'],['s01.planet.axial_tilt_deg','轴倾角 °'],['s01.planet.insolation_rel','日照相对值'],['shared.day_range_km','1 日航程 km']]},
   {sec:'骨架 [skeleton]', items:[['skeleton.d_lon_west','D 西缘 °'],['skeleton.d_lon_east','D 东缘 °'],['skeleton.d_density_mult','D 密度倍率'],['skeleton.g_radius_deg','G 半径 °'],['skeleton.g_delta_deg','G 纬度偏移 δ °'],['skeleton.detour_arc_gap_deg','绕道弧间隙 °'],['skeleton.detour_arc_boost','绕道弧密度倍增'],['skeleton.center_window_deg','中心窗宽 °'],['skeleton.eq_core_halfwidth_deg','赤道无岛核心半宽 °']]},
-  {sec:'岛屿 [s03]', items:[['s03.islands.n_islands','岛数'],['s03.islands.noise_gamma','成簇程度 γ'],['s03.islands.band_density.trades','信风带密度'],['s03.islands.band_density.subtropical_calm','无风带密度'],['s03.islands.band_density.westerlies','西风带密度'],['s03.islands.band_density.polar','极地密度'],['s03.islands.area_lognorm_mu','面积对数均值 μ'],['s03.islands.area_lognorm_sigma','面积对数标准差 σ'],['s03.islands.area_density_beta','面积~密度反相关 β']]},
-  {sec:'文明中心 [s07]', items:[['s07.centers.area_exponent','适宜度中岛屿规模权重 γ'],['s07.centers.tau_c','窗内适宜度门槛 τ_c'],['s07.regions.max_region_islands','地区最大岛数']]},
+  {sec:'岛屿 [s03]', items:[['s03.islands.n_islands','岛群数'],['s03.islands.noise_gamma','成簇程度 γ'],['s03.islands.band_density.trades','信风带密度'],['s03.islands.band_density.subtropical_calm','无风带密度'],['s03.islands.band_density.westerlies','西风带密度'],['s03.islands.band_density.polar','极地密度'],['s03.islands.land_frac_alpha','陆地占比~密度指数 α'],['s03.islands.land_frac_cap','陆地占比上限 f_cap'],['s03.islands.land_frac_sigma','陆地占比抖动 σ'],['s03.islands.arable_frac_sigma','可用地率抖动 σ']]},
+  {sec:'尺度口径 [shared.scale]', items:[['shared.scale.total_land_km2','全世界陆地 km²'],['shared.scale.arable_frac_mean','可用地率均值'],['shared.scale.people_per_arable_km2','人口密度 人/km² 可耕地']]},
+  {sec:'文明中心 [s07]', items:[['s07.centers.area_exponent','适宜度中岛群陆地权重 γ'],['s07.centers.tau_c','窗内适宜度门槛 τ_c'],['s07.regions.max_region_islands','地区最大岛数']]},
   {sec:'航线 [s06]', items:[['s06.routes.tailwind_factor','顺风成本系数'],['s06.routes.headwind_factor','逆风成本系数'],['s06.routes.storm_kappa','风暴成本 κ'],['s06.routes.calm_max','无风惩罚上限']]},
   {sec:'扩散 [s08]', items:[['s08.eps0','本地行 ε0'],['s08.eps_max','本地行 ε_max'],['s08.iso_d0','隔离度尺度'],['s08.iso_thr','孤岛文化阈值'],['s08.k_sub','每圈次级起源数'],['s08.resistance_max','阻力上限'],['s08.fast','快速模式(true/false)']]},
 ];

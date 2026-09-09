@@ -30,12 +30,12 @@ STAGES = [
 
 # 改动会使缓存失效的实现版本号（每阶段独立）
 STAGE_VERSIONS = {i: "1" for i, _ in STAGES}
-STAGE_VERSIONS[3] = "6"  # D 域下界=赤道核心边缘；G 邻域几何弦；面积 ~ 密度反相关
-STAGE_VERSIONS[4] = "3"  # storm_no_g；集雨容量 catch
+STAGE_VERSIONS[3] = "7"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率 arable_frac（R9）；kNN 提前
+STAGE_VERSIONS[4] = "4"  # storm_no_g；集雨容量 catch = 可用地率 × 陆地 × 降水
 STAGE_VERSIONS[5] = "3"  # perm_no_g；D 的 Φ 域与 s03 对齐
 STAGE_VERSIONS[6] = "4"  # betweenness_sources；cost_no_g；源权重改用集雨容量
-STAGE_VERSIONS[7] = "2"  # 适宜度含岛屿规模项
-STAGE_VERSIONS[9] = "2"  # 九格表 ①⑤⑧ 含面积/容量
+STAGE_VERSIONS[7] = "2"  # 适宜度含岛群陆地规模项
+STAGE_VERSIONS[9] = "3"  # 九格表 ① 按「节点 = 岛群」重写（R10），含陆地/可耕/口径人口
 
 
 class Context:

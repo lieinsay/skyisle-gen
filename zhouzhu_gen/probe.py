@@ -32,12 +32,14 @@ def probe_node(ctx, node: int):
     pre = ctx.load_npz(7, "prehist")
     print(f"== 节点 {n} ==")
     print(f"位置 ({isl['lat'][n]:.2f}, {isl['lon'][n]:.2f})  地形 {CLASS_ZH[cls]}"
-          f"{'（叠层）' if isl['layered'][n] else ''}  面积 {isl['area_km2'][n]:.1f} km²")
+          f"{'（叠层）' if isl['layered'][n] else ''}  群陆地 {isl['area_km2'][n]:.0f} km²"
+          f"（势力范围 {isl['territory_km2'][n]:.0f} km²，陆地占比 {isl['land_frac'][n]:.3f}，"
+          f"可用地率 {isl['arable_frac'][n]:.2f}）")
     catch = clim["catch"]
     catch_q = float((catch <= catch[n]).mean())
     area_q = float((isl["area_km2"] <= isl["area_km2"][n]).mean())
-    print(f"规模 面积分位 {area_q:.2f}  集雨容量 {catch[n]:.1f}（分位 {catch_q:.2f}）"
-          f"  —— 一岛 = 一水共同体（docs/02 §六）")
+    print(f"规模 陆地分位 {area_q:.2f}  集雨容量 {catch[n]:.1f}（分位 {catch_q:.2f}）"
+          f"  —— 节点 = 岛群 = 一水共同体（docs/02 §六，R10）")
     print(f"地区 {int(w.regions['region'][n])}  降水 {clim['precip'][n]:.2f}"
           f"  稳定度 {clim['stability'][n]:.2f}  史前到达 {pre['arrival_yr'][n]:.0f} 年前"
           f"  谱系 L{int(pre['lineage'][n])}")

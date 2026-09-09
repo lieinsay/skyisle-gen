@@ -154,17 +154,30 @@ def test_no_discrete_culture_assignment():
         assert not re.search(r"culture_id|culture_label", text)
 
 
-# ---------------- 岛屿规模（面积 = 集雨面 = 政治体量，docs/02 §六/§七） ----------------
+# ---------------- 岛群规模（陆地 = 势力范围 × 陆地占比，docs/02 §六/§七，R8/R9/R10） ----------------
 def test_area_config_validation():
-    """面积参数的合法性校验。"""
+    """陆地与尺度口径参数的合法性校验。"""
     with pytest.raises(ValueError):
-        load_config(sets=["s03.islands.area_lognorm_sigma=0"])
+        load_config(sets=["s03.islands.land_frac_alpha=-1"])
     with pytest.raises(ValueError):
-        load_config(sets=["s03.islands.area_density_beta=-1"])
+        load_config(sets=["s03.islands.land_frac_cap=1.5"])
+    with pytest.raises(ValueError):
+        load_config(sets=["s03.islands.land_frac_sigma=-0.1"])
+    with pytest.raises(ValueError):
+        load_config(sets=["shared.scale.total_land_km2=0"])
+    with pytest.raises(ValueError):
+        load_config(sets=["shared.scale.arable_frac_mean=1.5"])
     with pytest.raises(ValueError):
         load_config(sets=["s07.centers.area_exponent=-0.5"])
     with pytest.raises(ValueError):
         load_config(sets=["s01.planet.radius_km=0"])
+
+
+def test_scale_quota_is_self_consistent():
+    """三个口径自洽：陆地 × 可用地率 × 人口密度 = 2.5 亿（公元 1 年全球人口）。"""
+    sc = load_config()["shared"]["scale"]
+    pop = float(sc["total_land_km2"]) * float(sc["arable_frac_mean"]) * float(sc["people_per_arable_km2"])
+    assert pop == pytest.approx(2.5e8, rel=0.02)
 
 
 def test_planet_default_is_earth_sized():
@@ -173,17 +186,29 @@ def test_planet_default_is_earth_sized():
     assert float(cfg["s01"]["planet"]["radius_km"]) == pytest.approx(6371.0)
 
 
-def test_area_anticorrelates_with_density():
-    """面积 ~ 密度反相关：密接区碎成小岛，孤悬区聚成大岛（β > 0 时）。"""
+def test_land_model_hits_target_and_respects_geometry():
+    """陆地 = 势力范围 × 陆地占比：总量精确命中口径，f ≤ 上限，陆地 ≤ 势力范围，f 随密度上升。"""
+    from zhouzhu_gen.stages.s03_islands import _land, HEX_FACTOR
     rng = np.random.default_rng(0)
-    n = 20000
-    dn = rng.uniform(0.0, 1.0, n)          # 归一化 log 密度
-    beta, mu, sigma = 1.5, 3.4, 0.95
-    area = np.exp(rng.normal(mu + beta * (0.5 - dn), sigma))
-    lo = np.median(area[dn > 0.8])         # 高密度处
-    hi = np.median(area[dn < 0.2])         # 低密度处
-    assert hi > lo, "低密度处的岛应更大"
-    assert 1.5 < hi / lo < 6.0, f"反相关强度失控：{hi / lo:.2f}×"
+    n = 5000
+    dens = np.exp(rng.normal(0.0, 1.2, n))            # 局部密度（相对）
+    spacing = 60.0 / np.sqrt(dens) * np.exp(rng.normal(0, 0.15, n))   # 间距 ∝ 1/√密度
+    s = {"land_frac_alpha": 1.0, "land_frac_cap": 0.35, "land_frac_sigma": 0.5}
+    scale = {"total_land_km2": 2.0e6}
+    T, f, area, f0 = _land(rng, s, scale, spacing, dens)
+    assert area.sum() == pytest.approx(2.0e6, rel=1e-6)
+    assert np.all(f <= 0.35 + 1e-12) and np.all(f > 0)
+    assert np.all(area <= T * 0.35 + 1e-6)
+    assert np.allclose(T, HEX_FACTOR * spacing ** 2)
+    hi_d, lo_d = dens > np.quantile(dens, 0.8), dens < np.quantile(dens, 0.2)
+    assert np.median(f[hi_d]) > 3 * np.median(f[lo_d]), "陆地占比应随密度显著上升"
+    # α=1 时未封顶的群陆地大致相等（一个邑就是一个邑）：中位数比不超过噪声量级
+    unc = f < 0.35 - 1e-9
+    ratio = np.median(area[unc & lo_d]) / np.median(area[unc & hi_d])
+    assert 0.4 < ratio < 2.5, f"α=1 下群陆地应与密度大致无关，得到 {ratio:.2f}×"
+    # 目标超过几何上限时必须报错而不是悄悄少给
+    with pytest.raises(ValueError):
+        _land(rng, s, {"total_land_km2": 0.35 * T.sum() * 1.01}, spacing, dens)
 
 
 def test_area_exponent_zero_recovers_old_suitability():

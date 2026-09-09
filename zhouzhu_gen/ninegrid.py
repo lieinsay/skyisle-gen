@@ -59,6 +59,20 @@ def _rank_q(v: np.ndarray) -> np.ndarray:
     return q
 
 
+def _spacing_zh(cls: str) -> str:
+    """群间间距的量词（节点 = 岛群，分类阈值量的是群与群之间；群内永远是密接）。"""
+    return {"dense": "不过数刻航程，可架索桥短渡", "medium": "小船一日之内",
+            "sparse": "需好船数日", "isolated": "大船亦难一跳而至"}.get(cls, "")
+
+
+def _pct_zh(x: float) -> str:
+    return f"{100.0 * x:.0f}%" if x >= 0.01 else f"{100.0 * x:.1f}%"
+
+
+def _wan_km2(x: float) -> str:
+    return f"{x / 1e4:.1f} 万 km²" if x >= 1e4 else f"{x:.0f} km²"
+
+
 class RegionData:
     """一次性汇总各地区的推导输入。"""
 
@@ -89,13 +103,22 @@ class RegionData:
                           if m.size else 1 for m in self.members]
         self.layered_share = [float(self.isl["layered"][m].mean()) if m.size else 0.0
                               for m in self.members]
-        # 面积与集雨容量（docs/02 §六/§七）：一岛 = 一水共同体 = 一个基本政治单位
-        area_i = self.isl["area_km2"]
+        # 陆地与集雨容量（docs/02 §六/§七）：节点 = 岛群 = 一水共同体 = 一个基本政治单位（R10）
+        area_i = self.isl["area_km2"]            # 群的总陆地
+        arable_i = area_i * self.isl["arable_frac"]   # 可耕地（R9）
         catch_i = self.clim["catch"]
         self.area_med = np.array([float(np.median(area_i[m])) if m.size else 0.0
                                   for m in self.members])
         self.area_max = np.array([float(area_i[m].max()) if m.size else 0.0
                                   for m in self.members])
+        self.area_sum = np.array([float(area_i[m].sum()) if m.size else 0.0
+                                  for m in self.members])
+        self.arable_sum = np.array([float(arable_i[m].sum()) if m.size else 0.0
+                                    for m in self.members])
+        self.land_frac_med = np.array([float(np.median(self.isl["land_frac"][m])) if m.size else 0.0
+                                       for m in self.members])
+        # 口径人口（shared.scale P1）：只是量词，不是模型量
+        self.people_per_km2 = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
         self.catch_med = np.array([float(np.median(catch_i[m])) if m.size else 0.0
                                    for m in self.members])
         self.area_q = _rank_q(self.area_med)
@@ -195,12 +218,17 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
     # ---------- ①
     d_n = min((cross[t]["cost_out"] for t in neighbors), default=float("nan"))
     lay = rd.layered_share[r]
-    l1 = (f"{CLASS_ZH[cls]}。与最近邻区相距约 {max(d_n, 0.1):.1f} 日。"
-          f" 岛屿中位面积约 {rd.area_med[r]:.0f} km²，最大者 {rd.area_max[r]:.0f} km²"
-          f"（岛外即虚空，无垦荒无拓边）。")
+    # 节点 = 岛群（R10）：面积是群的总陆地；群内数十小岛、半小时可达，属第三层
+    pop_wan = rd.arable_sum[r] * rd.people_per_km2 / 1e4
+    l1 = (f"{CLASS_ZH[cls]}。本区 {members.size} 个岛群，每群含数十岛，群内半小时可达；"
+          f"群与群相隔{_spacing_zh(cls)}，与最近邻区相距约 {max(d_n, 0.1):.1f} 日。"
+          f" 群陆地中位约 {rd.area_med[r]:.0f} km²，最大者 {rd.area_max[r]:.0f} km²，"
+          f"陆地占势力范围约 {_pct_zh(rd.land_frac_med[r])}；"
+          f"全区陆地约 {_wan_km2(rd.area_sum[r])}，可耕约 {_wan_km2(rd.arable_sum[r])}，"
+          f"按口径折合约 {pop_wan:.0f} 万口（群外即虚空，无垦荒无拓边）。")
     if lay > 0.15:
         tenths = "一二三四五六七八九"[min(8, max(0, int(lay * 10) - 1))]
-        l1 += f" 约{tenths}成岛屿呈叠层堆叠。"
+        l1 += f" 约{tenths}成岛群呈叠层堆叠。"
 
     # ---------- ②
     band_zh = BAND_ZH[rd.band_major[r]]
@@ -281,8 +309,13 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
     pp = rd.prod.get("population_pressure", {}).get(press_tier, {}).get("text", "")
     if pp:
         l8 += " " + pp
-    sources["scale"] = {"area_median_km2": round(float(rd.area_med[r]), 1),
+    sources["scale"] = {"n_clusters": int(members.size),
+                        "area_median_km2": round(float(rd.area_med[r]), 1),
                         "area_quantile": round(float(rd.area_q[r]), 2),
+                        "land_total_km2": round(float(rd.area_sum[r]), 0),
+                        "arable_total_km2": round(float(rd.arable_sum[r]), 0),
+                        "land_frac_median": round(float(rd.land_frac_med[r]), 4),
+                        "population_by_quota": round(float(pop_wan * 1e4), 0),
                         "catch_median": round(float(rd.catch_med[r]), 1),
                         "catch_quantile": round(float(rd.catch_q[r]), 2),
                         "water_polity_tier": scale_tier, "pressure_tier": press_tier}

@@ -1,6 +1,9 @@
-"""③ 岛屿分布：密度场 → 面积加权采样 → 岛屿面积 → 分类 → 纯几何候选边集。
+"""③ 岛群分布：密度场 → 面积加权采样 → kNN → 陆地（势力范围 × 陆地占比）→ 分类 → 纯几何候选边集。
 
+节点 = 岛群（R10）：一个节点是一个岛群 = 一个「邑」= 一个水共同体；群内数十小岛彼此 5–15 km，
+属第三层、不进管线。产物字段沿用 islands/n_islands 等旧名，语义均为「群」。
 密度 = 带基线 × exp(γ·噪声) × 骨架修饰（D 空域、绕道岛弧、赤道无岛核心）。
+陆地 area_km2 = 势力范围 T × 陆地占比 f（R8）；T 依赖 kNN，故 kNN 必须先于陆地计算。
 候选边 = kNN 并集 + 远程边（≤ 大船航程）+ 跨赤道远征边 + 连通性回退。
 """
 from __future__ import annotations
@@ -89,6 +92,45 @@ def _sample_islands(rng, lats, lons, dens, n_target: int, g_xyz, g_r_deg, core_d
     return lat, lon
 
 
+HEX_FACTOR = 0.866  # 六边形填充：势力范围 = (√3/2) × 间距²
+
+
+def _land(rng, s, scale, spacing_km, density_at):
+    """陆地 = 势力范围 × 陆地占比（R8）。
+
+    T_j = 0.866 × spacing_j²；f_j = min(f_cap, f0 · (ρ_j/ρ_med)^α · exp(N(0, σ)))；area_j = T_j f_j。
+    f0 由 Σ area_j = total_land_km2 二分反解（封顶后的和对 f0 单调不减，可二分）。
+    返回 (territory, land_frac, area, f0)。
+    """
+    alpha = float(s["land_frac_alpha"])
+    cap = float(s["land_frac_cap"])
+    sigma = float(s["land_frac_sigma"])
+    target = float(scale["total_land_km2"])
+    territory = HEX_FACTOR * spacing_km.astype(np.float64) ** 2
+    rho = np.maximum(density_at.astype(np.float64), 1e-9)
+    shape = (rho / float(np.median(rho))) ** alpha
+    if sigma > 0:
+        shape = shape * np.exp(rng.normal(0.0, sigma, rho.size))
+    if cap * territory.sum() < target:
+        raise ValueError(
+            f"[s03] 陆地目标 {target:.0f} km² 超过几何上限 f_cap × Σ势力范围 = "
+            f"{cap * territory.sum():.0f} km²：调低 shared.scale.total_land_km2 或提高 land_frac_cap")
+    lo, hi = 1e-9, 1e6
+    for _ in range(200):
+        f0 = float(np.sqrt(lo * hi))
+        f = np.minimum(cap, f0 * shape)
+        if float((territory * f).sum()) < target:
+            lo = f0
+        else:
+            hi = f0
+        if hi / lo < 1.0 + 1e-10:
+            break
+    f0 = float(np.sqrt(lo * hi))
+    land_frac = np.minimum(cap, f0 * shape)
+    area = territory * land_frac
+    return territory, land_frac, area, f0
+
+
 def run(ctx):
     s = ctx.section(3)["islands"]
     ships = ctx.cfg["shared"]["ships"]
@@ -112,15 +154,6 @@ def run(ctx):
 
     density_at = grid_interp(dens, lats_g, lons_g, lat, lon)
 
-    # ---- 面积：集雨面 = 人口容量 = 政治体量（docs/02 §六「一岛 = 一水共同体 = 一个
-    # 基本政治单位」、§七「土地绝对有限」）。不是装饰字段：进 ④ 集雨容量、⑥ 介数源
-    # 权重、⑦ 适宜度、⑨ 九格表 ①⑤⑧。
-    # 与局部岛密度反相关：同样的浮石物质，密接区碎成许多小岛，孤悬区聚成少数大岛。
-    dn_area = np.log(np.maximum(density_at, 1e-9))
-    dn_area = (dn_area - dn_area.min()) / max(1e-9, dn_area.max() - dn_area.min())
-    mu_area = (float(s["area_lognorm_mu"])
-               + float(s["area_density_beta"]) * (0.5 - dn_area))
-    area = np.exp(rng.normal(mu_area, float(s["area_lognorm_sigma"])))
     hfield = fractal_noise(rng, lats_g.size, lons_g.size,
                            base_cells=int(s["height_noise_cells"]), octaves=3)
     height = (0.5 + 0.5 * grid_interp(hfield, lats_g, lons_g, lat, lon)) * float(s["height_scale_m"])
@@ -138,6 +171,21 @@ def run(ctx):
     idx, ang = knn(xyz, k + n_far)
     dist_days_nn = ang * days_per_rad
     big = float(ships["big_days"])
+    mean_nn = dist_days_nn[:, :k].mean(axis=1)   # 群间平均间距（天）；分类与势力范围共用
+
+    # ---- 陆地（R8/R10）：area_km2 = 群的总陆地 = 集雨面 = 人口容量 = 政治体量
+    # （docs/02 §六「一群 = 一水共同体 = 一个基本政治单位」、§七「土地绝对有限」）。
+    # 不是装饰字段：进 ④ 集雨容量、⑥ 介数源权重、⑦ 适宜度、⑨ 九格表 ①⑤⑧。
+    # 建模为「势力范围 × 陆地占比」：几何自洽由构造保证，f 与密度正相关（现实群岛如此）。
+    scale = ctx.cfg["shared"]["scale"]
+    territory, land_frac, area, f0 = _land(rng, s, scale, mean_nn * planet["day_range_km"],
+                                           density_at)
+    # ---- 可用地率（R9）：只是一个标量，不生成岛内地形；与高度无关（原则乙的卫生习惯）
+    lo_a, hi_a = (float(x) for x in s["arable_frac_range"])
+    sig_a = float(s["arable_frac_sigma"])
+    arable_frac = (float(scale["arable_frac_mean"])
+                   * np.exp(rng.normal(-0.5 * sig_a * sig_a, sig_a, n_target)))
+    arable_frac = np.clip(arable_frac, lo_a, hi_a)
 
     edges: dict[tuple[int, int], tuple[float, int]] = {}
 
@@ -222,7 +270,6 @@ def run(ctx):
     e_kind = np.array([edges[k_][1] for k_ in keys], dtype=np.int8)
 
     # ---- 分类：能力阈值（docs/02 §三），与船只参数共用一组 ----
-    mean_nn = dist_days_nn[:, :k].mean(axis=1)
     cls = np.select(
         [mean_nn < float(ships["bridge_days"]), mean_nn < float(ships["small_days"]),
          mean_nn < big],
@@ -233,6 +280,9 @@ def run(ctx):
 
     ctx.save_npz(3, "islands", lat=lat, lon=lon, xyz=xyz,
                  area_km2=area.astype(np.float32), height_m=height.astype(np.float32),
+                 territory_km2=territory.astype(np.float32),
+                 land_frac=land_frac.astype(np.float32),
+                 arable_frac=arable_frac.astype(np.float32),
                  cls=cls, layered=layered, density_at=density_at.astype(np.float32),
                  mean_nn_days=mean_nn.astype(np.float32))
     ctx.save_npz(3, "cand_edges", src=e_src, dst=e_dst,
@@ -242,10 +292,26 @@ def run(ctx):
     share = {CLASS_NAMES[i]: round(float((cls == i).mean()), 3) for i in range(4)}
     area_by_cls = {CLASS_NAMES[i]: round(float(np.median(area[cls == i])), 1)
                    for i in range(4) if (cls == i).any()}
+    f_by_cls = {CLASS_NAMES[i]: round(float(np.median(land_frac[cls == i])), 4)
+                for i in range(4) if (cls == i).any()}
+    arable_km2 = area * arable_frac
+    # 口径自检（shared.scale）：25M km² × 0.10 × 100 人/km² ≈ 2.5 亿人。只是摘要，不进模型
+    pop = float(arable_km2.sum() * float(scale["people_per_arable_km2"]))
     return {"n_islands": n_target, "n_edges": len(keys), "n_expedition": n_exp,
             "n_fallback": n_fallback, "n_g_chords": n_chord, "class_share": share,
             "layered_share": round(float(layered.mean()), 3),
+            "land_total_km2": round(float(area.sum()), 0),
+            "land_target_km2": float(scale["total_land_km2"]),
+            "territory_total_km2": round(float(territory.sum()), 0),
+            "land_frac_f0": round(f0, 5),
+            "land_frac_mean": round(float(area.sum() / territory.sum()), 4),
+            "land_frac_capped_share": round(
+                float((land_frac >= float(s["land_frac_cap"]) - 1e-6).mean()), 3),
+            "land_frac_median_by_class": f_by_cls,
             "area_median_km2": round(float(np.median(area)), 1),
             "area_p95_km2": round(float(np.quantile(area, 0.95)), 1),
             "area_max_km2": round(float(area.max()), 1),
-            "area_median_by_class": area_by_cls}
+            "area_median_by_class": area_by_cls,
+            "arable_frac_mean": round(float(arable_frac.mean()), 4),
+            "arable_total_km2": round(float(arable_km2.sum()), 0),
+            "implied_population_M": round(pop / 1e6, 1)}

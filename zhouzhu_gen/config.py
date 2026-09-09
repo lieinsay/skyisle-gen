@@ -116,18 +116,33 @@ def validate(cfg: dict) -> None:
                 f"半衰距离几何均值须满足 daily ≤ trade ≤ migrate ≤ envoy，得到 {gm}")
     if "eps0" in d8 and float(d8["eps0"]) <= 0:
         raise ValueError("s08.eps0 必须 > 0（每槽位本地行保证处处有文化，原则己）")
-    # ---- 行星尺度与岛屿规模 ----
+    # ---- 行星尺度、岛群陆地与尺度口径 ----
     p1 = cfg.get("s01", {}).get("planet", {})
     if "radius_km" in p1 and float(p1["radius_km"]) <= 0:
         raise ValueError("s01.planet.radius_km 必须 > 0（默认 6371 = 地球大小）")
     if float(cfg.get("shared", {}).get("day_range_km", 1.0)) <= 0:
         raise ValueError("shared.day_range_km 必须 > 0")
     s3 = cfg.get("s03", {}).get("islands", {})
-    if "area_lognorm_sigma" in s3 and float(s3["area_lognorm_sigma"]) <= 0:
-        raise ValueError("s03.islands.area_lognorm_sigma 必须 > 0")
-    if "area_density_beta" in s3 and float(s3["area_density_beta"]) < 0:
+    if "land_frac_alpha" in s3 and float(s3["land_frac_alpha"]) < 0:
         raise ValueError(
-            "s03.islands.area_density_beta 必须 ≥ 0（负值会让密接区长出巨岛，与 docs/02 §七 相悖）")
+            "s03.islands.land_frac_alpha 必须 ≥ 0（负值 = 陆地占比随密度下降，与现实群岛相悖）")
+    if "land_frac_cap" in s3 and not (0.0 < float(s3["land_frac_cap"]) <= 1.0):
+        raise ValueError("s03.islands.land_frac_cap 必须在 (0, 1]（陆地不能超过势力范围）")
+    if "land_frac_sigma" in s3 and float(s3["land_frac_sigma"]) < 0:
+        raise ValueError("s03.islands.land_frac_sigma 必须 ≥ 0")
+    if "arable_frac_sigma" in s3 and float(s3["arable_frac_sigma"]) < 0:
+        raise ValueError("s03.islands.arable_frac_sigma 必须 ≥ 0")
+    if "arable_frac_range" in s3:
+        lo, hi = (float(x) for x in s3["arable_frac_range"])
+        if not (0.0 < lo <= hi <= 1.0):
+            raise ValueError("s03.islands.arable_frac_range 必须满足 0 < lo ≤ hi ≤ 1")
+    sc = cfg.get("shared", {}).get("scale", {})
+    if "total_land_km2" in sc and float(sc["total_land_km2"]) <= 0:
+        raise ValueError("shared.scale.total_land_km2 必须 > 0")
+    if "arable_frac_mean" in sc and not (0.0 < float(sc["arable_frac_mean"]) <= 1.0):
+        raise ValueError("shared.scale.arable_frac_mean 必须在 (0, 1]")
+    if "people_per_arable_km2" in sc and float(sc["people_per_arable_km2"]) <= 0:
+        raise ValueError("shared.scale.people_per_arable_km2 必须 > 0")
     c7 = cfg.get("s07", {}).get("centers", {})
     if "area_exponent" in c7 and float(c7["area_exponent"]) < 0:
         raise ValueError("s07.centers.area_exponent 必须 ≥ 0")
