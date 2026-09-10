@@ -215,6 +215,29 @@ pytest 26 个全绿（新增 `test_land_model_hits_target_and_respects_geometry`
 - **完全离线**：globe.gl 2.46.2（MIT）内置于 `static/vendor/`，单文件导出内嵌；不引用 CDN 与网络字体。
 - 单文件版 `viz web` 与在线页面版无路径计算（需服务端 Dijkstra）、无重跑。
 
+### 气象层（R2，2026-09-10）
+
+- **网格场通道**：`bundle.build_grid()` 只读 ② `wind.npz` 与 ④ `climate_grid.npz`，字段由 `[web].grid_fields` 决定（默认 u/v/temp/precip/storm/band）。
+  `_qmm()` 是带 min/max 元数据的线性量化（`_q8` 只能映射 [0,1]，u/v/temp 有负值）。
+  **u/v 必须用 16 位**：s06 的方向因子 dir(c) 不随风速缩放，副热带无风带里风速 < 1 m/s，8 位（步长 0.16 m/s）下方向全是噪声，
+  复现的顺逆风成本比误差高达 45%；改 16 位后与 `routes.npz` 的 `cost_ab/cost_ba` 最大偏差 0.1%（300 条抽样边）。标量场 8 位足够。
+- **顺逆风复现要点**：s06 沿无向边 src→dst 取 `edge_samples` 个大圆采样点里的第 ⌊n/2⌋ 个（t = 4/7，不是中点）当作两个方向共用的风采样点；
+  前端 `edgeWindCos(a,b,e)` 必须拿边索引按同一取法，否则反向那条的采样点在 3/7 处，近 G 的边会对不上。
+- **流线**：中点法沿单位风向积分（步长 `[web].streamline_step_deg`，拉近时按视高缩短），点序 = 上风 → 下风，因为 globe.gl 的 path 虚线动画方向是首点 → 末点
+  （`relDistance` 属性反向填充、`dashTranslate` 递增，看 vendor 源码确认的）。播种只在地平线球冠 ∩ 屏幕（`getScreenCoords` 留 12% 边），超预算就等比放大间距。
+  流线用 stroke=null 的细线（THREE.Line，便宜），航线仍是 Line2（有粗细）；两种在同一 pathsData 层里按对象各自决定，虚线参数也是逐对象 accessor。
+  流线只在视角变化（视高变 12% 或中心移出球冠 30%）、开关、密度改变时重播种，其余 repaint 直接复用缓存对象。
+- **标量填色层**：在离屏 canvas 上按等距圆柱逐像素双线性采样（每行/每列系数预算一次，2048×1024 约 250 ms），
+  可叠地貌贴图（不透明度）与等值线（相邻像素等级变化处压暗 1 px），`toDataURL` 喂 `globeImageUrl`——不走 `/api/texture`，单文件模式同样可用。
+  颜色刻度固定（温度 −20…30 °C、降水/风暴 0…1、风速 0…⌈max/4⌉·4），跨 run 可比。缓存最多 6 张。
+- **踩坑：globe.gl 会清空容器**（`Globe()(el)` 先 `el.innerHTML=""`）。原来 `#tip` 与 `#loading` 放在 `#globe` 里，首次初始化后两者被删，
+  `loadRun` 在 `$('loading').style.display='none'` 处抛错——状态栏永远停在「读取 …」、切换 run 直接失败、悬停框从未出现过。
+  现改为 `#globeWrap` 包一层，`#globe` 绝对定位铺满，遮罩与悬停框放在外层。
+- **无头浏览器验证**：Edge `--headless=new --screenshot` 可用；但截图在 `load` 事件时拍，单文件版的贴图是 data URL、还没解码，
+  globe.gl 的 ready 门没开，拍出来只有一个点；`--virtual-time-budget` 在单文件版上会挂死。办法是在页面里塞一张 `/slow?10` 的图把 load 推迟 10 s。
+  页面本身没问题，别被这两个假象骗了。
+- `[web]` 段只影响显示，不进任何阶段的缓存 key；旧 run 的 `config.resolved.toml` 没有这段时前端用内置默认值。
+
 ## 六、与规格的已声明偏离
 
 1. reach 走最大 reach 路径（见一）。

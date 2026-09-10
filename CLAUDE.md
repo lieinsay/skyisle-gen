@@ -37,7 +37,8 @@ zhouzhu_gen/
   check.py       P1–P7 + IL-*（铁律）+ SK-*（骨架校准，warn-only）
   ninegrid.py    九格表草稿（RegionData 聚合 + build_region_md + lint）
   viz.py / probe.py / web/(server.py bundle.py static/index.html static/vendor/globe.gl.min.js)
-config/default.toml（所有参数）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
+                 操作台数据通道：/api/world、/api/fields、/api/grid（② 风 / ④ 气候的 1° 网格场，R2）、/api/texture；单文件版全部内嵌于 INLINE
+config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
 **节点 = 岛群（R10）**：`islands`/`n_islands`/`area_km2` 等字段名沿用，语义都是「群」——一个节点 = 一个岛群 = 一个邑 = 一个水共同体；群内数十小岛属第三层，不进管线。
@@ -79,6 +80,7 @@ config/default.toml（所有参数）slots.toml（槽位→模式/阻力档）pr
 - Monte Carlo 引擎（`s08.engine="mc"` 只留接口）、软先到权重（`first_arrival_weight` 默认关未实现）
 - 季节窗口进模型（现只有 `seasonal` 标志与 ④ 的窗口比例）；政治性障碍只支持经纬矩形覆盖
 - 九格表 ④ 特有种 / ⑧ 世仇通婚 / ⑦ 外观 标【待填】；⑨ 文本量词与归因还比较模板化
-- 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图
+- 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图；气象层没有粒子动画（流线虚线已够用），R6 的水汽/雨影量待定案后走同一网格通道
+- 操作台改前端时注意：globe.gl 会清空 `#globe` 的内容，遮罩/悬停框必须放在 `#globeWrap`；`pathsData` 的点高度靠 `pathPointAlt(p=>p[2])` 才生效（DESIGN-NOTES 五）
 - 性能：8000 岛全跑约 2 分钟（s06 介数 30 s、s09 图 50 s 为大头）；20000 岛未系统测试
 - `check --seeds` 多种子批跑、`viz diff`、`config diff` 未做

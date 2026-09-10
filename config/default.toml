@@ -253,6 +253,19 @@ projection = "rect"           # rect | mollweide
 center_lon = "auto"           # auto = G 经度
 dpi = 130
 
+# ---------------- 操作台（web/，R2 气象层） ----------------
+# 只影响 3D 操作台与单文件导出的显示；不在任何阶段的缓存 key 里，改了不会触发重算。
+# 下面的流线/填色参数是前端的初始值，面板里的滑块可以现场覆盖。
+[web]
+grid_fields = ["u", "v", "temp", "precip", "storm", "band"]   # 传给前端的 1° 网格场（u/v 16 位各 ≈ 173 KB，其余 8 位各 ≈ 86 KB，合计 ≈ 690 KB）；体积紧张时只留 u/v/temp
+streamline_spacing_deg = 4.0  # 流线播种间距（°，视高 2.2 时）；拉近时按视高等比加密，拉远时稀疏
+streamline_steps = 40         # 每条流线的积分步数（顺风、逆风各半，中点法）
+streamline_step_deg = 0.5     # 每步弧长（°）；步数 × 步长 ≈ 流线总长
+streamline_max = 1500         # 流线条数上限（保护帧率）
+wind_anim_ms = 3000           # 流线虚线流动一个周期的毫秒数（earth.nullschool 式）；0 = 静止
+overlay_alpha = 0.85          # 标量填色层盖在地貌贴图上的不透明度（1 = 完全遮住地貌）
+overlay_contours = true       # 标量填色层是否叠加等值线（温度 5 °C、风速 4 m/s、降水/风暴 0.1）
+
 # ---------------- 验收（docs/12 第八节） ----------------
 [check]
 # 1 相邻几乎相同

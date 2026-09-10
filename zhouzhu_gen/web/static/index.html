@@ -22,7 +22,9 @@ button.primary{background:var(--acc);color:#1b1408;border-color:var(--acc);font-
 button:disabled{opacity:.45;cursor:default}
 aside{background:var(--panel);overflow:auto;padding:10px 12px;border-right:1px solid var(--line)}
 aside.right{border-right:0;border-left:1px solid var(--line);padding:0}
-#globe{position:relative;overflow:hidden;background:#05070d}
+/* globe.gl 初始化会清空容器的 innerHTML，所以悬停框与加载遮罩放在外层 #globeWrap 里，不放进 #globe */
+#globeWrap{position:relative;overflow:hidden;background:#05070d}
+#globe{position:absolute;inset:0}
 #globe canvas{display:block}
 footer{grid-column:1/4;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--panel);border-top:1px solid var(--line);color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden}
 .sec{margin-bottom:14px}
@@ -51,6 +53,8 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
 .md ul{margin:4px 0;padding-left:16px}
 .legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);margin-top:4px}
 .legend .grad{flex:1;height:8px;border-radius:2px}
+.ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:1px}
+#surfLegend,#edgeLegend{margin-top:4px;font-size:11px;color:var(--dim)}
 #log{font-family:Consolas,monospace;font-size:11px;white-space:pre-wrap;background:#0f131a;border:1px solid var(--line);padding:6px;max-height:180px;overflow:auto;color:var(--dim)}
 .param-grid{display:grid;grid-template-columns:auto repeat(4,1fr);gap:3px 6px;align-items:center;font-size:12px}
 .param-grid input{width:100%;background:#0f131a;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:2px 4px;font:inherit}
@@ -84,6 +88,23 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
     <label class="chk"><input type="checkbox" id="lyGeo" checked> 障碍几何（A / D / G）</label>
     <label class="chk"><input type="checkbox" id="lyIso"> 同言线（跨 θ 的边）</label>
   </div>
+  <div class="sec"><h3>气象层（② 风场 · ④ 气候网格）</h3>
+    <div class="row"><label>贴图</label>
+      <select id="surfSel">
+        <option value="base">地貌（默认贴图）</option>
+        <option value="speed">风速 m/s</option>
+        <option value="temp">海面温度 °C</option>
+        <option value="precip">降水（相对）</option>
+        <option value="storm">风暴强度</option>
+        <option value="band">风带</option>
+      </select></div>
+    <div class="row" id="rowSurfAlpha"><label>不透明度</label><input type="range" id="surfAlpha" min="0.3" max="1" step="0.05" value="0.85"><span id="surfAlphav">0.85</span></div>
+    <label class="chk" id="rowContour"><input type="checkbox" id="surfContour" checked> 等值线</label>
+    <div id="surfLegend"></div>
+    <label class="chk"><input type="checkbox" id="lyWind" checked> 风向流线（虚线沿风向流动）</label>
+    <div class="row" id="rowWindDens"><label>密度</label><input type="range" id="windDens" min="0.5" max="2.5" step="0.1" value="1"><span id="windDensv">1.0</span></div>
+    <div class="small" id="windInfo"></div>
+  </div>
   <div class="sec"><h3>岛屿着色</h3>
     <div class="row"><label>依据</label>
       <select id="colorBy">
@@ -116,6 +137,7 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
         <option value="perm">通过率（按模式）</option>
         <option value="flow">流量</option>
         <option value="barrier">所属障碍</option>
+        <option value="wind">顺逆风（虚线流向顺风侧，按模式）</option>
         <option value="plain">单色</option>
       </select></div>
     <div class="row"><label>模式</label>
@@ -130,11 +152,12 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
       </select></div>
     <div class="row"><label>N</label><input type="range" id="edgeN" min="500" max="12000" step="500" value="4000"><span id="edgeNv">4000</span></div>
     <div class="row" id="rowTheta"><label>θ</label><input type="range" id="theta" min="0.2" max="0.8" step="0.05" value="0.5"><span id="thetav">0.5</span></div>
+    <div id="edgeLegend"></div>
   </div>
-  <div class="sec small" id="hint">点击岛屿 → 探针。右侧「参数」改数值后重新生成。</div>
+  <div class="sec small" id="hint">点击岛屿 → 探针。悬停任意海面读风/温/雨。右侧「参数」改数值后重新生成。</div>
 </aside>
 
-<div id="globe"><div id="tip"></div><div id="loading">加载中…</div></div>
+<div id="globeWrap"><div id="globe"></div><div id="tip"></div><div id="loading">加载中…</div></div>
 
 <aside class="right">
   <div class="tabs">
@@ -168,10 +191,70 @@ const CLASS_COLOR = ['#b06be0','#3fbf7f','#f0c34d','#e05a5a'];
 const TAB20 = ['#1f77b4','#aec7e8','#ff7f0e','#ffbb78','#2ca02c','#98df8a','#d62728','#ff9896','#9467bd','#c5b0d5','#8c564b','#c49c94','#e377c2','#f7b6d2','#7f7f7f','#c7c7c7','#bcbd22','#dbdb8d','#17becf','#9edae5'];
 const BARRIER_COLOR = ['#e05a5a','#f0c34d','#f0c34d','#b06be0','#5aa9f0','#5aa9f0'];
 
+// ------------------------------------------------------------ 气象网格（R2：② wind.npz / ④ climate_grid.npz 的 1° 网格，只读产物）
+const WEB_DEFAULT={streamline_spacing_deg:4,streamline_steps:40,streamline_step_deg:0.5,streamline_max:1500,wind_anim_ms:3000,overlay_alpha:0.85,overlay_contours:true};
+const BAND_ZH={equatorial_storm:'赤道永暴带',trades_n:'信风带（北）',subtropical_calm_n:'副热带无风带（北）',westerlies_n:'西风带（北）',polar_n:'极地东风带（北）',trades_s:'信风带（南）',subtropical_calm_s:'副热带无风带（南）',westerlies_s:'西风带（南）',polar_s:'极地东风带（南）'};
+const BAND_COLOR=['#c9694a','#e2b264','#f3e8cc','#7d93b8','#e3e9f0','#e2b264','#f3e8cc','#7d93b8','#e3e9f0'];
+const COMPASS8=['北','东北','东','东南','南','西南','西','西北'];
+function mkCmap(stops){ // stops: [[t,'#rrggbb'],…]，t 升序
+  const s=stops.map(([t,h])=>[t,parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]);
+  return t=>{ t=Math.max(0,Math.min(1,t)); let k=0; while(k<s.length-2&&t>s[k+1][0]) k++; const a=s[k],b=s[k+1]; const f=Math.max(0,Math.min(1,(t-a[0])/Math.max(1e-9,b[0]-a[0]))); const c=[1,2,3].map(q=>Math.round(a[q]+(b[q]-a[q])*f)); return `rgb(${c[0]},${c[1]},${c[2]})`; };
+}
+const CMAP_WIND=mkCmap([[0,'#243f7a'],[0.2,'#2e86c1'],[0.4,'#3fbf7f'],[0.6,'#e6d13c'],[0.8,'#e0702a'],[1,'#b0202a']]);
+const CMAP_TEMP=mkCmap([[0,'#1d2b7a'],[0.2,'#2f6fd0'],[0.4,'#cfe3f5'],[0.6,'#f4d58d'],[0.8,'#ea8a3c'],[1,'#b0202a']]);   // −20…30 °C，0 °C 落在 0.4
+const CMAP_PRECIP=mkCmap([[0,'#f2ead2'],[0.3,'#9fd3c7'],[0.6,'#3f8fbf'],[0.85,'#1d3f8a'],[1,'#0d1d4a']]);
+const CMAP_STORM=mkCmap([[0,'#0b0b1e'],[0.3,'#5a1f6e'],[0.6,'#b8386a'],[0.85,'#f08a3c'],[1,'#f8e08a']]);
+const CMAP_WINDEDGE=mkCmap([[0,'#7f8899'],[0.5,'#f39c3c'],[1,'#e05a5a']]);
+// 标量填色层：field = 网格场名；range 固定刻度（跨 run 可比）；contour = 等值线间隔
+const SURF={
+  speed:{label:'风速',unit:'m/s',field:'speed',cmap:CMAP_WIND,contour:4,range:()=>[0,Math.ceil(GR.max.speed/4)*4]},
+  temp:{label:'海面温度',unit:'°C',field:'temp',cmap:CMAP_TEMP,contour:5,range:()=>[-20,30]},
+  precip:{label:'降水（相对）',unit:'',field:'precip',cmap:CMAP_PRECIP,contour:0.1,range:()=>[0,1]},
+  storm:{label:'风暴强度',unit:'',field:'storm',cmap:CMAP_STORM,contour:0.1,range:()=>[0,1]},
+  band:{label:'风带',unit:'',field:'band',categorical:true},
+};
+let GR=null;                                   // {nlat,nlon,lat0,lon0,res,band_names,f:{u,v,temp,precip,storm,band,speed},max:{speed}}
+let WEB={...WEB_DEFAULT};                      // [web] 段的显示默认值（config.resolved.toml 没有该段时用内置值）
+let baseTexUrl=null, baseImg=null;             // 默认地貌贴图（标量层的底图）
+const overlayCache={};                         // 填色层 dataURL 缓存
+let streamPaths=[], streamPov=null, zoomT=0;   // 流线缓存与上次播种时的视角
+
+function decodeGrid(g){
+  const f={}, mx={};
+  for(const k in g.fields){ const a=g.fields[k]; const q=decode(a);
+    if(a.min===undefined){ f[k]=q; continue; }
+    const qmax=a.dtype==='uint16'?65535:255; const out=new Float32Array(q.length); const sc=(a.max-a.min)/qmax; for(let i=0;i<q.length;i++) out[i]=a.min+q[i]*sc; f[k]=out; }
+  if(f.u&&f.v){ const s=new Float32Array(f.u.length); let m=0; for(let i=0;i<s.length;i++){ s[i]=Math.hypot(f.u[i],f.v[i]); if(s[i]>m) m=s[i]; } f.speed=s; mx.speed=m; }
+  return {nlat:g.nlat,nlon:g.nlon,lat0:g.lat0,lon0:g.lon0,res:g.res,band_names:g.band_names,f,max:mx};
+}
+// 双线性采样（同 sphere.grid_interp：经度周期、纬度夹断）
+function gsample(arr,lat,lon){
+  const nlat=GR.nlat,nlon=GR.nlon,res=GR.res;
+  const fi=(lat-GR.lat0)/res, fj=(lon-GR.lon0)/res;
+  const i0=Math.max(0,Math.min(nlat-1,Math.floor(fi))), i1=Math.min(i0+1,nlat-1), ti=Math.max(0,Math.min(1,fi-i0));
+  const j0f=Math.floor(fj), tj=fj-j0f, j0=((j0f%nlon)+nlon)%nlon, j1=(j0+1)%nlon;
+  return arr[i0*nlon+j0]*(1-ti)*(1-tj)+arr[i0*nlon+j1]*(1-ti)*tj+arr[i1*nlon+j0]*ti*(1-tj)+arr[i1*nlon+j1]*ti*tj;
+}
+function gread(lat,lon){ // 某点的全部气象读数
+  if(!GR) return null; const f=GR.f; const r={};
+  if(f.u&&f.v){ r.u=gsample(f.u,lat,lon); r.v=gsample(f.v,lat,lon); r.spd=Math.hypot(r.u,r.v); r.toward=(Math.atan2(r.u,r.v)*180/Math.PI+360)%360; r.from=(r.toward+180)%360; }
+  if(f.temp) r.temp=gsample(f.temp,lat,lon);
+  if(f.precip) r.precip=gsample(f.precip,lat,lon);
+  if(f.storm) r.storm=gsample(f.storm,lat,lon);
+  if(f.band){ const i=Math.max(0,Math.min(GR.nlat-1,Math.round((lat-GR.lat0)/GR.res))); const j=(((Math.round((lon-GR.lon0)/GR.res))%GR.nlon)+GR.nlon)%GR.nlon; r.band=f.band[i*GR.nlon+j]; }
+  return r;
+}
+function compass(deg){ return COMPASS8[Math.round(deg/45)%8]; }
+function windText(r){ return r.spd===undefined?'':`${compass(r.from)}风 ${fmt(r.spd,1)} m/s（吹向 ${compass(r.toward)} ${Math.round(r.toward)}°）`; }
+function metHtml(r){ if(!r) return ''; const parts=[];
+  if(r.spd!==undefined) parts.push(`风 ${windText(r)} · u ${fmt(r.u,1)} v ${fmt(r.v,1)}`);
+  const p2=[]; if(r.temp!==undefined) p2.push(`海面温度 ${fmt(r.temp,1)} °C`); if(r.precip!==undefined) p2.push(`降水 ${fmt(r.precip)}`); if(r.storm!==undefined) p2.push(`风暴 ${fmt(r.storm)}`); if(r.band!==undefined) p2.push(BAND_ZH[GR.band_names[r.band]]||('带 '+r.band));
+  if(p2.length) parts.push(p2.join(' · ')); return parts.join('<br>'); }
+
 function decode(a){
   const bin = atob(a.b64); const buf = new ArrayBuffer(bin.length); const u8 = new Uint8Array(buf);
   for (let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
-  const T = {float32:Float32Array,uint8:Uint8Array,int32:Int32Array,int16:Int16Array,int8:Int8Array}[a.dtype];
+  const T = {float32:Float32Array,uint8:Uint8Array,uint16:Uint16Array,int32:Int32Array,int16:Int16Array,int8:Int8Array}[a.dtype];
   const arr = new T(buf); arr.shape = a.shape; return arr;
 }
 function viridis(t){ // 近似 viridis
@@ -206,13 +289,20 @@ async function loadRunList(){
 async function loadRun(rid){
   $('loading').style.display='flex'; setStatus('读取 '+rid+' …');
   currentRun = rid;
-  if (INLINE){ W = INLINE.world; F = INLINE.fields; cfg = INLINE.config; checkData = INLINE.check; }
+  let graw=null;
+  if (INLINE){ W = INLINE.world; F = INLINE.fields; cfg = INLINE.config; checkData = INLINE.check; graw = INLINE.grid||null; }
   else {
     W = await (await api('/api/world?run='+rid)).json();
     F = await (await api('/api/fields?run='+rid)).json();
     cfg = await (await api('/api/config?run='+rid)).json();
     checkData = await (await api('/api/check?run='+rid)).json();
+    graw = await (await api('/api/grid?run='+rid)).json();
   }
+  GR = graw ? decodeGrid(graw) : null;
+  WEB = Object.assign({}, WEB_DEFAULT, cfg.web||{});
+  for (const k in overlayCache) delete overlayCache[k];
+  streamPaths=[]; streamPov=null;
+  setupWeatherUI();
   A = {}; for (const k in W.arrays) A[k] = decode(W.arrays[k]);
   for (const k in normCache) delete normCache[k];
   FA = {}; for (const k in F.arrays) FA[k] = decode(F.arrays[k]);
@@ -267,6 +357,19 @@ function updateRowVisibility(){
   $('rowField').style.display = by==='trait'?'':'none';
   $('rowMode').style.display = (by==='dist'||by==='iso')?'':'none';
   $('rowTheta').style.display = $('lyIso').checked?'':'none';
+  $('rowWindDens').style.display = $('lyWind').checked?'':'none';
+}
+function setupWeatherUI(){ // 按本 run 实际传了哪些网格场启用/禁用控件；滑块初值来自 [web]
+  const has=k=>!!(GR&&GR.f[k]);
+  for (const opt of $('surfSel').options){ if(opt.value==='base') continue; opt.disabled=!has(SURF[opt.value].field); }
+  if ($('surfSel').selectedOptions[0].disabled) $('surfSel').value='base';
+  $('surfAlpha').value=WEB.overlay_alpha; $('surfAlphav').textContent=(+WEB.overlay_alpha).toFixed(2);
+  $('surfContour').checked=!!WEB.overlay_contours;
+  const wind=has('u')&&has('v'); $('lyWind').disabled=!wind; if(!wind) $('lyWind').checked=false;
+  $('windInfo').innerHTML = GR ? '' : '<span style="color:#f0a2a2">本 run 没有网格场（旧版导出）；重新 viz web 或 serve</span>';
+  for (const opt of $('edgeColor').options) if(opt.value==='wind') opt.disabled=!wind;
+  if ($('edgeColor').value==='wind'&&!wind) $('edgeColor').value='perm';
+  updateRowVisibility();
 }
 
 // ------------------------------------------------------------ 着色
@@ -348,9 +451,21 @@ function edgeColorFn(){
 function repaintEdges(){
   if(!globe) return;
   const paths=[];
+  const windMode = $('edgeColor').value==='wind' && GR && GR.f.u && GR.f.v;
+  $('edgeLegend').innerHTML='';
   if ($('lyEdges').checked){
     const cf=edgeColorFn();
-    for (const e of edgeSet()){ const s=A.e_src[e], d=A.e_dst[e]; paths.push({pts:[[A.lat[s],A.lon[s],0.004],[A.lat[d],A.lon[d],0.004]], c:cf(e), w:1}); }
+    if (windMode){
+      // 顺逆风：点序 = 上风 → 下风（虚线沿此流动）；颜色 = 逆向/顺向成本比 dir(−|c|)^α / dir(|c|)^α（复现 s06）
+      const mode=$('edgeMode').value; const alpha=+cfg.s06.routes.alpha[mode];
+      const ratioMax=Math.pow(+cfg.s06.routes.headwind_factor/+cfg.s06.routes.tailwind_factor, alpha);
+      for (const e of edgeSet()){ let s=A.e_src[e], d=A.e_dst[e]; const w=edgeWindCos(s,d,e); if(w.c<0){ const t=s; s=d; d=t; }
+        const ac=Math.abs(w.c); const ratio=Math.pow(dirFactor(-ac)/dirFactor(ac), alpha);
+        paths.push({pts:[[A.lat[s],A.lon[s],0.004],[A.lat[d],A.lon[d],0.004]], c:CMAP_WINDEDGE((ratio-1)/Math.max(1e-9,ratioMax-1)), w:1, dash:true, dashLen:0.5, dashGap:0.3, gap0:0, animMs:1500}); }
+      $('edgeLegend').innerHTML = gradBar(CMAP_WINDEDGE,[1,ratioMax],'',false) + `<div>逆向 ÷ 顺向成本比（${MODE_ZH[mode]} α=${alpha}；横风 = 1）· 虚线流向顺风侧</div>`;
+    } else {
+      for (const e of edgeSet()){ const s=A.e_src[e], d=A.e_dst[e]; paths.push({pts:[[A.lat[s],A.lon[s],0.004],[A.lat[d],A.lon[d],0.004]], c:cf(e), w:1}); }
+    }
   }
   // 障碍几何
   if ($('lyGeo').checked){
@@ -375,7 +490,11 @@ function repaintEdges(){
     for (const t of list){ const r=fieldRow('share',t); const col= byMode?MODE_COLOR[W.traits[t].mode]:'#ffffff';
       for(let e=0;e<E&&cnt<20000;e++){ const a=r[A.e_src[e]],b=r[A.e_dst[e]]; if((a>=th&&b<th)||(b>=th&&a<th)){ const s=A.e_src[e],d=A.e_dst[e]; paths.push({pts:[[A.lat[s],A.lon[s],0.008],[A.lat[d],A.lon[d],0.008]],c:col,w:1.2}); cnt++; } } }
   }
-  globe.pathsData(paths).pathPoints(d=>d.pts).pathColor(d=>d.c).pathStroke(d=>d.w*0.12).pathTransitionDuration(0);
+  // 风向流线（缓存；只在视角变化/开关/密度改变时重新播种）
+  for (const sp of streamPaths) paths.push(sp);
+  globe.pathsData(paths).pathPoints(d=>d.pts).pathPointAlt(p=>p[2]).pathColor(d=>d.c).pathStroke(d=>d.w?d.w*0.12:null)
+    .pathDashLength(d=>d.dash?d.dashLen:1).pathDashGap(d=>d.dash?d.dashGap:0).pathDashInitialGap(d=>d.dash?d.gap0:0).pathDashAnimateTime(d=>d.dash?d.animMs:0)
+    .pathTransitionDuration(0);
   repaintLabels();
 }
 function repaintLabels(){
@@ -388,21 +507,157 @@ function repaintLabels(){
   globe.labelsData(labels).labelLat(d=>d.lat).labelLng(d=>d.lng).labelText(d=>d.text).labelSize(d=>d.size).labelColor(d=>d.color).labelDotRadius(d=>d.dot).labelAltitude(0.015).labelResolution(2);
 }
 
+// ------------------------------------------------------------ 风向流线（客户端积分 u/v；虚线沿风向流动，密度随视高自适应）
+function angBetween(lat1,lon1,lat2,lon2){ const p1=lat1*Math.PI/180,p2=lat2*Math.PI/180,dl=(lon2-lon1)*Math.PI/180; const a=Math.sin((p2-p1)/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2; return 2*Math.asin(Math.min(1,Math.sqrt(a)))*180/Math.PI; }
+function capDeg(alt){ return Math.acos(1/(1+alt))*180/Math.PI; }   // 视高 alt（行星半径倍）下地平线球冠的角半径
+function windDir(lat,lon){ // 单位方向 [dlat, dlon]（度/度弧长）；风太弱返回 null
+  const u=gsample(GR.f.u,lat,lon), v=gsample(GR.f.v,lat,lon); const s=Math.hypot(u,v); if(s<0.3) return null;
+  return [v/s, u/s/Math.max(0.05,Math.cos(lat*Math.PI/180))]; }
+function integrate(lat,lon,h,n,sign){ // 中点法：顺风（sign=+1）或逆风（−1）走 n 步
+  const pts=[]; let la=lat, lo=lon;
+  for(let k=0;k<n;k++){ const d1=windDir(la,lo); if(!d1) break;
+    const d2=windDir(la+sign*h/2*d1[0], lo+sign*h/2*d1[1]); if(!d2) break;
+    la+=sign*h*d2[0]; lo=wrap(lo+sign*h*d2[1]); if(Math.abs(la)>88) break; pts.push([la,lo]); }
+  return pts;
+}
+function hash2(a,b){ const x=Math.sin(a*12.9898+b*78.233)*43758.5453; return x-Math.floor(x); }
+function seedPoints(spacing,pov,cap){ // 球面近等距播种（经向间距 ÷ cos φ），限于地平线球冠 ∩ 屏幕（留 12% 边）
+  const el=$('globe'); const Wd=el.clientWidth, Ht=el.clientHeight; const mx=Wd*0.12, my=Ht*0.12; const out=[];
+  for(let lat=-88+spacing/2; lat<88; lat+=spacing){
+    const dl=spacing/Math.max(0.1,Math.cos(lat*Math.PI/180));
+    for(let lon=-180+dl*hash2(lat,1); lon<180; lon+=dl){
+      if(angBetween(lat,lon,pov.lat,pov.lng)>cap) continue;
+      const sc=globe.getScreenCoords(lat,lon,0.006); if(!sc||sc.x<-mx||sc.x>Wd+mx||sc.y<-my||sc.y>Ht+my) continue;
+      out.push([lat+(hash2(lat,lon)-0.5)*spacing*0.6, wrap(lon+(hash2(lon,lat)-0.5)*dl*0.6)]);   // 抖动，避免格子感
+    }
+  }
+  return out;
+}
+function buildStreamlines(pov){
+  if(!GR||!GR.f.u||!GR.f.v) return [];
+  const dens=+$('windDens').value; const alt=pov.altitude;
+  let spacing=Math.max(0.5,Math.min(14, WEB.streamline_spacing_deg*(alt/2.2)/dens));
+  const cap=Math.min(90, capDeg(alt)+spacing);
+  let seeds=seedPoints(spacing,pov,cap);
+  if(seeds.length>WEB.streamline_max){ spacing*=Math.sqrt(seeds.length/WEB.streamline_max)*1.05; seeds=seedPoints(spacing,pov,cap); }   // 超预算：等比放大间距
+  const h=WEB.streamline_step_deg*Math.max(0.3,Math.min(1,alt/2.2)), half=Math.max(2,Math.floor(WEB.streamline_steps/2)); const spdMax=Math.max(1e-6,GR.max.speed);
+  const out=[];
+  for (const [sl,so] of seeds){
+    const fwd=integrate(sl,so,h,half,1), bwd=integrate(sl,so,h,half,-1);
+    if(fwd.length+bwd.length<4) continue;
+    bwd.reverse(); const pts=bwd.concat([[sl,so]],fwd);   // 上风 → 下风；虚线沿此方向流动
+    const cols=pts.map(p=>CMAP_WIND(gsample(GR.f.speed,p[0],p[1])/spdMax));
+    out.push({pts:pts.map(p=>[p[0],p[1],0.006]),c:cols,w:null,dash:true,dashLen:0.25,dashGap:0.35,gap0:hash2(sl,so)*0.6,animMs:WEB.wind_anim_ms});
+    if(out.length>=WEB.streamline_max) break;
+  }
+  return out;
+}
+function rebuildStreams(){
+  if(!globe) return;
+  if(!$('lyWind').checked||!GR||!GR.f.u){ streamPaths=[]; streamPov=null; if(GR) $('windInfo').innerHTML=''; repaintEdges(); return; }
+  const pov=globe.pointOfView(); streamPaths=buildStreamlines(pov); streamPov=pov;
+  $('windInfo').innerHTML=`${streamPaths.length} 条流线 · 颜色 = 风速 `+gradBar(CMAP_WIND,[0,GR.max.speed],'m/s',true);
+  repaintEdges();
+}
+function onZoomPov(pov){
+  if(!$('lyWind').checked||!GR) return; clearTimeout(zoomT);
+  zoomT=setTimeout(()=>{ if(!streamPov) return rebuildStreams();
+    const dAlt=Math.abs(Math.log(pov.altitude/streamPov.altitude)); const dAng=angBetween(pov.lat,pov.lng,streamPov.lat,streamPov.lng);
+    if(dAlt>0.12||dAng>Math.max(3,capDeg(streamPov.altitude)*0.3)) rebuildStreams(); },300);
+}
+
+// ------------------------------------------------------------ 标量填色层（离屏 canvas → globeImageUrl；单文件模式同样可用，不走 /api/texture）
+function gradBar(cmap,range,unit,compact){
+  const stops=[]; for(let k=0;k<=10;k++) stops.push(cmap(k/10));
+  const dec=(range[1]-range[0])>5?0:((range[1]-range[0])>1.5?1:2);
+  const ticks=[0,0.25,0.5,0.75,1].map(t=>fmt(range[0]+(range[1]-range[0])*t,dec));
+  if(compact) return `<span class="grad" style="background:linear-gradient(90deg,${stops.join(',')});display:inline-block;width:80px;height:8px;border-radius:2px;vertical-align:middle"></span> <span class="small">${ticks[0]}…${ticks[4]} ${unit}</span>`;
+  return `<div class="legend"><span class="grad" style="background:linear-gradient(90deg,${stops.join(',')})"></span></div><div class="ticks">${ticks.map(t=>`<span>${t}</span>`).join('')}</div>`;
+}
+function surfLegend(key){
+  const box=$('surfLegend'); if(key==='base'||!GR||!SURF[key]){ box.innerHTML=''; return; }
+  const S=SURF[key];
+  if(S.categorical){ box.innerHTML=GR.band_names.map((n,k)=>`<span class="pill" style="background:${BAND_COLOR[k]};color:#000">${BAND_ZH[n]||n}</span>`).join(''); return; }
+  box.innerHTML=gradBar(S.cmap,S.range(),S.unit)+`<div>${S.label}${S.unit?' '+S.unit:''}${$('surfContour').checked?` · 等值线间隔 ${S.contour}`:''}</div>`;
+}
+function renderOverlay(key,alpha,contours){
+  const S=SURF[key]; const arr=GR.f[S.field]; const nlat=GR.nlat,nlon=GR.nlon,lat0=GR.lat0,lon0=GR.lon0,res=GR.res;
+  const W=2048,H=1024; const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
+  const ov=document.createElement('canvas'); ov.width=W; ov.height=H; const octx=ov.getContext('2d');
+  const img=octx.createImageData(W,H); const d=img.data;
+  // 每行/每列的双线性系数只算一次（等距圆柱：行 = 纬度，列 = 经度，北在上）
+  const I0=new Int32Array(H),I1=new Int32Array(H),TI=new Float32Array(H),J0=new Int32Array(W),J1=new Int32Array(W),TJ=new Float32Array(W);
+  for(let y=0;y<H;y++){ const fi=((90-(y+0.5)*180/H)-lat0)/res; const i0=Math.max(0,Math.min(nlat-1,Math.floor(fi))); I0[y]=i0*nlon; I1[y]=Math.min(i0+1,nlat-1)*nlon; TI[y]=Math.max(0,Math.min(1,fi-i0)); }
+  for(let x=0;x<W;x++){ const fj=((-180+(x+0.5)*360/W)-lon0)/res; const j0f=Math.floor(fj); J0[x]=((j0f%nlon)+nlon)%nlon; J1[x]=(J0[x]+1)%nlon; TJ[x]=fj-j0f; }
+  const lut=new Uint8ClampedArray(256*3); let lo=0,hi=1;
+  if(S.categorical){ BAND_COLOR.forEach((h,k)=>{ lut[k*3]=parseInt(h.slice(1,3),16); lut[k*3+1]=parseInt(h.slice(3,5),16); lut[k*3+2]=parseInt(h.slice(5,7),16); }); }
+  else { [lo,hi]=S.range(); for(let k=0;k<256;k++){ const m=S.cmap(k/255).match(/\d+/g); lut[k*3]=+m[0]; lut[k*3+1]=+m[1]; lut[k*3+2]=+m[2]; } }
+  const doLev=contours||S.categorical; const lev=doLev?new Int16Array(W*H):null; const cstep=S.contour||1; const sc=255/Math.max(1e-9,hi-lo);
+  const CI=new Uint8ClampedArray(W*H);   // 量化索引：写入时自动四舍五入并夹到 [0,255]
+  for(let y=0;y<H;y++){ const i0=I0[y],i1=I1[y],ti=TI[y],si=1-ti; const row=y*W;
+    if(S.categorical){ for(let x=0;x<W;x++){ const ci=arr[i0+J0[x]]; CI[row+x]=ci; lev[row+x]=ci; } continue; }
+    for(let x=0;x<W;x++){ const tj=TJ[x],sj=1-tj; const v=arr[i0+J0[x]]*si*sj+arr[i0+J1[x]]*si*tj+arr[i1+J0[x]]*ti*sj+arr[i1+J1[x]]*ti*tj;
+      CI[row+x]=(v-lo)*sc; if(doLev) lev[row+x]=Math.floor(v/cstep); } }
+  for(let k=0,o=0;k<W*H;k++,o+=4){ const c3=CI[k]*3; d[o]=lut[c3]; d[o+1]=lut[c3+1]; d[o+2]=lut[c3+2]; d[o+3]=255; }
+  if(doLev){ // 等值线 / 带界：相邻像素等级变化处压暗 1 px
+    for(let y=0;y<H-1;y++){ const row=y*W; for(let x=0;x<W-1;x++){ const k=row+x; if(lev[k]!==lev[k+1]||lev[k]!==lev[k+W]){ const o=k*4; d[o]*=0.45; d[o+1]*=0.45; d[o+2]*=0.45; } } } }
+  octx.putImageData(img,0,0);
+  if(baseImg&&alpha<1){ ctx.drawImage(baseImg,0,0,W,H); ctx.globalAlpha=alpha; }
+  ctx.drawImage(ov,0,0); ctx.globalAlpha=1;
+  return cv.toDataURL('image/png');
+}
+function ensureBaseImg(){ return new Promise(res=>{ if(baseImg&&baseImg.__src===baseTexUrl) return res(); const im=new Image(); im.onload=()=>{ im.__src=baseTexUrl; baseImg=im; res(); }; im.onerror=()=>{ baseImg=null; res(); }; im.src=baseTexUrl; }); }
+async function applySurface(){
+  if(!globe) return; const key=$('surfSel').value;
+  const on=key!=='base'&&GR&&SURF[key]&&GR.f[SURF[key].field];
+  $('rowSurfAlpha').style.display=on?'':'none'; $('rowContour').style.display=(on&&!SURF[key].categorical)?'':'none';
+  if(!on){ globe.globeImageUrl(baseTexUrl); surfLegend('base'); return; }
+  const alpha=+$('surfAlpha').value, cont=$('surfContour').checked;
+  const ck=`${currentRun}|${key}|${alpha}|${cont}`;
+  if(!overlayCache[ck]){ setStatus(`渲染 ${SURF[key].label} 填色层…`); await new Promise(r=>setTimeout(r,0)); await ensureBaseImg();
+    const keys=Object.keys(overlayCache); if(keys.length>=6) delete overlayCache[keys[0]];
+    overlayCache[ck]=renderOverlay(key,alpha,cont); setStatus('就绪：'+currentRun); }
+  globe.globeImageUrl(overlayCache[ck]); surfLegend(key);
+}
+
+// ------------------------------------------------------------ 航线的顺逆风（复现 s06：边中点风向 × 初始方位角 → dir(c)^α）
+function xyzOf(lat,lon){ const p=lat*Math.PI/180,l=lon*Math.PI/180; return [Math.cos(p)*Math.cos(l),Math.cos(p)*Math.sin(l),Math.sin(p)]; }
+function bearingDeg(lat1,lon1,lat2,lon2){ const p1=lat1*Math.PI/180,p2=lat2*Math.PI/180,dl=(lon2-lon1)*Math.PI/180; const y=Math.sin(dl)*Math.cos(p2), x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl); return Math.atan2(y,x)*180/Math.PI; }
+function findEdge(a,b){ for(let e=0;e<W.n_edges;e++){ if((A.e_src[e]===a&&A.e_dst[e]===b)||(A.e_src[e]===b&&A.e_dst[e]===a)) return e; } return -1; }
+function edgeWindCos(a,b,e){ // a→b：cos(风向 − 航向)。采样点与 s06 完全一致：沿无向边 src→dst 大圆的第 ⌊n/2⌋ 个采样点，两个方向共用；
+  if(!GR||!GR.f.u) return null;                                  // 不给 e 时按 a→b 取（用于没有边索引的场合）
+  let s=a, d=b; if(e!==undefined&&e>=0){ s=A.e_src[e]; d=A.e_dst[e]; }
+  const P=xyzOf(A.lat[s],A.lon[s]), Q=xyzOf(A.lat[d],A.lon[d]);
+  const ns=+((cfg.s06&&cfg.s06.routes&&cfg.s06.routes.edge_samples)||8); const t=Math.floor(ns/2)/(ns-1);
+  const om=Math.acos(Math.max(-1,Math.min(1,P[0]*Q[0]+P[1]*Q[1]+P[2]*Q[2]))); const so=Math.sin(om);
+  const wa=so>1e-9?Math.sin((1-t)*om)/so:1-t, wb=so>1e-9?Math.sin(t*om)/so:t;
+  const m=[wa*P[0]+wb*Q[0],wa*P[1]+wb*Q[1],wa*P[2]+wb*Q[2]]; const n=Math.hypot(m[0],m[1],m[2]);
+  const mlat=Math.asin(m[2]/n)*180/Math.PI, mlon=Math.atan2(m[1],m[0])*180/Math.PI;
+  const u=gsample(GR.f.u,mlat,mlon), v=gsample(GR.f.v,mlat,mlon); const wdir=Math.atan2(u,v)*180/Math.PI;
+  const brg=bearingDeg(mlat,mlon,A.lat[b],A.lon[b]);
+  return {c:Math.cos((wdir-brg)*Math.PI/180), spd:Math.hypot(u,v)};
+}
+function dirFactor(c){ const r=cfg.s06.routes; const tail=+r.tailwind_factor, head=+r.headwind_factor; return c>=0?1/(1+(1/tail-1)*c):1+(head-1)*(-c); }
+function windFactor(a,b,mode,e){ const w=edgeWindCos(a,b,e); if(!w) return null; return Math.pow(dirFactor(w.c),+cfg.s06.routes.alpha[mode]); }
+function windFacText(f){ if(f===null||f===undefined) return '—'; const tag=f<0.97?'顺':(f>1.03?'逆':'横'); const cls=f<0.97?'mode-envoy':(f>1.03?'mode-migrate':''); return `<span class="${cls}">${tag} ×${fmt(f)}</span>`; }
+
 // ------------------------------------------------------------ globe
 function initGlobe(texUrl){
   const el=$('globe');
   if (!globe){
     globe = Globe()(el).backgroundColor('#05070d').showAtmosphere(true).atmosphereColor('#7fa6ff').atmosphereAltitude(0.18)
       .pointLat(d=>d.lat).pointLng(d=>d.lng).pointAltitude(0.004).pointsMerge(true).pointResolution(6)
-      .onGlobeClick(({lat,lng})=>{ const i=nearest(lat,lng); if(i>=0) selectIsland(i); });
+      .onGlobeClick(({lat,lng})=>{ const i=nearest(lat,lng); if(i>=0) selectIsland(i); })
+      .onZoom(onZoomPov);
     new ResizeObserver(()=>globe.width(el.clientWidth).height(el.clientHeight)).observe(el);
     globe.width(el.clientWidth).height(el.clientHeight);
     el.addEventListener('mousemove', onHover);
     globe.controls().autoRotateSpeed=0.35;
   }
-  globe.globeImageUrl(texUrl);
+  baseTexUrl=texUrl; baseImg=null;
   const g=W.bands.G; globe.pointOfView({lat:g.lat, lng:g.lon, altitude:2.2}, 0);
-  repaintIslands(); repaintEdges();
+  applySurface();
+  repaintIslands(); rebuildStreams();
 }
 function nearest(lat,lng){
   const n=N(); let best=-1,bd=1e9; const la=lat*Math.PI/180, lo=lng*Math.PI/180; const cl=Math.cos(la);
@@ -415,10 +670,13 @@ function onHover(ev){
   const rect=$('globe').getBoundingClientRect(); const c=globe.toGlobeCoords(ev.clientX-rect.left, ev.clientY-rect.top);
   const tip=$('tip');
   if(!c){ tip.style.display='none'; $('coords').textContent=''; return; }
-  $('coords').textContent=`${c.lat.toFixed(1)}°, ${c.lng.toFixed(1)}°`;
+  const r=gread(c.lat,c.lng);
+  $('coords').textContent=`${c.lat.toFixed(1)}°, ${c.lng.toFixed(1)}°`+(r&&r.spd!==undefined?` · ${compass(r.from)}风 ${fmt(r.spd,1)} m/s`:'')+(r&&r.temp!==undefined?` · ${fmt(r.temp,1)} °C`:'');
   const i=nearest(c.lat,c.lng);
-  if(i<0){ tip.style.display='none'; return; }
-  tip.style.display='block'; tip.style.left=(ev.clientX-rect.left+14)+'px'; tip.style.top=(ev.clientY-rect.top+10)+'px';
+  const met=metHtml(r);
+  tip.style.left=(ev.clientX-rect.left+14)+'px'; tip.style.top=(ev.clientY-rect.top+10)+'px';
+  if(i<0){ if(!met){ tip.style.display='none'; return; } tip.style.display='block'; tip.innerHTML=`<span class="small">${c.lat.toFixed(1)}°, ${c.lng.toFixed(1)}° 海面</span><br>${met}`; return; }
+  tip.style.display='block';
   let extra='';
   const by=$('colorBy').value;
   if (by==='dist'&&distCache) extra=`<br>文化距离 ${fmt(distCache[i])}`;
@@ -426,7 +684,7 @@ function onHover(ev){
   if (by==='trait'){ const ti=+$('traitSel').value; extra=`<br>reach ${fmt(fieldRow('reach',ti)[i]/255)} · adopt ${fmt(fieldRow('adopt',ti)[i]/255)} · strength ${fmt(fieldRow('strength',ti)[i]/255)}`; }
   if (by==='area') extra=`<br>群陆地 ${fmt(A.area[i],0)} km²`;
   if (by==='catch') extra=`<br>集雨容量 ${fmt(A.catch[i],1)}`;
-  tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''} · ${fmt(A.area[i],0)} km²<br>${W.region_names[A.region[i]]}${extra}`;
+  tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''} · ${fmt(A.area[i],0)} km²<br>${W.region_names[A.region[i]]}${extra}`+(met?`<div class="small" style="margin-top:3px;border-top:1px solid var(--line);padding-top:3px">${met}</div>`:'');
 }
 
 // ------------------------------------------------------------ 探针
@@ -441,12 +699,14 @@ function selectIsland(i){
     + `<div class="small">节点 = 岛群 = 一水共同体 = 一个基本政治单位（docs/02 §六；群内数十岛半小时可达，属第三层）</div>`]);
   rows.push(['地区',`${W.region_names[A.region[i]]} <button class="mini" data-region="${A.region[i]}">九格表</button>`]);
   rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`]);
+  if (GR) rows.push(['气象',metHtml(gread(A.lat[i],A.lon[i]))+`<div class="small">网格插值（海面）；岛上温度另减直减率 × 高度</div>`]);
   rows.push(['史前',`谱系 L${A.lineage[i]} · 约 ${Math.round(A.arrival_yr[i])} 年前到达`]);
   rows.push(['隔离度',MODES.map((m,k)=>`<span class="mode-${m}">${MODE_ZH[m]} ${fmt(A.iso[k*n+i]/255)}</span>`).join(' ')]);
   rows.push(['流量',fmt(A.node_flow[i],0)]);
   // 出边
   const es=[]; for(let e=0;e<W.n_edges;e++){ if(A.e_src[e]===i||A.e_dst[e]===i) es.push(e); }
-  const edgeHtml = es.map(e=>{ const o=A.e_src[e]===i?A.e_dst[e]:A.e_src[e]; const c=A.e_src[e]===i?A.e_cost_ab[e]:A.e_cost_ba[e]; const p=[0,1,2,3].map(k=>fmt(A.e_perm[e*4+k]/255)).join('/'); const b=A.e_barrier[e]>=0?W.regional_order[A.e_barrier[e]]:''; return `<tr><td><button class="mini" data-node="${o}">#${o}</button></td><td>${fmt(c)} 日</td><td>${p}</td><td>${A.e_gblock[e]?'<b style="color:#f66">G</b>':b}</td></tr>`; }).join('');
+  const wmode=$('edgeMode').value;
+  const edgeHtml = es.map(e=>{ const o=A.e_src[e]===i?A.e_dst[e]:A.e_src[e]; const c=A.e_src[e]===i?A.e_cost_ab[e]:A.e_cost_ba[e]; const p=[0,1,2,3].map(k=>fmt(A.e_perm[e*4+k]/255)).join('/'); const b=A.e_barrier[e]>=0?W.regional_order[A.e_barrier[e]]:''; const wf=GR?windFacText(windFactor(i,o,wmode,e)):'—'; return `<tr><td><button class="mini" data-node="${o}">#${o}</button></td><td>${fmt(c)} 日</td><td>${wf}</td><td>${p}</td><td>${A.e_gblock[e]?'<b style="color:#f66">G</b>':b}</td></tr>`; }).join('');
   // 槽位
   let slotHtml='';
   W.slots.forEach((slot,si)=>{
@@ -463,7 +723,8 @@ function selectIsland(i){
     <div class="btnrow"><button id="btnHome">以此为家（文化距离着色）</button><button id="btnFly">飞到这里</button></div>
     ${pairHtml}
     <div class="sec"><h3>各槽位（比例分布）</h3>${slotHtml}</div>
-    <div class="sec"><h3>出边（${es.length}）</h3><table class="kv"><tr><td>对端</td><td>成本</td><td>日常/商旅/使节/迁徙</td><td>障碍</td></tr>${edgeHtml}</table></div>`;
+    <div class="sec"><h3>出边（${es.length}）</h3><table class="kv"><tr><td>对端</td><td>成本</td><td>去程风（${MODE_ZH[wmode]}）</td><td>日常/商旅/使节/迁徙</td><td>障碍</td></tr>${edgeHtml}</table>
+    <div class="small">去程风 = 从本岛出发的风因子 dir(c)^α（顺 &lt;1、逆 &gt;1；模式随左侧「边着色」的模式）</div></div>`;
   $('btnHome').onclick=()=>{ home=i; distCache=null; $('colorBy').value='dist'; updateRowVisibility(); repaintIslands(); repaintLabels(); };
   $('btnFly').onclick=()=>globe.pointOfView({lat:A.lat[i],lng:A.lon[i],altitude:0.6},800);
   const bp=$('btnPath'); if(bp) bp.onclick=()=>drawPath(home,i,$('pathMode').value);
@@ -476,7 +737,7 @@ async function drawPath(a,b,mode){
   const j = await (await api(`/api/path?run=${currentRun}&a=${a}&b=${b}&mode=${mode}`)).json();
   if(!j.reachable){ $('pathBox').textContent='该模式下不可达（沿途有通过率为 0 的障碍）'; pathData=null; repaintEdges(); return; }
   pathData=j; repaintEdges();
-  $('pathBox').innerHTML=`reach = ${j.reach}（λ_ref ${fmt(j.lambda_ref,4)}）<table class="kv"><tr><td>跳</td><td>节点</td><td>成本</td><td>perm</td><td>累计 reach</td></tr>`+j.hops.map((h,k)=>`<tr><td>${k+1}</td><td>#${h.node}</td><td>${fmt(h.cost)}</td><td>${fmt(h.perm)}</td><td>${fmt(h.reach,3)}</td></tr>`).join('')+'</table>';
+  $('pathBox').innerHTML=`reach = ${j.reach}（λ_ref ${fmt(j.lambda_ref,4)}）<table class="kv"><tr><td>跳</td><td>节点</td><td>成本</td><td>风</td><td>perm</td><td>累计 reach</td></tr>`+j.hops.map((h,k)=>`<tr><td>${k+1}</td><td>#${h.node}</td><td>${fmt(h.cost)}</td><td>${GR?windFacText(windFactor(j.path[k],h.node,mode,findEdge(j.path[k],h.node))):'—'}</td><td>${fmt(h.perm)}</td><td>${fmt(h.reach,3)}</td></tr>`).join('')+'</table>';
   setStatus('就绪');
 }
 
@@ -589,6 +850,13 @@ $('edgeN').addEventListener('change',repaintEdges);
 $('theta').addEventListener('input',()=>$('thetav').textContent=$('theta').value);
 $('regionSel').addEventListener('change',()=>loadGrid(+$('regionSel').value));
 $('runsel').addEventListener('change',()=>loadRun($('runsel').value));
+$('surfSel').addEventListener('change',applySurface);
+$('surfAlpha').addEventListener('input',()=>$('surfAlphav').textContent=(+$('surfAlpha').value).toFixed(2));
+$('surfAlpha').addEventListener('change',applySurface);
+$('surfContour').addEventListener('change',applySurface);
+$('lyWind').addEventListener('change',()=>{ updateRowVisibility(); rebuildStreams(); });
+$('windDens').addEventListener('input',()=>$('windDensv').textContent=(+$('windDens').value).toFixed(1));
+$('windDens').addEventListener('change',rebuildStreams);
 $('btnView').onclick=()=>{ const g=W.bands.G; globe.pointOfView({lat:g.lat,lng:g.lon,altitude:2.2},800); };
 $('btnRotate').onclick=()=>{ rotating=!rotating; globe.controls().autoRotate=rotating; $('btnRotate').textContent=rotating?'停止自转':'自转'; };
 

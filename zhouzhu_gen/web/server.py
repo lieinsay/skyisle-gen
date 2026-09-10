@@ -4,6 +4,7 @@ GET  /                        操作台页面
 GET  /api/runs                产物目录列表
 GET  /api/world?run=          世界数据包
 GET  /api/fields?run=         特征场（量化）
+GET  /api/grid?run=           ② 风场 / ④ 气候 1° 网格场（量化 + base64，R2）
 GET  /api/texture?run=        行星贴图 PNG
 GET  /api/config?run=         生效配置
 GET  /api/check?run=          验收报告
@@ -23,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ..cli import _ctx_from_run
-from .bundle import build_fields, build_texture, build_world, dumps
+from .bundle import build_fields, build_grid, build_texture, build_world, dumps
 
 STATIC = Path(__file__).parent / "static"
 
@@ -130,6 +131,10 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/api/fields":
                 rid = q["run"]
                 body = self.app.cached(("fields", rid), lambda: dumps(build_fields(self.app.ctx(rid))).encode("utf-8"))
+                self._send(body)
+            elif p == "/api/grid":
+                rid = q["run"]
+                body = self.app.cached(("grid", rid), lambda: dumps(build_grid(self.app.ctx(rid))).encode("utf-8"))
                 self._send(body)
             elif p == "/api/texture":
                 rid = q["run"]
@@ -238,7 +243,8 @@ def export_static(ctx, out_file: Path, body_only: bool = False) -> Path:
     grids = {str(r): build_region_md(rd, r)[0] for r in range(rd.n_regions)}
     check_f = ctx.stage_dir(9) / "check.json"
     check = json.loads(check_f.read_text(encoding="utf-8")) if check_f.exists() else {"items": []}
-    inline = {"world": world, "fields": fields, "texture": "data:image/png;base64," + tex,
+    inline = {"world": world, "fields": fields, "grid": build_grid(ctx),
+              "texture": "data:image/png;base64," + tex,
               "ninegrid": grids, "check": check, "config": ctx.cfg}
     payload = "<script>window.__INLINE__=" + dumps(inline).replace("</", "<\\/") + ";</script>"
     html = html.replace("<!--INLINE-->", payload)

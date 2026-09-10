@@ -23,6 +23,52 @@ def _q8(a: np.ndarray) -> dict:
     return _arr(np.clip(np.round(np.asarray(a, dtype=np.float64) * 255.0), 0, 255), "uint8")
 
 
+def _qmm(a: np.ndarray, bits: int = 8) -> dict:
+    """带 min/max 元数据的线性量化（u/v/temp 有负值，_q8 的 [0,1] 映射不适用）。
+    前端还原：x = min + q/qmax · (max − min)。8 位：温度 ≈ 0.18 °C；
+    u/v 用 16 位（≈ 0.0006 m/s）——航线顺逆风的方向因子不随风速缩放，无风带里 8 位的方向噪声会把 dir(c) 算错。"""
+    a = np.asarray(a, dtype=np.float64)
+    lo, hi = float(a.min()), float(a.max())
+    if hi - lo < 1e-12:
+        hi = lo + 1.0
+    qmax = (1 << bits) - 1
+    d = _arr(np.clip(np.round((a - lo) / (hi - lo) * qmax), 0, qmax), "uint16" if bits > 8 else "uint8")
+    d["min"], d["max"] = lo, hi
+    return d
+
+
+# 传给操作台的 1° 网格场（R2）。8 位场 64,800 点 → base64 ≈ 86 KB，u/v 16 位各 ≈ 173 KB；
+# 六场合计 ≈ 690 KB，相对单文件导出的 12 MB（globe.gl 1.9 MB + 特征场）可接受。
+# 体积紧张时在 [web].grid_fields 只留 u/v/temp。
+GRID_FIELDS_DEFAULT = ["u", "v", "temp", "precip", "storm", "band"]
+GRID_BITS = {"u": 16, "v": 16}
+
+
+def build_grid(ctx) -> dict:
+    """② wind.npz 与 ④ climate_grid.npz 的网格场（量化 + base64），供流线积分、标量填色与悬停读数。
+    不重算任何东西；只读现有产物。风速在前端由 u/v 算出（不单独传）。"""
+    wind = ctx.load_npz(2, "wind")
+    clim = ctx.load_npz(4, "climate_grid")
+    bands = ctx.load_json(2, "bands")
+    lats, lons = wind["lats"], wind["lons"]
+    src = {"u": wind["u"], "v": wind["v"], "band": wind["band"],
+           "temp": clim["temp"], "precip": clim["precip"], "storm": clim["storm"],
+           "storm_no_g": clim["storm_no_g"], "stability": clim["stability"], "window": clim["window"]}
+    want = list(ctx.cfg.get("web", {}).get("grid_fields", GRID_FIELDS_DEFAULT))
+    fields = {}
+    for k in want:
+        if k not in src:
+            continue
+        fields[k] = _arr(src[k], "uint8") if k == "band" else _qmm(src[k], GRID_BITS.get(k, 8))
+    return {
+        "nlat": int(lats.size), "nlon": int(lons.size),
+        "lat0": float(lats[0]), "lon0": float(lons[0]),
+        "res": float(lats[1] - lats[0]) if lats.size > 1 else 1.0,
+        "band_names": bands["band_names"],
+        "fields": fields,
+    }
+
+
 def build_world(ctx) -> dict:
     w = World(ctx)
     isl, ce = w.islands, w.cand_edges
