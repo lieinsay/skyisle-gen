@@ -60,6 +60,26 @@ def test_prehist_covers_everyone(two_runs):
         assert np.isfinite(z["dist_pre"]).all()
 
 
+def test_main_island_and_river_fields(two_runs):
+    """第三批第 1 步：主岛 ≤ 群陆地、墙高 = max(0, 高度 − 间隙)、河的判定与配置一致、河默认不进集雨容量。"""
+    import numpy as np
+    a, _ = two_runs
+    cfg = load_config(sets=SMALL)
+    s3, c4 = cfg["s03"]["islands"], cfg["s04"]["climate"]
+    with np.load(a / "s03_islands" / "islands.npz") as z:
+        area, main, wall, h = z["area_km2"], z["main_area_km2"], z["wall_m"], z["height_m"]
+        arable = z["arable_frac"]
+    lo, hi = s3["main_frac_range"]
+    assert np.all(main <= area * hi * (1 + 1e-5)) and np.all(main >= area * lo * (1 - 1e-5))  # float32：容差用相对量
+    assert np.allclose(wall, np.maximum(0.0, h - s3["keel_clearance_m"]), atol=0.01)
+    with np.load(a / "s04_climate" / "climate_islands.npz") as z:
+        river, size, precip, catch = z["has_river"], z["river_size"], z["precip"], z["catch"]
+    expect = (main >= c4["river_main_area_km2"]) & (h >= c4["river_height_m"]) & (precip >= c4["river_precip_min"])
+    assert np.array_equal(river, expect)
+    assert np.all(size[~river] == 0) and np.all(size[river] > 0)
+    assert np.allclose(catch, arable * area * precip, rtol=1e-4), "bonus = 0 时河不得进集雨容量"
+
+
 def test_share_normalized(two_runs):
     import numpy as np
     a, _ = two_runs

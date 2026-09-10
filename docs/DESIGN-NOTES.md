@@ -207,6 +207,17 @@ pytest 26 个全绿（新增 `test_land_model_hits_target_and_respects_geometry`
 - `docs/DECISIONS` D8、D52 修订；新增 D65–D68；作废清单加两条。
 - `docs/01` 与 `docs/03` 无冲突，未动。
 
+## 四点七、第三批第 1 步：主岛、岛体、河流（2026-09-10，PLAN-BATCH3 5.1 / 5.5）
+
+- **只加字段、不动风雨、不改任何推导**：③ 新增 `main_frac`（对数正态，均值 0.5，夹 [0.2, 0.9]）、`main_area_km2 = area × main_frac`、
+  `wall_m = max(0, height − keel_clearance_m)`；④ 新增 `has_river`（主岛 ≥ 300 km² 且高 ≥ 400 m 且降水 ≥ 0.35）与 `river_size = 主岛 × 降水`。
+- **随机数放在 ③ 所有既有抽样之后**，既有产物的随机序列不变：三 seed 重跑后岛位、面积、边集与改前逐字节一致，只多了新字段，
+  验收不需要重校。以后给 ③ 加字段都照此办理。
+- 河默认不进集雨容量：`river_capacity_bonus = 0` 时 `catch` 公式不变（pytest 断言）。决定 1 说河不改变政治逻辑，所以先只进九格表文本
+  （① 主岛与河流比例、⑤ 有河之群「掌水之政稍轻」）与操作台探针。真要让河进人口容量，调 bonus 即可，属于调参不属于改模型。
+- 实测三 seed 有河的群约七成（小规模测试 0.72），与「地球常见程度」的目标（六到七成）一致。
+- `wall_m` 是高度派生量，与 `height_m` 同受原则乙约束：只给 ②b 挡风用，不进 s07/s08/ninegrid（九格表只读 `main_area_km2` 与 `has_river`）。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。

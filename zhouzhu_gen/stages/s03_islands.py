@@ -278,11 +278,26 @@ def run(ctx):
     layered = (np.std(np.concatenate([nb_h, height[:, None]], axis=1), axis=1)
                > float(s["layered_height_std_m"]))
 
+    # ---- 主岛与岛体（第三批第 1 步，PLAN-BATCH3 5.1）----
+    # 主岛 = 群内最大的一座岛，占群陆地 main_frac；河（④）与挡风（②b）都看它。
+    # 随机数放在本阶段所有抽样之后，不改变既有产物的随机序列。
+    sig_m = float(s["main_frac_sigma"])
+    lo_m, hi_m = (float(x) for x in s["main_frac_range"])
+    main_frac = float(s["main_frac_mean"]) * np.exp(rng.normal(-0.5 * sig_m * sig_m, sig_m, n_target))
+    main_frac = np.clip(main_frac, lo_m, hi_m)
+    main_area = area * main_frac
+    # 岛体：云带顶面 = 高度零点，岛底离云带顶 keel_clearance_m，岛体实心（决定 3）。
+    # 墙高 = 迎风截面的高度；低于间隙的岛当薄片（墙高 0）。只作几何量，不进社会推导（原则乙同高度）。
+    wall = np.maximum(0.0, height - float(s["keel_clearance_m"]))
+
     ctx.save_npz(3, "islands", lat=lat, lon=lon, xyz=xyz,
                  area_km2=area.astype(np.float32), height_m=height.astype(np.float32),
                  territory_km2=territory.astype(np.float32),
                  land_frac=land_frac.astype(np.float32),
                  arable_frac=arable_frac.astype(np.float32),
+                 main_frac=main_frac.astype(np.float32),
+                 main_area_km2=main_area.astype(np.float32),
+                 wall_m=wall.astype(np.float32),
                  cls=cls, layered=layered, density_at=density_at.astype(np.float32),
                  mean_nn_days=mean_nn.astype(np.float32))
     ctx.save_npz(3, "cand_edges", src=e_src, dst=e_dst,
@@ -300,6 +315,8 @@ def run(ctx):
     return {"n_islands": n_target, "n_edges": len(keys), "n_expedition": n_exp,
             "n_fallback": n_fallback, "n_g_chords": n_chord, "class_share": share,
             "layered_share": round(float(layered.mean()), 3),
+            "main_area_median_km2": round(float(np.median(main_area)), 0),
+            "wall_median_m": round(float(np.median(wall)), 0),
             "land_total_km2": round(float(area.sum()), 0),
             "land_target_km2": float(scale["total_land_km2"]),
             "territory_total_km2": round(float(territory.sum()), 0),

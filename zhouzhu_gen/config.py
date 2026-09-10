@@ -146,6 +146,21 @@ def validate(cfg: dict) -> None:
     c7 = cfg.get("s07", {}).get("centers", {})
     if "area_exponent" in c7 and float(c7["area_exponent"]) < 0:
         raise ValueError("s07.centers.area_exponent 必须 ≥ 0")
+    # ---- 主岛 / 岛体 / 河流（第三批第 1 步）----
+    if "main_frac_range" in s3:
+        lo, hi = (float(x) for x in s3["main_frac_range"])
+        if not (0.0 < lo <= hi <= 1.0):
+            raise ValueError("s03.islands.main_frac_range 必须满足 0 < lo ≤ hi ≤ 1（主岛不能大于群）")
+    if "main_frac_sigma" in s3 and float(s3["main_frac_sigma"]) < 0:
+        raise ValueError("s03.islands.main_frac_sigma 必须 ≥ 0")
+    if "keel_clearance_m" in s3 and float(s3["keel_clearance_m"]) < 0:
+        raise ValueError("s03.islands.keel_clearance_m 必须 ≥ 0")
+    c4 = cfg.get("s04", {}).get("climate", {})
+    for k in ("river_main_area_km2", "river_height_m", "river_capacity_bonus"):
+        if k in c4 and float(c4[k]) < 0:
+            raise ValueError(f"s04.climate.{k} 必须 ≥ 0")
+    if "river_precip_min" in c4 and not (0.0 <= float(c4["river_precip_min"]) <= 1.0):
+        raise ValueError("s04.climate.river_precip_min 必须在 [0, 1]")
 
 
 def canonical(obj: Any) -> str:

@@ -30,8 +30,8 @@ STAGES = [
 
 # 改动会使缓存失效的实现版本号（每阶段独立）
 STAGE_VERSIONS = {i: "1" for i, _ in STAGES}
-STAGE_VERSIONS[3] = "7"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率 arable_frac（R9）；kNN 提前
-STAGE_VERSIONS[4] = "4"  # storm_no_g；集雨容量 catch = 可用地率 × 陆地 × 降水
+STAGE_VERSIONS[3] = "8"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率 arable_frac（R9）；kNN 提前；主岛 main_frac 与岛体墙高 wall_m（第三批 1）
+STAGE_VERSIONS[4] = "5"  # storm_no_g；集雨容量 catch = 可用地率 × 陆地 × 降水；河流 has_river / river_size（第三批 1）
 STAGE_VERSIONS[5] = "3"  # perm_no_g；D 的 Φ 域与 s03 对齐
 STAGE_VERSIONS[6] = "4"  # betweenness_sources；cost_no_g；源权重改用集雨容量
 STAGE_VERSIONS[7] = "2"  # 适宜度含岛群陆地规模项

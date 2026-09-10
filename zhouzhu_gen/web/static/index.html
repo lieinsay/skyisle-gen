@@ -684,7 +684,7 @@ function onHover(ev){
   if (by==='trait'){ const ti=+$('traitSel').value; extra=`<br>reach ${fmt(fieldRow('reach',ti)[i]/255)} · adopt ${fmt(fieldRow('adopt',ti)[i]/255)} · strength ${fmt(fieldRow('strength',ti)[i]/255)}`; }
   if (by==='area') extra=`<br>群陆地 ${fmt(A.area[i],0)} km²`;
   if (by==='catch') extra=`<br>集雨容量 ${fmt(A.catch[i],1)}`;
-  tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''} · ${fmt(A.area[i],0)} km²<br>${W.region_names[A.region[i]]}${extra}`+(met?`<div class="small" style="margin-top:3px;border-top:1px solid var(--line);padding-top:3px">${met}</div>`:'');
+  tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''}${A.has_river&&A.has_river[i]?'·有河':''} · ${fmt(A.area[i],0)} km²<br>${W.region_names[A.region[i]]}${extra}`+(met?`<div class="small" style="margin-top:3px;border-top:1px solid var(--line);padding-top:3px">${met}</div>`:'');
 }
 
 // ------------------------------------------------------------ 探针
@@ -697,6 +697,8 @@ function selectIsland(i){
   rows.push(['地形',`${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'（叠层）':''}`]);
   rows.push(['规模',`群陆地 ${fmt(A.area[i],0)} km²（分位 ${fmt(qOf(A.area,A.area[i]),2)}）· 陆地占比 ${A.land_frac?fmt(A.land_frac[i],3):'-'} · 可用地率 ${A.arable_frac?fmt(A.arable_frac[i],2):'-'} · 集雨容量 ${fmt(A.catch[i],1)}（分位 ${fmt(qOf(A.catch,A.catch[i]),2)}）`
     + `<div class="small">节点 = 岛群 = 一水共同体 = 一个基本政治单位（docs/02 §六；群内数十岛半小时可达，属第三层）</div>`]);
+  if (A.main_area) rows.push(['主岛',`${fmt(A.main_area[i],0)} km²（占群 ${fmt(A.main_area[i]/Math.max(1e-9,A.area[i])*100,0)}%）· 岛体墙高 ${fmt(A.wall_m[i],0)} m · `
+    + (A.has_river&&A.has_river[i]?`<span class="mode-daily">有常年河流</span>（集水 ${fmt(A.river_size[i],0)}）`:'无河，全赖集雨')]);
   rows.push(['地区',`${W.region_names[A.region[i]]} <button class="mini" data-region="${A.region[i]}">九格表</button>`]);
   rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`]);
   if (GR) rows.push(['气象',metHtml(gread(A.lat[i],A.lon[i]))+`<div class="small">网格插值（海面）；岛上温度另减直减率 × 高度</div>`]);

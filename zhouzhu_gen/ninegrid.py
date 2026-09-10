@@ -123,6 +123,11 @@ class RegionData:
                                    for m in self.members])
         self.area_q = _rank_q(self.area_med)
         self.catch_q = _rank_q(self.catch_med)
+        # 主岛与河流（第三批第 1 步）：只进文本，不进任何推导
+        main_i = self.isl["main_area_km2"] if "main_area_km2" in self.isl else area_i * 0.5   # 旧产物兼容（dict 或 NpzFile 都支持 in）
+        river_i = self.clim["has_river"] if "has_river" in self.clim else np.zeros(area_i.size, bool)
+        self.main_med = np.array([float(np.median(main_i[m])) if m.size else 0.0 for m in self.members])
+        self.river_share = np.array([float(river_i[m].mean()) if m.size else 0.0 for m in self.members])
         from .stages.s02_wind import band_id_of_lat
         planet = ctx.load_json(1, "planet")["bands"]
         self.band_of = band_id_of_lat(self.isl["lat"], planet)
@@ -229,6 +234,15 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
     if lay > 0.15:
         tenths = "一二三四五六七八九"[min(8, max(0, int(lay * 10) - 1))]
         l1 += f" 约{tenths}成岛群呈叠层堆叠。"
+    rs = rd.river_share[r]
+    l1 += f" 每群以一座主岛为主（主岛中位约 {rd.main_med[r]:.0f} km²）；"
+    if rs >= 0.85:
+        l1 += "主岛几乎皆有常年河流。"
+    elif rs >= 0.15:
+        tenths_r = "一二三四五六七八九"[min(8, max(0, int(rs * 10) - 1))]
+        l1 += f"约{tenths_r}成的群主岛有常年河流，余者全赖集雨。"
+    else:
+        l1 += "主岛少有河流，用水几乎全赖集雨。"
 
     # ---------- ②
     band_zh = BAND_ZH[rd.band_major[r]]
@@ -289,6 +303,8 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
     wp = rd.prod.get("water_polity", {}).get(scale_tier, {}).get("text", "")
     if wp:
         l5 += " " + wp
+    if rs >= 0.5:
+        l5 += " 有河之群，取水不必尽赖集雨，掌水之政稍轻，而河谷田畴之争代之。"
     l6 = rd.prod.get("military", {}).get(cls, {}).get("text", "【待填】")
     nb_dense = [t for t in neighbors if CLASS_NAMES[rd.cls_major[t]] == "dense"]
     nb_sparse = [t for t in neighbors if CLASS_NAMES[rd.cls_major[t]] == "sparse"]
@@ -318,6 +334,8 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
                         "population_by_quota": round(float(pop_wan * 1e4), 0),
                         "catch_median": round(float(rd.catch_med[r]), 1),
                         "catch_quantile": round(float(rd.catch_q[r]), 2),
+                        "main_area_median_km2": round(float(rd.main_med[r]), 0),
+                        "river_share": round(float(rs), 2),
                         "water_polity_tier": scale_tier, "pressure_tier": press_tier}
 
     # ---------- ⑨（核心：写强度、写相对、错位由 ②b 解释）----------

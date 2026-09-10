@@ -78,12 +78,25 @@ def run(ctx):
     # 只用陆地、可用地率与降水，不含高度（原则乙）。
     catch = (isl["arable_frac"].astype(np.float64) * isl["area_km2"].astype(np.float64)
              * precip_i)
+    # ---- 河流（第三批第 1 步，PLAN-BATCH3 5.5；决定 1：允许河，按地球常见程度）----
+    # 主岛够大、够高、够湿 → 有常年河。高度在此只筛「有没有河」（同温度直减率，原则乙允许 ④ 用高度）。
+    # river_size = 主岛面积 × 降水（集水面代理）。河默认只进文本：river_capacity_bonus = 0 时 catch 不变。
+    main_area = isl["main_area_km2"].astype(np.float64)
+    has_river = ((main_area >= float(c["river_main_area_km2"]))
+                 & (isl["height_m"].astype(np.float64) >= float(c["river_height_m"]))
+                 & (precip_i >= float(c["river_precip_min"])))
+    river_size = np.where(has_river, main_area * precip_i, 0.0)
+    bonus = float(c["river_capacity_bonus"])
+    if bonus > 0 and has_river.any():
+        catch = catch * (1.0 + bonus * river_size / float(np.median(river_size[has_river])))
 
     ctx.save_npz(4, "climate_islands",
                  precip=precip_i.astype(np.float32), temp=temp_i.astype(np.float32),
                  storm=storm_i.astype(np.float32), stability=stability_i.astype(np.float32),
-                 window=window_i.astype(np.float32), catch=catch.astype(np.float32))
+                 window=window_i.astype(np.float32), catch=catch.astype(np.float32),
+                 has_river=has_river, river_size=river_size.astype(np.float32))
     return {"precip_range": [round(float(precip.min()), 2), round(float(precip.max()), 2)],
             "storm_max": round(float(storm.max()), 2),
             "catch_median": round(float(np.median(catch)), 1),
-            "catch_p95": round(float(np.quantile(catch, 0.95)), 1)}
+            "catch_p95": round(float(np.quantile(catch, 0.95)), 1),
+            "river_share": round(float(has_river.mean()), 3)}

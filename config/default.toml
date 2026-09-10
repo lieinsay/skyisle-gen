@@ -86,6 +86,13 @@ height_jitter_m = 150.0
 stack_zone_threshold = 0.55   # 叠层岛区：堆叠噪声超过此值的区域高度呈双层分布
 stack_range_m = 1200.0
 layered_height_std_m = 320.0  # 邻域高度标准差超过此值 → 叠层
+# 主岛与岛体（第三批第 1 步，docs/PLAN-BATCH3.md 5.1）。群内最大的一座岛 = 主岛；河与挡风都看它。
+main_frac_mean = 0.5          # 主岛占群陆地的比例（对数正态均值）；main_area = area × main_frac
+main_frac_sigma = 0.4         # 对数正态抖动
+main_frac_range = [0.2, 0.9]  # 夹断：碎成几十座差不多的小岛 ~0.2，一座大岛带几粒卫星岛 ~0.9
+# 岛体：云带顶面 = 高度零点，岛底离云带顶一个固定间隙，岛体从底到顶是实心浮石（决定 3）。
+# 墙高 wall_m = max(0, height_m − keel_clearance_m)：②b 挡风用的迎风截面高度；低于间隙的岛当薄片
+keel_clearance_m = 300.0
 expedition_pairs = 6          # 跨赤道远征边数
 expedition_min_lon_sep_deg = 30.0
 
@@ -98,6 +105,14 @@ equatorial_margin = 0.3       # 永暴带核心之外、风系带之内的边缘
 
 # ---------------- ④ 气候 ----------------
 [s04.climate]
+# 河流（PLAN-BATCH3 5.5，决定 1）：主岛够大、够高、够湿的群有常年河流，按地球常见程度约六七成的群。
+# has_river = main_area ≥ river_main_area_km2 且 height ≥ river_height_m 且 precip ≥ river_precip_min
+# river_size = main_area × precip（集水面代理）。河默认只进九格表文本，不进人口容量：
+# catch × (1 + river_capacity_bonus × river_size/中位河)，bonus = 0 即不影响任何推导
+river_main_area_km2 = 300.0
+river_height_m = 400.0
+river_precip_min = 0.35
+river_capacity_bonus = 0.0
 temp_eq_c = 28.0
 temp_pole_c = -18.0
 lapse_c_per_km = 6.0
