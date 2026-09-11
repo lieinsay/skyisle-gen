@@ -531,6 +531,10 @@ def check_ironlaws(w: World, cfg, rep: Report):
         if not np.allclose(tot, 1.0, atol=1e-4) or np.isnan(p).any():
             sums_ok = False
     region_ok = bool((w.regions["region"] >= 0).all())
+    try:
+        polity_ok = bool((ctx.load_npz(9, "polity")["polity"] >= 0).all())   # ⑨：每个节点都属于某个政体
+    except FileNotFoundError:
+        polity_ok = True
     perm = w.perm["perm"]
     ce = w.cand_edges
     N = w.islands["lat"].size
@@ -540,14 +544,15 @@ def check_ironlaws(w: World, cfg, rep: Report):
     has_edge[ce["dst"][alive]] = True
     rep.add("IL-ji", "原则己：世界的每个角落都有人（史前扩散全覆盖、槽位归一、地区归属、连通）",
             {"prehist_all_reached": all_reached, "share_sums_ok": sums_ok,
-             "all_in_region": region_ok, "all_connected": bool(has_edge.all())},
-            "全部为 true", all_reached and sums_ok and region_ok and bool(has_edge.all()),
+             "all_in_region": region_ok, "all_connected": bool(has_edge.all()), "all_in_polity": polity_ok},
+            "全部为 true", all_reached and sums_ok and region_ok and bool(has_edge.all()) and polity_ok,
             hard=True)
 
     # 乙：高度不派生社会（静态源码断言）
     import pathlib
     pkg = pathlib.Path(__file__).parent
-    social_files = ["stages/s07_centers.py", "stages/s08_diffusion.py", "ninegrid.py"]
+    social_files = ["stages/s07_centers.py", "stages/s08_diffusion.py", "stages/s09_polity.py",
+                    "ninegrid.py", "polity.py"]
     height_hits = []
     for f in social_files:
         p = pkg / f
@@ -559,7 +564,7 @@ def check_ironlaws(w: World, cfg, rep: Report):
     # 铁律一/二/甲：浮石与地质不进任何计算（产物字段白名单）
     forbidden = re.compile(r"floatstone|浮石|geolog|uplift|mana|magic", re.IGNORECASE)
     bad_keys = []
-    for idx, name in [(3, "islands"), (5, "perm"), (6, "routes"), (8, "fields")]:
+    for idx, name in [(3, "islands"), (5, "perm"), (6, "routes"), (8, "fields"), (9, "polity")]:
         for k in ctx.load_npz(idx, name):
             if forbidden.search(k):
                 bad_keys.append(f"s{idx:02d}/{name}:{k}")
@@ -570,6 +575,55 @@ def check_ironlaws(w: World, cfg, rep: Report):
     ok_types = w.fields["share"].dtype.kind == "f" and w.fields["strength"].dtype.kind == "f"
     rep.add("IL-t5", "铁律五：文化是连续场（无整数文化标签图层；硬边界由 P1b 逐边保证）",
             {"fields_are_float": bool(ok_types)}, "true", bool(ok_types), hard=True)
+
+
+# ---------------------------------------------------------------- P8 政治层（第四批 R7）
+def check_polity(w: World, cfg, rep: Report):
+    from .polity import Polity
+    ctx = w.ctx
+    pol = Polity(ctx)
+    if not pol.available:
+        rep.add("P8", "政治层：帝国只能长在密接群岛 / 宗主空心 / 变法之国在密接边缘 / 船团不建国",
+                "无 ⑨ 产物", "-", False, note="warn-only")
+        return
+    c = cfg["check"]
+    isl = w.islands
+    cls = isl["cls"]
+    arr, meta = pol.arr, pol.meta
+    states = [x for x in meta["polities"] if x["kind"] == "state"]
+    n_nodes = np.array([x["n_nodes"] for x in states])
+    dense = np.array([x["capital_class"] == "dense" for x in states])
+    med_dense = float(np.median(n_nodes[dense])) if dense.any() else float("nan")
+    med_medium = float(np.median(n_nodes[~dense])) if (~dense).any() else float("nan")
+    ratio = med_dense / med_medium if med_medium > 0 else float("nan")
+    # 船团不建国、不被征服；密接 / 中疏之邑必属某邦；每个节点都有政体
+    kind = arr["kind"]
+    fleet_ok = bool((kind[cls == 2] == 1).all()) and bool((arr["state"][cls == 2] < 0).all())
+    state_ok = bool((arr["state"][(cls == 0) | (cls == 1)] >= 0).all())
+    all_ok = bool((arr["polity"] >= 0).all())
+    # 变法之国：存在、都在密接、不是宗主、并过邦、有战线
+    r = meta["reformer"]
+    rp = pol.P.get(r["polity"]) if r["polity"] >= 0 else None
+    reform_ok = (rp is not None and rp["capital_class"] == "dense" and not rp["is_suzerain"]
+                 and r["n_annexed"] >= 1 and len(meta["fronts"]) >= 1 and not r["fallback"])
+    # 宗主空心：中心 ② 圈的宗主不是圈内最大的邦（名分归它，实力不归它）
+    rc = r["circle"]
+    suz = meta["suzerain"].get(rc, -1)
+    in_circle = [x for x in states if x["circle"] == rc]
+    biggest = max(in_circle, key=lambda x: x["pop"])["id"] if in_circle else -1
+    hollow_ok = suz >= 0 and suz != biggest
+    n_states = len(states)
+    n_ok = int(c["p8_n_states_min"]) <= n_states <= int(c["p8_n_states_max"])
+    ok = (ratio >= float(c["p8_dense_ratio_min"]) and fleet_ok and state_ok and all_ok and reform_ok and hollow_ok and n_ok)
+    rep.add("P8", "政治层：帝国只能长在密接群岛（密接之都的邦更大）/ 宗主空心 / 变法之国在密接边缘且已开始兼并 / 船团不建国",
+            {"n_states": n_states, "median_nodes_dense_capital": med_dense, "median_nodes_medium_capital": med_medium,
+             "dense_ratio": round(ratio, 2), "fleets_stateless": fleet_ok, "all_eligible_in_state": state_ok,
+             "everyone_has_polity": all_ok, "reformer": r["polity"], "reformer_dense_capital": bool(rp and rp["capital_class"] == "dense"),
+             "reformer_fallback": r["fallback"], "n_annexed": r["n_annexed"], "n_fronts": len(meta["fronts"]),
+             "suzerain_is_biggest": (suz == biggest)},
+            {"dense_ratio>=": c["p8_dense_ratio_min"], "n_states": [c["p8_n_states_min"], c["p8_n_states_max"]],
+             "reformer": "dense capital, not suzerain, annexed ≥1, fronts ≥1", "suzerain": "not the biggest in circle"},
+            ok, viz="zhouzhu polity")
 
 
 # ---------------------------------------------------------------- 骨架一致性（只报警）
@@ -650,6 +704,7 @@ def run_check(ctx, calibrate=False) -> int:
     check_p6(w, ctx.cfg, rep)
     check_p7(w, ctx.cfg, rep)
     check_climate(w, ctx.cfg, rep)
+    check_polity(w, ctx.cfg, rep)
     check_skeleton(w, ctx.cfg, rep)
 
     warn_only = {i["id"] for i in rep.items if (i.get("note") or "").startswith("warn")}
@@ -657,7 +712,7 @@ def run_check(ctx, calibrate=False) -> int:
     soft_fail = [i for i in rep.items if not i["pass"] and not i["hard"] and i["id"] not in warn_only]
     warns = [i for i in rep.items if not i["pass"] and i["id"] in warn_only]
 
-    ctx.save_json(9, "check", {"items": rep.items,
+    ctx.save_json(10, "check", {"items": rep.items,
                                "exit_code": 2 if hard_fail else (1 if soft_fail else 0)})
     lines = ["# 验收报告", ""]
     for i in rep.items:
@@ -673,7 +728,7 @@ def run_check(ctx, calibrate=False) -> int:
         if i["note"]:
             lines.append(f"- 注：{i['note']}")
         lines.append("")
-    (ctx.stage_dir(9) / "check.md").write_text("\n".join(lines), encoding="utf-8")
+    (ctx.stage_dir(10) / "check.md").write_text("\n".join(lines), encoding="utf-8")
 
     for i in rep.items:
         flag = "PASS" if i["pass"] else ("WARN" if i["id"] in warn_only else "FAIL")

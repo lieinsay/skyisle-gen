@@ -26,10 +26,11 @@ class CSR:
         self.indptr = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
 
 
-def dijkstra(csr: CSR, weights: np.ndarray, sources, source_dist=None):
+def dijkstra(csr: CSR, weights: np.ndarray, sources, source_dist=None, max_dist=None):
     """weights 与 csr.edge_id 对齐（weights[csr.edge_id[k]] 是 CSR 第 k 条边的权）。
     返回 (dist[n], pred_node[n], pred_edge[n])；pred_edge 为外部边 id，-1 表示无。
     不可达为 inf。权重含 inf 的边视为不存在。
+    max_dist：给定时只展开 ≤ 该值的节点（有界搜索；⑨ 政治层每个都城一次），更远者保持 inf。
     """
     n = csr.n
     dist = np.full(n, INF, dtype=np.float64)
@@ -48,8 +49,11 @@ def dijkstra(csr: CSR, weights: np.ndarray, sources, source_dist=None):
     w = weights
     push = heapq.heappush
     pop = heapq.heappop
+    bound = float("inf") if max_dist is None else float(max_dist)
     while heap:
         d, u = pop(heap)
+        if d > bound:
+            break
         if done[u]:
             continue
         done[u] = True
@@ -64,6 +68,12 @@ def dijkstra(csr: CSR, weights: np.ndarray, sources, source_dist=None):
                 pred_node[v] = u
                 pred_edge[v] = eids[k]
                 push(heap, (nd, int(v)))
+    if max_dist is not None:
+        # 界外节点可能已被 relax 出一个有限值：清回 inf，保证「有限 = 在界内」
+        over = dist > bound
+        dist[over] = INF
+        pred_node[over] = -1
+        pred_edge[over] = -1
     return dist, pred_node, pred_edge
 
 

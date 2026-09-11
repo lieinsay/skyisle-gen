@@ -25,7 +25,8 @@ STAGES = [
     (6, "s06_routes"),
     (7, "s07_centers"),
     (8, "s08_diffusion"),
-    (9, "s09_output"),
+    (9, "s09_polity"),
+    (10, "s10_output"),
 ]
 
 # 改动会使缓存失效的实现版本号（每阶段独立）
@@ -36,7 +37,8 @@ STAGE_VERSIONS[4] = "6"  # ②b 岛对风的扰动与局部带界（第三批 3�
 STAGE_VERSIONS[5] = "4"  # perm_no_g；D 的 Φ 域与 s03 对齐；Φ 改读局部带界（第三批 3）
 STAGE_VERSIONS[6] = "5"  # betweenness_sources；cost_no_g；源权重改用集雨容量；读 ④ 扰动风 + 可靠局地风（第三批 3）
 STAGE_VERSIONS[7] = "4"  # 适宜度含岛群陆地规模项；中心窗读局部带界（第三批 3）；次级极大每圈保底 secondary_per_circle
-STAGE_VERSIONS[9] = "3"  # 九格表 ① 按「节点 = 岛群」重写（R10），含陆地/可耕/口径人口
+STAGE_VERSIONS[9] = "1"  # ⑨ 政治层（第四批 R7）：人口、诸邦、采邑、名分/附庸、变法与兼并史
+STAGE_VERSIONS[10] = "4"  # ⑩ 输出（原 ⑨）：九格表 ⑤⑥⑧ 改写为邦级（第四批 R7）
 
 
 class Context:
@@ -79,7 +81,7 @@ class Context:
 # 不放进所有阶段的 key，否则改一句模板会让 ①–⑦ 全部失效。
 STAGE_EXTRA_SECTIONS: dict[int, tuple[str, ...]] = {
     8: ("slots", "traits_manual"),
-    9: ("slots", "traits_manual", "production_templates"),
+    10: ("slots", "traits_manual", "production_templates"),
 }
 
 
@@ -93,7 +95,7 @@ def _stage_key_chain(cfg: dict, seed: int) -> list[str]:
     return keys
 
 
-def run(cfg: dict, seed: int, out_root: Path, upto: int = 9,
+def run(cfg: dict, seed: int, out_root: Path, upto: int = 10,
         force_from: int | None = None, explain: bool = False, log=print) -> Path:
     run_id = str(cfg.get("run", {}).get("id") or f"seed{seed}")
     out_dir = Path(out_root) / run_id
@@ -103,9 +105,9 @@ def run(cfg: dict, seed: int, out_root: Path, upto: int = 9,
     ctx = Context(cfg, seed, out_dir)
     keys = _stage_key_chain(cfg, seed)
     from .stages import (s01_planet, s02_wind, s03_islands, s04_climate, s05_barriers,
-                         s06_routes, s07_centers, s08_diffusion, s09_output)
+                         s06_routes, s07_centers, s08_diffusion, s09_polity, s10_output)
     impls = {1: s01_planet, 2: s02_wind, 3: s03_islands, 4: s04_climate, 5: s05_barriers,
-             6: s06_routes, 7: s07_centers, 8: s08_diffusion, 9: s09_output}
+             6: s06_routes, 7: s07_centers, 8: s08_diffusion, 9: s09_polity, 10: s10_output}
 
     chain_broken = False
     for idx, name in STAGES:

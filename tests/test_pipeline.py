@@ -95,3 +95,38 @@ def test_share_normalized(two_runs):
     for si, (slot, rows) in enumerate(sorted(slot_of.items())):
         tot = share[rows].sum(axis=0) + local[si]
         assert np.allclose(tot, 1.0, atol=2e-3), f"槽位 {slot} 未归一"
+
+
+def test_polity_layer(two_runs):
+    """⑨ 政治层（第四批 R7）：处处有政体、密接/中疏之邑必属某邦、船团不建国、人口公式、采邑树自洽、只有变法之国兼并。"""
+    import numpy as np
+    a, _ = two_runs
+    cfg = load_config(sets=SMALL + ["run.id=a"])
+    run(cfg, 7, a.parent, upto=9)          # ①–⑧ 命中缓存，只算 ⑨
+    with np.load(a / "s03_islands" / "islands.npz") as z:
+        cls, area, arable = z["cls"], z["area_km2"], z["arable_frac"]
+    with np.load(a / "s04_climate" / "climate_islands.npz") as z:
+        precip = z["precip"]
+    with np.load(a / "s09_polity" / "polity.npz") as z:
+        pol = {k: z[k] for k in z.files}
+    p = cfg["s09"]["polity"]
+    p1 = cfg["shared"]["scale"]["people_per_arable_km2"]
+    wet = np.clip(precip / p["precip_full"], p["precip_floor"], 1.0)
+    assert np.allclose(pol["pop"], p1 * area * arable * wet, rtol=1e-4)
+    assert (pol["polity"] >= 0).all(), "原则己：每个节点都属于某个政体"
+    elig = (cls == 0) | (cls == 1)
+    assert (pol["state"][elig] >= 0).all() and (pol["state"][~elig] < 0).all()
+    assert (pol["kind"][cls == 2] == 1).all(), "稀疏岛链 = 船团，不建国"
+    caps = pol["capital"]
+    assert (pol["state"][caps] == np.arange(caps.size)).all(), "都城必属本邦"
+    assert np.allclose(pol["control"][caps], 1.0)
+    fief = pol["fief"]
+    seats = fief >= 0
+    assert (pol["state"][fief[seats]] == pol["state"][seats]).all(), "采邑之主必与所辖之邑同邦"
+    meta = json.loads((a / "s09_polity" / "polities.json").read_text(encoding="utf-8"))
+    states = [x for x in meta["polities"] if x["kind"] == "state"]
+    assert len(states) == caps.size
+    annexed = [x for x in states if x["annexed_by"] >= 0]
+    r = meta["reformer"]["polity"]
+    assert all(x["annexed_by"] == r for x in annexed), "只有变法之国能兼并"
+    assert (pol["realm"] >= 0).all()

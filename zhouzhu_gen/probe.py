@@ -45,6 +45,10 @@ def probe_node(ctx, node: int):
           f"  谱系 L{int(pre['lineage'][n])}")
     iso = w.iso["iso"]
     print("隔离度 " + "  ".join(f"{MODE_ZH[m]} {iso[mi][n]:.2f}" for mi, m in enumerate(MODES)))
+    from .polity import Polity
+    pol = Polity(ctx)
+    if pol.available:
+        print(f"政体 约 {float(pol.pop[n]) / 1e4:.1f} 万口 · {pol.node_line(n)}")
 
     ce = w.cand_edges
     mask = (ce["src"] == n) | (ce["dst"] == n)

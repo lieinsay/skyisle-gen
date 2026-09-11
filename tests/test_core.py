@@ -287,7 +287,7 @@ def test_area_exponent_zero_recovers_old_suitability():
 
 # ---------------- 缓存 key 链 ----------------
 def test_template_change_invalidates_only_ninegrid_stage():
-    """改生产模板只该让 ⑨ 失效，①–⑧ 必须继续命中缓存。"""
+    """改生产模板只该让 ⑩ 输出失效，①–⑨（含政治层）必须继续命中缓存。"""
     import copy
     from zhouzhu_gen.pipeline import _stage_key_chain
     cfg = load_config()
@@ -295,8 +295,20 @@ def test_template_change_invalidates_only_ninegrid_stage():
     c2 = copy.deepcopy(cfg)
     c2["production_templates"]["organization"]["dense"]["text"] = "改了"
     k2 = _stage_key_chain(c2, 42)
-    assert base[:8] == k2[:8], "改生产模板不该让 ①–⑧ 失效"
-    assert base[8] != k2[8], "改生产模板必须让 ⑨ 失效"
+    assert base[:9] == k2[:9], "改生产模板不该让 ①–⑨ 失效"
+    assert base[9] != k2[9], "改生产模板必须让 ⑩ 失效"
+
+
+def test_polity_param_change_invalidates_only_polity_and_output():
+    """改 [s09.polity] 只该让 ⑨⑩ 失效，①–⑧ 继续命中（政治层不回写地理与文化）。"""
+    import copy
+    from zhouzhu_gen.pipeline import _stage_key_chain
+    cfg = load_config()
+    base = _stage_key_chain(cfg, 42)
+    c2 = copy.deepcopy(cfg)
+    c2["s09"]["polity"]["reform_years_ago"] = 120.0
+    k2 = _stage_key_chain(c2, 42)
+    assert base[:8] == k2[:8] and base[8] != k2[8] and base[9] != k2[9]
 
 
 def test_slots_change_invalidates_diffusion_stage():
@@ -309,4 +321,4 @@ def test_slots_change_invalidates_diffusion_stage():
     c2["slots"]["slot"][0]["zh"] = "改了"
     k2 = _stage_key_chain(c2, 42)
     assert base[:7] == k2[:7], "改槽位表不该让 ①–⑦ 失效"
-    assert base[7] != k2[7] and base[8] != k2[8], "改槽位表必须让 ⑧⑨ 失效"
+    assert base[7] != k2[7] and base[9] != k2[9], "改槽位表必须让 ⑧⑩ 失效"

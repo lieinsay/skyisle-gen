@@ -9,6 +9,7 @@ import numpy as np
 
 from .. import MODES, MODE_ZH
 from ..culture import World
+from ..polity import Polity
 from ..stages.s03_islands import CLASS_NAMES, CLASS_ZH
 from ..stages.s05_barriers import REGIONAL_ORDER
 
@@ -111,6 +112,25 @@ def build_world(ctx) -> dict:
     f_reg = pm["f_regional"]
     f_max_idx = np.where(f_reg.max(axis=1) > 0.05, f_reg.argmax(axis=1), -1)
     traits = w.traits
+    # ⑨ 政治层（第四批 R7）：旧 run 没有时前端按无政治层退化
+    pol = Polity(ctx)
+    if pol.available:
+        m = pol.meta
+        keep = ("id", "kind", "name", "capital", "capital_class", "circle", "regime", "n_nodes", "pop",
+                "n_direct", "n_fiefs", "overlord", "vassals", "annexed_by", "annexed_years_ago", "stage", "is_suzerain")
+        polity_meta = {"polities": [{k: x[k] for k in keep if k in x} for x in m["polities"]],
+                       "n_states": m["n_states"], "n_fleets": m["n_fleets"], "n_tribes": m["n_tribes"],
+                       "suzerain": m["suzerain"], "reformer": m["reformer"], "history": m["history"],
+                       "fronts": m["fronts"], "openings": m["openings"], "stage_zh": m["stage_zh"],
+                       "regime_zh": m["regime_zh"], "center_zh": m["center_zh"]}
+        pa = pol.arr
+        polity_arrays = {"pop": _arr(pa["pop"], "float32"), "state": _arr(pa["state"], "int32"),
+                         "polity": _arr(pa["polity"], "int32"), "pkind": _arr(pa["kind"], "int8"),
+                         "control": _q8(np.clip(pa["control"], 0, 1)), "realm": _arr(pa["realm"], "int32"),
+                         "fief": _arr(pa["fief"], "int32")}
+    else:
+        polity_meta = None
+        polity_arrays = {}
     return {
         "run_id": ctx.out_dir.name, "seed": ctx.seed,
         "modes": list(MODES), "mode_zh": MODE_ZH,
@@ -123,6 +143,7 @@ def build_world(ctx) -> dict:
         "hubs": w.hubs["hubs"],
         "region_names": region_names,
         "region_seeds": centers["region_seeds"],
+        "polity": polity_meta,
         "slots": w.slots,
         "slot_meta": {s["id"]: {"zh": s["zh"], "phrase": s["phrase"], "category": s["category"]}
                       for s in ctx.cfg["slots"]["slot"]},
@@ -159,6 +180,7 @@ def build_world(ctx) -> dict:
             "e_gblock": _arr(pm["g_blocked"], "uint8"),
             "e_barrier": _arr(f_max_idx, "int8"),
             "e_flow": _arr(rt["flow"][:E] + rt["flow"][E:], "float32"),
+            **polity_arrays,
         },
     }
 

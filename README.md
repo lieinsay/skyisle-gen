@@ -1,7 +1,7 @@
 # 行星地形与文明生成器
 
-`docs/12-扩散模型.md` 的实现：按九步管线生成行星风系、岛屿分布、气候、障碍、
-航线网络、文明中心，并用 **Hägerstrand (1968) Model III 变体**把文化特征扩散成
+`docs/12-扩散模型.md` 的实现：按十步管线生成行星风系、岛屿分布、气候、障碍、
+航线网络、文明中心、政治层（诸邦与兼并史），并用 **Hägerstrand (1968) Model III 变体**把文化特征扩散成
 **连续场**——没有文化标签，没有 flood fill，任何一点的「文化」是百余条特征在该点
 的强度叠加。
 
@@ -18,7 +18,7 @@ strength(t, j) = reach(t, o→j) × adopt(t, j)
 pip install numpy matplotlib pytest
 
 cd generator
-python -m zhouzhu_gen.cli run --seed 42          # 全九步，约 2–4 分钟
+python -m zhouzhu_gen.cli run --seed 42          # 全十步，约 2–4 分钟
 python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
 ```
 
@@ -28,16 +28,17 @@ python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
 | 目录 | 内容 |
 |---|---|
 | `s01_planet … s08_diffusion/` | 各阶段中间产物（npz + json + `_meta.json`），全部可单独可视化 |
-| `s09_output/world.json` | 世界汇总（行星、风带、障碍、中心、地区） |
-| `s09_output/fig/*.png` | 全套图层（见下） |
-| `s09_output/ninegrid/*.md` | 各地区九格表草稿（docs/08 格式）+ 溯源 json |
-| `s09_output/check.md` | 验收报告（docs/12 第八节七条现象 + 铁律自检） |
+| `s09_polity/polity.npz` · `polities.json` · `history.md` | ⑨ 政治层：人口场、诸邦（邦 = 若干邑）、采邑树、宗主 / 附庸、变法之国与兼并纪年（`zhouzhu polity` 看摘要） |
+| `s10_output/world.json` | 世界汇总（行星、风带、障碍、中心、地区、政体） |
+| `s10_output/fig/*.png` | 全套图层（见下） |
+| `s10_output/ninegrid/*.md` | 各地区九格表草稿（docs/08 格式）+ 溯源 json；①③④ 邑级，⑤⑥⑧ 邦级 |
+| `s10_output/check.md` | 验收报告（docs/12 第八节七条现象 + 政治层 + 铁律自检） |
 
-## 九步管线
+## 十步管线
 
 ```
 ① 行星参数 → ② 大气环流 → ③ 岛屿分布 → ④ 气候 → ⑤ 障碍识别
-→ ⑥ 航线网络 → ⑦ 文明中心 → ⑧ 特征场扩散 → ⑨ 输出
+→ ⑥ 航线网络 → ⑦ 文明中心 → ⑧ 特征场扩散 → ⑨ 政治层 → ⑩ 输出
 ```
 
 每步产物是下一步输入，带缓存 key 链：只改 `[s08]` 参数重跑时 ①–⑦ 直接命中缓存
@@ -181,7 +182,8 @@ A/B/D 应基本吻合；C/F 偏低是正常的——穿进稀疏的西风带除�
 ```
 config/           default.toml · slots.toml · production_templates.toml · (traits.toml)
 zhouzhu_gen/
-  stages/         s01_planet … s09_output（九步）
+  stages/         s01_planet … s10_output（十步；s09_polity 为第四批 R7 的政治层）
+  polity.py       政治层产物的只读封装（邦名 / 状态 / 探针行 / 摘要）
   graph.py        Dijkstra / 抽样介数 / 连通分量（纯 numpy + heapq）
   culture.py      槽位份额 / TV 文化距离 / 同言线
   check.py        七条验收 + 铁律自检 + 骨架一致性

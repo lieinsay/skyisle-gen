@@ -21,7 +21,7 @@ big_days = 3.0         # 稀疏岛链：群间需好船；大船最大单跳航�
 [shared.scale]         # 尺度口径（BACKLOG 第一批拍板；三者自洽 → 25M × 0.10 × 100 = 2.5 亿人 = 公元 1 年全球）
 total_land_km2 = 25000000.0   # P3 全世界陆地总量；③ 据此反解陆地占比基线 f0
 arable_frac_mean = 0.10       # P2 可用地率均值（日本 11.4%：多山火山岛国）；③ 每群抽一个 arable_frac
-people_per_arable_km2 = 100.0 # P1 人口密度（汉代垦田口径 113）。只用于摘要与九格表量词，不进任何推导
+people_per_arable_km2 = 100.0 # P1 人口密度（汉代垦田口径 113）。①–⑧ 只用于摘要与九格表量词；⑨ 政治层据此出人口场（第四批 R7）
 
 [skeleton]
 d_lon_west = -30.0            # 中央宽空域 D 的经度范围（①② 之间，≈中亚）
@@ -309,8 +309,40 @@ low = [0.05, 0.2]
 mid = [0.3, 0.6]
 high = [0.7, 0.95]
 
-# ---------------- ⑨ 输出 ----------------
-[s09.output]
+# ---------------- ⑨ 政治层（第四批 R7；实现在 stages/s09_polity.py）----------------
+# 只读 ①–⑧ 的产物，不动它们。输出：人口场、诸邦（邦 = 若干邑）、采邑树、名分 / 附庸、变法之国与兼并史。
+# 与 docs/02 §八「兼并极难」和铁律三「春秋战国之交」的调和：正因兼并极难，只有先完成编户齐民、榨出组织能力的那个邦才兼并得动
+# —— 所以只有变法之国能兼并，其余诸邦五百年割据不动（docs/04 §一）。
+[s09.polity]
+precip_full = 0.5             # 人口 = P1 × 可耕地 × clip(降水 / precip_full, precip_floor, 1)：雨够（≥ 0.5）即满载；干旱处按比例折减
+precip_floor = 0.25           #   折减下限（再干也不至于空）
+control_radius_days = 2.2     # R0：控制力 exp(−w / R) 的基准尺度（w = 商旅成本 × 后勤倍率 + R0 × L_trade）
+ship_logistics_mult = 3.0     # 群间需飞行（间距 > 索桥 bridge_days）的边，大宗后勤成本倍率：能架桥短渡的才便宜（docs/02 §三「帝国只能长在密接群岛」）
+control_min = 0.2             # θ：控制力低于此即圈不进来（半径 = R × ln(1/θ) ≈ 1.6 R）
+radius_pop_exponent = 0.25    # β：R_c = R0 × (核心实力 / 中位)^β；核心实力 S = 控制范围内 Σ 人口 × 控制力（聚得拢的人与粮）
+capital_min_strength_frac = 1.0   # 核心实力低于中位 × 此值的邑养不起一邦，归入控制力最大的邻邦；0.5 时邦数翻倍、中位只 5 邑，1.0 时 ≈300 邦、中位 14 邑（seed 42）
+radius_mult_min = 0.5         # R_c / R0 的夹断
+radius_mult_max = 2.5
+direct_rule_days = 0.3        # 都城直辖圈：w ≤ 此值直辖；之外最短路树的第一级子树各为一采邑（分封 = 运输成本的产物）
+suzerain_radius_mult = 0.5    # 宗主（三个文明中心所建之邦）五百年割据后权力空心化：控制半径 = R0 × 此值（不随核心实力放大），王畿锁定，旧封国各自为邦，宗主只剩名分（docs/04 §一）
+vassal_pop_ratio = 3.0        # 附庸：接壤之邦人口 ≥ 本邦 ρ 倍
+vassal_reach = 2.5            #   且本邦都城在对方 control 半径 × 此倍数之内（威慑距离）
+reform_circle = "north_east"  # 中心 ②（玩家所属文明圈，docs/11 §五）在此圈内选变法之国
+reformer_capital = -1         # ≥ 0 时强制以该节点所在之邦为变法之国（-1 = 自动：都在密接、远离宗主、密接与中疏各半、人口最多）
+reform_center_distance_days = 6.0   # 「远离旧礼制中心」的饱和距离（商旅天）
+reform_years_ago = 80.0       # 变法距今年数
+reform_duration_years = 20.0  # 变法本身用时（此后才开始兼并）
+mobilization_mult = 3.0       # 编户齐民的动员量级（docs/04 §二「量级高一档」）
+defender_advantage = 2.0      # 守方优势（docs/02 §八）：攻取需 动员 ≥ 守方人口 × 此值
+suzerain_awe = 3.0            # 攻宗主之邦的额外顾忌（名分仍值几分）
+war_years_base = 2.0          # 一场兼并战的年数 = 基数 + 系数 × (守方人口 / 本朝人口) + 系数 × 前线一跳天数
+war_years_per_pop_ratio = 20.0
+war_years_per_frontier_day = 1.0
+active_fronts = 2             # 当前同时列出的战线 / 对峙数
+stage_years = [3, 8, 15, 25, 60]   # docs/04 §四 渐进的占领：军事 <3 | 行政 <8 | 经济 <15 | 文化 <25 | 语言 <60 | 认同 ≥60（年）
+
+# ---------------- ⑩ 输出 ----------------
+[s10.output]
 projection = "rect"           # rect | mollweide
 center_lon = "auto"           # auto = G 经度
 dpi = 130
@@ -384,3 +416,7 @@ c_arid_min = 0.12             # C3 干旱岛（降水 < 0.3）比例区间（改
 c_arid_max = 0.30
 c_river_min = 0.4             # C4 有河的群比例（只报告）
 c_river_max = 0.85
+# P8 政治层（第四批 R7）
+p8_dense_ratio_min = 1.5      # 密接之都的邦 / 中疏之都的邦 的邑数中位比（三 seed 实测 2.5–3.6）
+p8_n_states_min = 100         # 全世界邦数区间（「诸侯数百」；三 seed 实测 319–426）
+p8_n_states_max = 1500

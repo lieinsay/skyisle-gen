@@ -76,7 +76,7 @@ class App:
 
         def work():
             try:
-                pipeline_run(cfg, seed, self.out_root, upto=9, log=self.job["log"].append)
+                pipeline_run(cfg, seed, self.out_root, upto=10, log=self.job["log"].append)
                 self.invalidate(rid)
                 self.job["done_run"] = rid
             except Exception as e:  # noqa: BLE001
@@ -145,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.app.ctx(rid).cfg)
             elif p == "/api/check":
                 rid = q["run"]
-                f = self.app.out_root / rid / "s09_output" / "check.json"
+                f = self.app.out_root / rid / "s10_output" / "check.json"
                 self._send(f.read_bytes() if f.exists() else b'{"items":[]}')
             elif p == "/api/ninegrid":
                 rid = q["run"]
@@ -241,7 +241,7 @@ def export_static(ctx, out_file: Path, body_only: bool = False) -> Path:
     from ..ninegrid import RegionData, build_region_md
     rd = RegionData(ctx)
     grids = {str(r): build_region_md(rd, r)[0] for r in range(rd.n_regions)}
-    check_f = ctx.stage_dir(9) / "check.json"
+    check_f = ctx.stage_dir(10) / "check.json"
     check = json.loads(check_f.read_text(encoding="utf-8")) if check_f.exists() else {"items": []}
     inline = {"world": world, "fields": fields, "grid": build_grid(ctx),
               "texture": "data:image/png;base64," + tex,

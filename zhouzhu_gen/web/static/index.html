@@ -88,6 +88,7 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
     <label class="chk"><input type="checkbox" id="lyGeo" checked> 障碍几何（A / D / G）</label>
     <label class="chk"><input type="checkbox" id="lyBands" checked> 局部带界（波状线）</label>
     <label class="chk"><input type="checkbox" id="lyIso"> 同言线（跨 θ 的边）</label>
+    <label class="chk"><input type="checkbox" id="lyBorders"> 邦界（⑨ 政治层：跨邦的边）</label>
   </div>
   <div class="sec"><h3>气象层（② 风场 · ④ 气候网格）</h3>
     <div class="row"><label>贴图</label>
@@ -119,6 +120,10 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
         <option value="area">岛群陆地</option>
         <option value="catch">集雨容量（可用地率×陆地×降水）</option>
         <option value="region">地区</option>
+        <option value="polity">邦（⑨ 政治层）</option>
+        <option value="realm">兼并：变法之国的本朝</option>
+        <option value="pop">人口</option>
+        <option value="control">都城控制力（采邑空心化）</option>
         <option value="share">槽位份额</option>
         <option value="trait">特征场</option>
         <option value="dist">文化距离（以家为基准）</option>
@@ -169,6 +174,7 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
 <aside class="right">
   <div class="tabs">
     <button data-tab="probe" class="on">探针</button>
+    <button data-tab="polity">政体</button>
     <button data-tab="grid">九格表</button>
     <button data-tab="params">参数</button>
     <button data-tab="check">验收</button>
@@ -177,6 +183,7 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
   <div class="tab" id="tab-grid"><div class="small">在探针里点「九格表」，或在下方选地区。</div>
     <div class="row"><label>地区</label><select id="regionSel"></select></div>
     <div class="md" id="gridBody"></div></div>
+  <div class="tab" id="tab-polity"></div>
   <div class="tab" id="tab-params"></div>
   <div class="tab" id="tab-check"></div>
 </aside>
@@ -328,8 +335,8 @@ async function loadRun(rid){
   home=null; selected=null; distCache=null; pathData=null;
   const pl=W.planet;
   $('runinfo').textContent = `半径 ${pl.radius_km} km（地球 6371）· 绕行 ${pl.circumference_days.toFixed(0)} 日`
-    + ` · ${W.n_islands} 岛 · ${W.n_edges} 边 · ${W.traits.length} 特征 · ${W.slots.length} 槽位`;
-  buildSelectors(); buildParams(); buildCheck();
+    + ` · ${W.n_islands} 岛 · ${W.n_edges} 边 · ${W.traits.length} 特征 · ${W.slots.length} 槽位` + (W.polity?` · ${W.polity.n_states} 邦`:'');
+  buildSelectors(); buildParams(); buildCheck(); buildPolity();
   const tex = INLINE ? INLINE.texture : '/api/texture?run='+rid;
   initGlobe(tex);
   $('loading').style.display='none'; setStatus('就绪：'+rid);
@@ -422,6 +429,10 @@ function islandColorFn(){
   else if (by==='area'){ const g=logNorm('area',A.area); fn=i=>viridis(g[i]); legend=grad('小','大','岛群陆地 km²（log）'); }
   else if (by==='catch'){ const g=logNorm('catch',A.catch); fn=i=>viridis(g[i]); legend=grad('低','高','集雨容量 = 可用地率×陆地×降水（log）'); }
   else if (by==='region'){ fn=i=>TAB20[A.region[i]%20]; legend='地区（着色仅为区分，不是文化边界）'; }
+  else if (by==='polity'){ if(!W.polity){ fn=()=>'#556'; legend='该 run 没有 ⑨ 政治层'; } else { fn=i=>A.pkind[i]===0?TAB20[A.state[i]%20]:(A.pkind[i]===1?'#777':'#222'); legend='邦（着色仅为区分；灰 = 船团，黑 = 部落；文化仍是连续场，邦界不是文化边界）'; } }
+  else if (by==='realm'){ if(!W.polity){ fn=()=>'#556'; legend='该 run 没有 ⑨ 政治层'; } else { const r=W.polity.reformer.polity, sz=W.polity.suzerain[W.polity.reformer.circle], fr=new Set(W.polity.fronts.map(f=>f.polity)); fn=i=>{ if(A.state[i]<0) return '#333'; if(A.state[i]===r) return '#e04040'; if(A.realm[i]===r) return '#f0a040'; if(fr.has(A.state[i])) return '#4d9de0'; if(A.state[i]===sz) return '#ffd27a'; return '#6b7280'; }; legend=`<span class="pill" style="background:#e04040">变法之国</span><span class="pill" style="background:#f0a040;color:#000">已并</span><span class="pill" style="background:#4d9de0">当前战线</span><span class="pill" style="background:#ffd27a;color:#000">宗主</span><span class="pill" style="background:#6b7280">其余诸邦</span>`; } }
+  else if (by==='pop'){ if(!A.pop){ fn=()=>'#556'; legend='该 run 没有 ⑨ 政治层'; } else { const g=logNorm('pop',A.pop); fn=i=>viridis(g[i]); legend=grad('少','多','邑的人口（log）'); } }
+  else if (by==='control'){ if(!A.control){ fn=()=>'#556'; legend='该 run 没有 ⑨ 政治层'; } else { fn=i=>A.state[i]<0?'#333':viridis(A.control[i]/255); legend=grad('远邑（空心）','都城','都城对此邑的控制力 exp(−w/R)'); } }
   else if (by==='share'){ const v=$('valueSel').value; const row = v==='local'?localShareRow(W.slots.indexOf($('slotSel').value)):fieldRow('share',+v); fn=i=>viridis(row[i]/255); legend=grad('0','1','share'); }
   else if (by==='trait'){ const ti=+$('traitSel').value; const k=$('fieldSel').value; const row=fieldRow(k,ti); fn=i=>viridis(row[i]/255); legend=grad('0','1',k); }
   else if (by==='dist'){ if(home===null){ fn=()=> '#556'; legend='先在探针里「以此为家」'; } else { if(!distCache||distCache.mode!==$('modeSel').value){ distCache=cultureDistance(home,$('modeSel').value); distCache.mode=$('modeSel').value; } const d=distCache; fn=i=>i===home?'#ffffff':viridis(d[i]); legend=grad('相同','完全不同','文化距离 TV'); } }
@@ -514,6 +525,11 @@ function repaintEdges(){
     let cnt=0;
     for (const t of list){ const r=fieldRow('share',t); const col= byMode?MODE_COLOR[W.traits[t].mode]:'#ffffff';
       for(let e=0;e<E&&cnt<20000;e++){ const a=r[A.e_src[e]],b=r[A.e_dst[e]]; if((a>=th&&b<th)||(b>=th&&a<th)){ const s=A.e_src[e],d=A.e_dst[e]; paths.push({pts:[[A.lat[s],A.lon[s],0.008],[A.lat[d],A.lon[d],0.008]],c:col,w:1.2}); cnt++; } } }
+  }
+  // 邦界（⑨）：两端属于不同政体的边
+  if ($('lyBorders').checked && A.polity){
+    const E=W.n_edges; let cnt=0;
+    for(let e=0;e<E&&cnt<30000;e++){ const s=A.e_src[e],d=A.e_dst[e]; if(A.polity[s]!==A.polity[d]){ const realmCross=A.realm[s]!==A.realm[d]; paths.push({pts:[[A.lat[s],A.lon[s],0.006],[A.lat[d],A.lon[d],0.006]],c:realmCross?'rgba(255,255,255,.55)':'rgba(255,200,120,.35)',w:realmCross?1.2:0.8}); cnt++; } }
   }
   // 风向流线（缓存；只在视角变化/开关/密度改变时重新播种）
   for (const sp of streamPaths) paths.push(sp);
@@ -710,6 +726,7 @@ function onHover(ev){
   if (by==='trait'){ const ti=+$('traitSel').value; extra=`<br>reach ${fmt(fieldRow('reach',ti)[i]/255)} · adopt ${fmt(fieldRow('adopt',ti)[i]/255)} · strength ${fmt(fieldRow('strength',ti)[i]/255)}`; }
   if (by==='area') extra=`<br>群陆地 ${fmt(A.area[i],0)} km²`;
   if (by==='catch') extra=`<br>集雨容量 ${fmt(A.catch[i],1)}`;
+  if (W.polity) extra+=`<br>${polName(A.polity[i])}${A.pop?` · 约 ${(A.pop[i]/1e4).toFixed(1)} 万口`:''}`;
   tip.innerHTML=`#${i} ${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'·叠层':''}${A.has_river&&A.has_river[i]?'·有河':''} · ${fmt(A.area[i],0)} km²<br>${W.region_names[A.region[i]]}${extra}`+(met?`<div class="small" style="margin-top:3px;border-top:1px solid var(--line);padding-top:3px">${met}</div>`:'');
 }
 
@@ -727,6 +744,7 @@ function selectIsland(i){
   if (A.main_area) rows.push(['主岛',`${fmt(A.main_area[i],0)} km²（占群 ${fmt(A.main_area[i]/Math.max(1e-9,A.area[i])*100,0)}%）· 岛体墙高 ${fmt(A.wall_m[i],0)} m · `
     + (A.has_river&&A.has_river[i]?`<span class="mode-daily">有常年河流</span>（集水 ${fmt(A.river_size[i],0)}）`:'无河，全赖集雨')]);
   rows.push(['地区',`${W.region_names[A.region[i]]} <button class="mini" data-region="${A.region[i]}">九格表</button>`]);
+  if (W.polity) rows.push(['政体',polityLine(i)]);
   rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`]);
   if (GR) rows.push(['气象',metHtml(gread(A.lat[i],A.lon[i]))+`<div class="small">网格插值（海面）；岛上温度另减直减率 × 高度</div>`]);
   rows.push(['史前',`谱系 L${A.lineage[i]} · 约 ${Math.round(A.arrival_yr[i])} 年前到达`]);
@@ -807,9 +825,42 @@ const PARAM_SPEC = [
   {sec:'尺度口径 [shared.scale]', items:[['shared.scale.total_land_km2','全世界陆地 km²'],['shared.scale.arable_frac_mean','可用地率均值'],['shared.scale.people_per_arable_km2','人口密度 人/km² 可耕地']]},
   {sec:'文明中心 [s07]', items:[['s07.centers.area_exponent','适宜度中岛群陆地权重 γ'],['s07.centers.tau_c','窗内适宜度门槛 τ_c'],['s07.regions.max_region_islands','地区最大岛数']]},
   {sec:'航线 [s06]', items:[['s06.routes.tailwind_factor','顺风成本系数'],['s06.routes.headwind_factor','逆风成本系数'],['s06.routes.storm_kappa','风暴成本 κ'],['s06.routes.calm_max','无风惩罚上限']]},
+  {sec:'政治层 [s09.polity]', items:[['s09.polity.control_radius_days','控制半径 R0（天）'],['s09.polity.ship_logistics_mult','群间飞行的后勤倍率'],['s09.polity.control_min','圈邑门槛 θ'],['s09.polity.capital_min_strength_frac','立都的核心实力门槛（中位倍）'],['s09.polity.suzerain_radius_mult','宗主空心化倍率'],['s09.polity.reform_years_ago','变法距今年数'],['s09.polity.mobilization_mult','编户动员倍率'],['s09.polity.defender_advantage','守方优势']]},
   {sec:'扩散 [s08]', items:[['s08.eps0','本地行 ε0'],['s08.eps_max','本地行 ε_max'],['s08.iso_d0','隔离度尺度'],['s08.iso_thr','孤岛文化阈值'],['s08.k_sub','每圈次级起源数'],['s08.resistance_max','阻力上限'],['s08.fast','快速模式(true/false)']]},
 ];
 function getPath(obj,p){ return p.split('.').reduce((o,k)=>o&&o[k],obj); }
+// ------------------------------------------------------------ ⑨ 政治层
+function polOf(pid){ return (W.polity&&pid>=0)?W.polity.polities[pid]:null; }
+function polName(pid){ const x=polOf(pid); return x?x.name:'（无）'; }
+function polShort(pid){ const x=polOf(pid); if(!x) return '（无）'; return x.kind==='state'?`${x.name}（都 #${x.capital}，${x.n_nodes} 邑，约 ${(x.pop/1e4).toFixed(0)} 万口）`:`${x.name}（${x.n_nodes} 邑）`; }
+function polStatus(pid){ const x=polOf(pid); if(!x||x.kind!=='state') return ''; const P=W.polity; const parts=[];
+  if(x.annexed_by>=0){ const z=P.stage_zh[x.stage]; parts.push(`约 ${Math.round(x.annexed_years_ago)} 年前为${polName(x.annexed_by)}所并，今至「${z[0]}」阶段（${z[1]}）`); }
+  for(const f of P.fronts) if(f.polity===x.id) parts.push(f.feasible?'正被变法之国攻伐':'与变法之国对峙');
+  if(x.overlord>=0) parts.push(`附庸于${polName(x.overlord)}`); if(x.vassals&&x.vassals.length) parts.push(`有附庸 ${x.vassals.length} 邦`);
+  if(x.is_suzerain) parts.push('本圈宗主'); if(x.id===P.reformer.polity) parts.push('变法之国（兼并者）'); return parts.join('；'); }
+function polityLine(i){ const x=polOf(A.polity[i]); if(!x) return '—'; const P=W.polity;
+  if(x.kind!=='state') return `${x.name} · ${P.regime_zh[x.regime]} · ${x.n_nodes} 邑`;
+  const f=A.fief[i]; const role = i===x.capital?'都城':(f<0?'都城直辖':(f===i?'采邑之主（封君所在）':`采邑（主在 <button class="mini" data-node="${f}">#${f}</button>）`));
+  const st=polStatus(x.id);
+  return `<b>${x.name}</b>（都 <button class="mini" data-node="${x.capital}">#${x.capital}</button>，${x.n_nodes} 邑，约 ${(x.pop/1e4).toFixed(0)} 万口；直辖 ${x.n_direct} 邑、采邑 ${x.n_fiefs} 处）<br>${role} · 控制力 ${fmt(A.control[i]/255)} · 本邑约 ${(A.pop[i]/1e4).toFixed(1)} 万口<br><span class="small">${P.regime_zh[x.regime]}${st?' · '+st:''}</span>`; }
+function buildPolity(){
+  const box=$('tab-polity'); const P=W.polity;
+  if(!P){ box.innerHTML='<div class="small">该 run 没有 ⑨ 政治层产物（旧版本）。重新生成即可。</div>'; return; }
+  const r=P.reformer; const rp=polOf(r.polity);
+  let html=`<div class="sec"><h3>总览</h3><div>${P.n_states} 邦 · ${P.n_fleets} 船团（稀疏岛链，不建国、不被征服）· ${P.n_tribes} 部落</div>
+    <div class="small">邦 = 若干邑（岛群）；地区只是展示分区。文化仍只以 ⑧ 的连续场存在，邦界不是文化边界。</div></div>`;
+  html+=`<div class="sec"><h3>三圈的宗主（名分所出，实权只及本邦）</h3>`+Object.entries(P.suzerain).map(([c,s])=>`<div>${P.center_zh[c]}：<button class="mini" data-node="${(polOf(s)||{}).capital}">${polShort(s)}</button></div>`).join('')+`</div>`;
+  html+=`<div class="sec"><h3>变法之国（${P.center_zh[r.circle]}圈）</h3>`;
+  if(!rp) html+='<div>（未找到）</div>'; else html+=`<div><button class="mini" data-node="${rp.capital}">${polShort(r.polity)}</button>${r.fallback?' <span style="color:#f0a2a2">【圈内无密接之邦，退而取之】</span>':''}</div><div class="small">约 ${r.reform_years_ago} 年前变法（编户齐民、军功爵、成文法、统一度量），${r.reform_duration_years} 年后开始兼并。已并 ${r.n_annexed} 邦，本朝约 ${(r.realm_pop/1e4).toFixed(0)} 万口。正因兼并极难，只有先编户齐民者兼并得动。</div>`;
+  html+=`</div><div class="sec"><h3>兼并纪年（距今）</h3>`+(P.history.length?P.history.map(h=>{const z=P.stage_zh[h.stage]; const x=polOf(h.polity); return `<div>${Math.round(h.years_ago)} 年前 并 <button class="mini" data-node="${x.capital}">${polShort(h.polity)}</button>${h.was_suzerain?' <b>（本圈宗主）</b>':''} → 「${z[0]}」</div>`;}).join(''):'<div>（尚未并得一邦）</div>')+`</div>`;
+  html+=`<div class="sec"><h3>当前战事</h3>`+(P.fronts.length?P.fronts.map(f=>{const x=polOf(f.polity); return `<div>${f.feasible?'正攻伐':'对峙'} <button class="mini" data-node="${x.capital}">${polShort(f.polity)}</button>${f.feasible?`（尚需约 ${Math.round(f.war_years_needed)} 年）`:'（守方优势巨大，动员不足）'}</div>`;}).join(''):'<div>（无）</div>')+`</div>`;
+  const o=P.openings; const lst=a=>a.length?a.map(s=>`<button class="mini" data-node="${polOf(s).capital}">${polShort(s)}</button>`).join(' '):'（无）';
+  html+=`<div class="sec"><h3>开局候选（docs/11 §九）</h3><div>A 边陲小邦：${lst(o.A_frontier_small_state)}</div><div>B 正统核心：${o.B_orthodox_core>=0?`<button class="mini" data-node="${polOf(o.B_orthodox_core).capital}">${polShort(o.B_orthodox_core)}</button>`:'（无）'}</div><div>C 过渡带：${lst(o.C_transition_zone)}</div><div>D 兼并者：${o.D_reformer>=0?`<button class="mini" data-node="${polOf(o.D_reformer).capital}">${polShort(o.D_reformer)}</button>`:'（无）'}</div></div>`;
+  const states=P.polities.filter(x=>x.kind==='state').sort((a,b)=>b.pop-a.pop).slice(0,20);
+  html+=`<div class="sec"><h3>最大的 20 邦</h3><table class="kv"><tr><td>邦</td><td>都</td><td>邑</td><td>万口</td><td>状态</td></tr>`+states.map(x=>`<tr><td>${x.name}</td><td><button class="mini" data-node="${x.capital}">#${x.capital}</button> ${x.capital_class==='dense'?'密接':'中疏'}</td><td>${x.n_nodes}</td><td>${(x.pop/1e4).toFixed(0)}</td><td class="small">${polStatus(x.id)||P.regime_zh[x.regime].split('：')[0]}</td></tr>`).join('')+`</table></div>`;
+  box.innerHTML=html;
+  box.querySelectorAll('button[data-node]').forEach(b=>b.onclick=()=>{ const n=+b.dataset.node; if(!isNaN(n)&&n>=0){ selectIsland(n); globe.pointOfView({lat:A.lat[n],lng:A.lon[n],altitude:0.7},800); } });
+}
 function buildParams(){
   const box=$('tab-params');
   if (INLINE){ box.innerHTML='<div class="small">单文件模式不能重跑。用 <code>python -m zhouzhu_gen.cli serve</code> 打开完整操作台。</div>'; return; }
@@ -873,7 +924,7 @@ function showTab(t){ document.querySelectorAll('.tabs button').forEach(b=>b.clas
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 ['colorBy','slotSel','valueSel','traitSel','fieldSel','modeSel'].forEach(id=>$(id).addEventListener('change',()=>{ if(id==='slotSel') fillValueSel(); if(id==='modeSel') distCache=null; updateRowVisibility(); repaintIslands(); if($('lyIso').checked) repaintEdges(); }));
 ['lyIslands','lyScale'].forEach(id=>$(id).addEventListener('change',repaintIslands));
-['lyEdges','lyHubs','lyTrunks','lyGeo','lyBands','lyIso','edgeColor','edgeMode','edgeFilter','theta'].forEach(id=>$(id).addEventListener('change',()=>{ updateRowVisibility(); repaintEdges(); }));
+['lyEdges','lyHubs','lyTrunks','lyGeo','lyBands','lyIso','lyBorders','edgeColor','edgeMode','edgeFilter','theta'].forEach(id=>$(id).addEventListener('change',()=>{ updateRowVisibility(); repaintEdges(); }));
 $('edgeN').addEventListener('input',()=>$('edgeNv').textContent=$('edgeN').value);
 $('edgeN').addEventListener('change',repaintEdges);
 $('theta').addEventListener('input',()=>$('thetav').textContent=$('theta').value);

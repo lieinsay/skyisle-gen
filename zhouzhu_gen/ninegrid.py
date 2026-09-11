@@ -15,8 +15,10 @@ import numpy as np
 
 from . import MODES, MODE_ZH
 from .culture import World
+from .polity import Polity
 from .stages.s03_islands import CLASS_NAMES, CLASS_ZH
 from .stages.s05_barriers import REGIONAL_ORDER
+from .stages.s09_polity import REGIME_ZH, STAGE_ZH
 
 BRANCHES = "子丑寅卯辰巳午未申酉戌亥"
 BAND_ZH = {0: "赤道缘", 1: "北信风带", 2: "北无风带", 3: "北西风带", 4: "北极地",
@@ -156,6 +158,23 @@ class RegionData:
               for a in self.adj for b in self.adj[a] if a < b]
         pf.sort(reverse=True)
         self.trunk_flow_thr = pf[max(0, len(pf) // 10)] if pf else 0.0
+        # 政治层（⑨，第四批 R7）：地区是展示分区，邦是政治单位；九格表 ⑤⑥⑧ 写邦级
+        self.pol = Polity(ctx)
+
+    # ---- 政治层：一个地区里有哪些邦 ----
+    def region_polities(self, r: int) -> list[dict]:
+        """按本区内邑数降序：[{pid, n_here, n_total, share_of_state}]。"""
+        if not self.pol.available:
+            return []
+        m = self.members[r]
+        pids, counts = np.unique(self.pol.polity_of[m], return_counts=True)
+        out = []
+        for pid, n_here in zip(pids.tolist(), counts.tolist()):
+            x = self.pol.P[int(pid)]
+            out.append({"pid": int(pid), "n_here": int(n_here), "n_total": int(x["n_nodes"]),
+                        "share_of_state": n_here / max(1, x["n_nodes"]), "kind": x["kind"]})
+        out.sort(key=lambda d: (-d["n_here"], d["pid"]))
+        return out
 
     # ---- ②b：与邻区之间的通道聚合 ----
     def crossing_info(self, r: int, t: int) -> dict:
@@ -305,19 +324,67 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
     if lay > 0.15:
         l4 += rd.prod.get("layered_suffix", {}).get("text", "")
     l4 += " 特有物种与专项特产【待填（政治层/03）】。"
-    l5 = rd.prod.get("organization", {}).get(cls, {}).get("text", "【待填】")
+    # ⑤ 组织：邑级（水共同体）+ 邦级（⑨ 政治层，第四批 R7）
     scale_tier = "large" if rd.area_q[r] >= 0.66 else ("small" if rd.area_q[r] < 0.33 else "mid")
     wp = rd.prod.get("water_polity", {}).get(scale_tier, {}).get("text", "")
-    if wp:
-        l5 += " " + wp
+    l5 = ("邑：" + wp) if wp else ""
     if rs >= 0.5:
         l5 += " 有河之群，取水不必尽赖集雨，掌水之政稍轻，而河谷田畴之争代之。"
+    pol = rd.pol
+    rp = rd.region_polities(r)
+    states_here = [d for d in rp if d["kind"] == "state"]
+    dom = states_here[0] if states_here else None
+    if pol.available and rp:
+        n_states_here = len(states_here)
+        head = f" 邦：本区 {members.size} 邑分属 {n_states_here} 邦" if n_states_here else " 邦：本区无邦"
+        others = [d for d in rp if d["kind"] != "state"]
+        if others:
+            head += "，另有" + "、".join(f"{pol.name(d['pid'])}（{d['n_here']} 邑）" for d in others[:2])
+        l5 += head + "。"
+        if dom:
+            x = pol.P[dom["pid"]]
+            where = ("都在本区" if rd.region[x["capital"]] == r else f"都 #{x['capital']} 在 {rd.name(int(rd.region[x['capital']]))}")
+            l5 += (f" 最大者 {pol.name(dom['pid'])}：{x['n_nodes']} 邑、约 {x['pop'] / 1e4:.0f} 万口，{where}，"
+                   f"本区 {dom['n_here']} 邑归之（占其 {dom['share_of_state'] * 100:.0f}%）；直辖 {x['n_direct']} 邑、采邑 {x['n_fiefs']} 处。"
+                   f" {REGIME_ZH[x['regime']]}。")
+            suz = pol.meta["suzerain"].get(x["circle"], -1)
+            if suz >= 0 and suz != x["id"]:
+                l5 += f" 名分上奉{pol.name(suz)}为宗主（{pol.meta['center_zh'][x['circle']]}），实无贡赋。"
+            st = pol.status_zh(dom["pid"])
+            if st:
+                l5 += f" {st}。"
+            if n_states_here > 1:
+                rest = states_here[1:4]
+                l5 += " 其余：" + "、".join(f"{pol.name(d['pid'])}（本区 {d['n_here']} 邑 / 共 {d['n_total']} 邑）" for d in rest) + "。"
+    else:
+        l5 += " " + rd.prod.get("organization", {}).get(cls, {}).get("text", "【待填】")
+    # ⑥ 军事：地形类的形态 + 邦级的强弱（谁打不过它、它打不过谁）
     l6 = rd.prod.get("military", {}).get(cls, {}).get("text", "【待填】")
     nb_dense = [t for t in neighbors if CLASS_NAMES[rd.cls_major[t]] == "dense"]
     nb_sparse = [t for t in neighbors if CLASS_NAMES[rd.cls_major[t]] == "sparse"]
     if cls in ("medium", "dense") and nb_sparse:
         l6 += f" 邻近的{rd.name(nb_sparse[0])}船团劫掠不绝，防之不胜防。"
-    if cls == "medium" and nb_dense:
+    if pol.available and dom:
+        x = pol.P[dom["pid"]]
+        nbs = [(int(t), n_e) for t, n_e in x.get("neighbors", {}).items()]
+        stronger = sorted((t for t, _ in nbs if pol.P[t]["pop"] >= 2 * x["pop"]), key=lambda t: -pol.P[t]["pop"])
+        weaker = sorted((t for t, _ in nbs if pol.P[t]["pop"] * 2 <= x["pop"]), key=lambda t: pol.P[t]["pop"])
+        if stronger:
+            l6 += f" 打不过{pol.short(stronger[0])}；"
+        if weaker:
+            l6 += f" {pol.name(weaker[0])}等{len(weaker)}邦打不过它；"
+        if not stronger and not weaker:
+            l6 += " 与接壤诸邦势均力敌；"
+        rf = pol.reformer
+        if x["id"] == rf:
+            l6 += " 此即变法之国：编户直接征发，动员量级高一档。"
+        elif x.get("annexed_by", -1) >= 0:
+            l6 += f" 已为{pol.name(x['annexed_by'])}所并，驻军与改制在进行中。"
+        elif any(f["polity"] == x["id"] for f in pol.meta.get("fronts", [])):
+            l6 += f" 变法之国{pol.name(rf)}的兵锋已至。"
+        elif cls == "medium" and nb_dense:
+            l6 += f" 若{rd.name(nb_dense[0])}方向的密接之国东出，此地挡不住。"
+    elif cls == "medium" and nb_dense:
         l6 += f" 若{rd.name(nb_dense[0])}方向的密接之国东出，此地挡不住。"
 
     # ---------- ⑧
@@ -325,7 +392,24 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
         dep = max(neighbors, key=lambda t: cross[t]["flow"])
         marry = max(neighbors, key=lambda t: cross[t]["perm"]["daily"])
         l8 = (f"贸易依赖 {rd.name(dep)}（跨界流量最大）；与 {rd.name(marry)} 日常往来最密"
-              f"（通婚方向）。世仇与盟约【待填（政治层）】。")
+              f"（通婚方向）。")
+        if pol.available and dom:
+            x = pol.P[dom["pid"]]
+            nbs = [int(t) for t in x.get("neighbors", {})]
+            # 世仇：接壤、势均力敌（人口比在 1/2–2 之间）、界边最多者 —— 五百年割据里打不完的邻居
+            peers = [t for t in nbs if 0.5 <= pol.P[t]["pop"] / max(1, x["pop"]) <= 2.0]
+            if peers:
+                feud = max(peers, key=lambda t: (x["neighbors"][str(t)], -t))
+                l8 += f" 世仇：{pol.short(feud)}（接壤 {x['neighbors'][str(feud)]} 边，势均力敌，五百年打不完）。"
+            if x.get("overlord", -1) >= 0:
+                l8 += f" 附庸于{pol.short(x['overlord'])}，岁有贡献。"
+            if x.get("vassals"):
+                l8 += f" 附庸之邦 {len(x['vassals'])}：" + "、".join(pol.name(v) for v in x["vassals"][:3]) + "。"
+            if x.get("annexed_by", -1) >= 0:
+                z = STAGE_ZH[x["stage"]]
+                l8 += f" 约 {x['annexed_years_ago']:.0f} 年前为{pol.name(x['annexed_by'])}所并，今至「{z[0]}」阶段：{z[1]}。"
+        else:
+            l8 += " 世仇与盟约【待填（政治层）】。"
     else:
         l8 = "无邻区记录（孤悬）。外购几不可得。"
     press_tier = "high" if rd.catch_q[r] < 0.33 else ("low" if rd.catch_q[r] >= 0.66 else "mid")
@@ -344,6 +428,9 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
                         "main_area_median_km2": round(float(rd.main_med[r]), 0),
                         "river_share": round(float(rs), 2),
                         "water_polity_tier": scale_tier, "pressure_tier": press_tier}
+    if pol.available:
+        sources["polity"] = {"states_here": [(d["pid"], d["n_here"]) for d in rp][:8],
+                             "dominant": (dom["pid"] if dom else None)}
 
     # ---------- ⑨（核心：写强度、写相对、错位由 ②b 解释）----------
     l9_lines = []
@@ -473,7 +560,7 @@ def lint_md(md: str) -> list[str]:
 
 def render_ninegrids(ctx, region: int | None = None) -> int:
     rd = RegionData(ctx)
-    out_dir = ctx.stage_dir(9) / "ninegrid"
+    out_dir = ctx.stage_dir(10) / "ninegrid"
     out_dir.mkdir(parents=True, exist_ok=True)
     targets = [region] if region is not None else range(rd.n_regions)
     index = ["# 九格表索引", ""]

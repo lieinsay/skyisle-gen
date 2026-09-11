@@ -1,6 +1,6 @@
 """命令行入口。
 
-zhouzhu run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 9] [--out out] [--explain]
+zhouzhu run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 10] [--out out] [--explain]
 zhouzhu stage K --seed 42        # 强制从第 K 阶段重算（之前阶段用缓存）
 zhouzhu viz   <layer> --run out/seed42 [...]
 zhouzhu probe <node|path|edge|trait> ...
@@ -39,19 +39,19 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="zhouzhu", description="行星地形与文明生成器")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p_run = sub.add_parser("run", help="执行九步管线")
+    p_run = sub.add_parser("run", help="执行十步管线（①–⑧ 地理与文化、⑨ 政治层、⑩ 输出）")
     _add_common(p_run)
-    p_run.add_argument("--upto", type=int, default=9)
+    p_run.add_argument("--upto", type=int, default=10)
     p_run.add_argument("--explain", action="store_true")
 
     p_stage = sub.add_parser("stage", help="从第 K 阶段强制重算")
     p_stage.add_argument("k", type=int)
     _add_common(p_stage)
-    p_stage.add_argument("--upto", type=int, default=9)
+    p_stage.add_argument("--upto", type=int, default=10)
 
     p_viz = sub.add_parser("viz", help="可视化某一层")
     p_viz.add_argument("layer", help="wind|islands|scale|climate|barriers|perm|routes|centers|"
-                                     "iso|trait|slot|isogloss|distance|all|web（单文件操作台）")
+                                     "iso|polity|trait|slot|isogloss|distance|all|web（单文件操作台）")
     p_viz.add_argument("arg", nargs="?", default=None, help="trait id / slot id / node id / mode")
     p_viz.add_argument("--run", default="out/seed42")
     p_viz.add_argument("--mode", default=None)
@@ -71,6 +71,10 @@ def main(argv=None):
     p_nine = sub.add_parser("ninegrid", help="九格表草稿")
     p_nine.add_argument("--run", default="out/seed42")
     p_nine.add_argument("--region", type=int, default=None)
+
+    p_pol = sub.add_parser("polity", help="政治层摘要：诸邦 / 变法之国 / 兼并史（只读 ⑨ 产物）")
+    p_pol.add_argument("--run", default="out/seed42")
+    p_pol.add_argument("--top", type=int, default=15)
 
     p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
     p_serve.add_argument("--out", default="out")
@@ -96,7 +100,7 @@ def main(argv=None):
     if a.cmd == "viz":
         if a.layer == "web":
             from .web.server import export_static
-            out = export_static(ctx, ctx.stage_dir(9) / "viewer.html")
+            out = export_static(ctx, ctx.stage_dir(10) / "viewer.html")
             print(f"已导出单文件操作台：{out}（双击打开，无需服务器；无重跑功能）")
             return 0
         from .viz import render
@@ -112,6 +116,10 @@ def main(argv=None):
     if a.cmd == "ninegrid":
         from .ninegrid import render_ninegrids
         render_ninegrids(ctx, region=a.region)
+        return 0
+    if a.cmd == "polity":
+        from .polity import print_summary
+        print_summary(ctx, top=a.top)
         return 0
     return 1
 

@@ -24,7 +24,7 @@ plt.rcParams["axes.unicode_minus"] = False
 
 
 def _center_lon(ctx) -> float:
-    cl = ctx.cfg.get("s09", {}).get("output", {}).get("center_lon", "auto")
+    cl = ctx.cfg.get("s10", {}).get("output", {}).get("center_lon", "auto")
     if cl == "auto":
         return float(ctx.load_json(2, "bands")["G"]["lon"])
     return float(cl)
@@ -91,9 +91,9 @@ def _stamp(fig, ctx, title):
 
 
 def _save(fig, ctx, name, show=False):
-    d = ctx.stage_dir(9) / "fig"
+    d = ctx.stage_dir(10) / "fig"
     d.mkdir(parents=True, exist_ok=True)
-    dpi = int(ctx.cfg.get("s09", {}).get("output", {}).get("dpi", 130))
+    dpi = int(ctx.cfg.get("s10", {}).get("output", {}).get("dpi", 130))
     fig.savefig(d / f"{name}.png", dpi=dpi, bbox_inches="tight")
     if show:
         plt.show()
@@ -321,6 +321,58 @@ def viz_centers(ctx, show=False):
     return _save(fig, ctx, "s07_centers", show)
 
 
+def viz_polity(ctx, show=False):
+    """⑨ 政治层：诸邦（按邦着色）、都城、变法之国的本朝、宗主。"""
+    from .polity import Polity
+    pol = Polity(ctx)
+    if not pol.available:
+        return None
+    isl = ctx.load_npz(3, "islands")
+    center = _center_lon(ctx)
+    x, y = _recenter(isl["lon"], center), isl["lat"]
+    arr, meta = pol.arr, pol.meta
+    fig, axes = plt.subplots(2, 1, figsize=(14, 12))
+    ax = axes[0]
+    pid = arr["polity"]
+    kind = arr["kind"]
+    col = np.where(kind == 0, pid % 20, -1)
+    sc = ax.scatter(x[kind == 0], y[kind == 0], s=3, c=col[kind == 0], cmap="tab20", linewidths=0)
+    ax.scatter(x[kind == 1], y[kind == 1], s=4, c="#888888", marker="x", linewidths=0.6, label="船团（不建国）")
+    ax.scatter(x[kind == 2], y[kind == 2], s=8, c="#000000", marker="s", linewidths=0, label="部落")
+    caps = arr["capital"]
+    ax.scatter(x[caps], y[caps], s=10, c="k", marker=".", linewidths=0, zorder=5)
+    for cid, s in meta["suzerain"].items():
+        if s >= 0:
+            c = int(caps[s])
+            ax.plot(x[c], y[c], marker="*", ms=14, color="#ffd27a", mec="k", zorder=7)
+    r = meta["reformer"]["polity"]
+    if r >= 0:
+        c = int(caps[r])
+        ax.plot(x[c], y[c], marker="^", ms=13, color="#e04040", mec="k", zorder=7)
+    _basemap(ax, ctx, center)
+    ax.legend(loc="lower left", fontsize=8)
+    ax.set_title(f"⑨ 诸邦（{meta['n_states']} 邦 · 着色仅为区分；黑点 = 都城；★ 宗主；▲ 变法之国）")
+    ax = axes[1]
+    realm = arr["realm"]
+    state = arr["state"]
+    mine = (state >= 0) & (realm == r) if r >= 0 else np.zeros(x.size, bool)
+    ax.scatter(x[state >= 0], y[state >= 0], s=2, c="#b0b8c8", linewidths=0)
+    ax.scatter(x[mine & (state == r)], y[mine & (state == r)], s=5, c="#e04040", linewidths=0, label="变法之国本邦")
+    ax.scatter(x[mine & (state != r)], y[mine & (state != r)], s=5, c="#f0a040", linewidths=0, label="已并之邦")
+    fr = [f["polity"] for f in meta.get("fronts", [])]
+    fm = np.isin(state, fr)
+    ax.scatter(x[fm], y[fm], s=5, c="#4d9de0", linewidths=0, label="当前战线")
+    sz = meta["suzerain"].get(meta["reformer"]["circle"], -1)
+    if sz >= 0:
+        ax.scatter(x[state == sz], y[state == sz], s=5, c="#ffd27a", linewidths=0, label="宗主（正统核心）")
+    _basemap(ax, ctx, center)
+    ax.legend(loc="lower left", fontsize=8)
+    ax.set_title(f"⑨ 兼并史：{meta['reformer']['n_annexed']} 邦已并，本朝约 {meta['reformer']['realm_pop'] / 1e4:.0f} 万口"
+                 f"（变法距今 {meta['reformer']['reform_years_ago']:.0f} 年）")
+    _stamp(fig, ctx, "⑨ 政治层：诸邦 · 宗主 · 变法之国与兼并")
+    return _save(fig, ctx, "s09_polity", show)
+
+
 def viz_iso(ctx, show=False):
     w = World(ctx)
     isl = w.islands
@@ -482,6 +534,8 @@ def render(ctx, layer: str, arg=None, mode=None, show=False):
         p = viz_centers(ctx, show)
     elif layer == "iso":
         p = viz_iso(ctx, show)
+    elif layer == "polity":
+        p = viz_polity(ctx, show)
     elif layer == "scale":
         p = viz_scale(ctx, show)
     elif layer == "trait":
@@ -503,7 +557,7 @@ def render(ctx, layer: str, arg=None, mode=None, show=False):
 def render_all(ctx) -> int:
     n = 0
     for fn in (viz_wind, viz_islands, viz_scale, viz_climate, viz_barriers, viz_routes,
-               viz_centers, viz_iso):
+               viz_centers, viz_iso, viz_polity):
         fn(ctx)
         n += 1
     for m in MODES:
