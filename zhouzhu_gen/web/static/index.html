@@ -918,7 +918,7 @@ function buildCheck(){
   const items=(checkData&&checkData.items)||[];
   const hard=items.filter(i=>!i.pass&&i.hard).length, soft=items.filter(i=>!i.pass&&!i.hard&&!(i.note||'').startsWith('warn')).length;
   $('checkBadge').innerHTML = items.length? `<span class="pill ${hard?'fail':(soft?'warn':'pass')}">验收 ${hard?'违反铁律':(soft?'现象未达':'全过')}</span>`:'';
-  $('tab-check').innerHTML = items.length? items.map(i=>`<div class="sec"><span class="pill ${i.pass?'pass':((i.note||'').startsWith('warn')?'warn':'fail')}">${i.pass?'PASS':((i.note||'').startsWith('warn')?'WARN':'FAIL')}</span> <b>${i.id}</b> ${i.hard?'【硬】':''}${i.name}<div class="small">值 ${JSON.stringify(i.value)}<br>阈 ${JSON.stringify(i.threshold)}${i.worst&&i.worst.length?'<br>样例 '+JSON.stringify(i.worst.slice(0,2)):''}</div></div>`).join('') : '<div class="small">该 run 尚无验收报告（跑到第 ⑨ 步才有）。</div>';
+  $('tab-check').innerHTML = items.length? items.map(i=>`<div class="sec"><span class="pill ${i.pass?'pass':((i.note||'').startsWith('warn')?'warn':'fail')}">${i.pass?'PASS':((i.note||'').startsWith('warn')?'WARN':'FAIL')}</span> <b>${i.id}</b> ${i.hard?'【硬】':''}${i.name}<div class="small">值 ${JSON.stringify(i.value)}<br>阈 ${JSON.stringify(i.threshold)}${i.worst&&i.worst.length?'<br>样例 '+JSON.stringify(i.worst.slice(0,2)):''}</div></div>`).join('') : '<div class="small">该 run 尚无验收报告（跑到第 ⑩ 步才有）。</div>';
 }
 
 // ------------------------------------------------------------ UI 绑定

@@ -13,7 +13,8 @@
   orbit_to_calendar：给恒星质量 + 轨道半径 → 公转周期 → 一年的太阳日数 → 每季天数（与配置的季长比较，报残差）；
                      同时给出该轨道的日照，与 [s01.planet].insolation_rel 比较（只报告，④ 仍用配置值）。
 潮汐锁定时标（Gladman 1996）：t = ω a⁶ I Q / (3 G M★² k₂ R⁵)，I = 0.4 m R²，Q、k₂ 可配。比太阳系年龄短就是历法留下的物理张力，
-由 check 的 SK-cal 报警（推不出来的设定说明设定错了，不是推导错了——原则庚）。
+由 check 的 SK-cal 报警（推不出来的设定说明设定错了，不是推导错了——原则庚）；2026-09-11 用户拍板保留 4 × 28 并接受该张力
+（`check.cal_accept_tidal_tension = true`）。
 """
 from __future__ import annotations
 

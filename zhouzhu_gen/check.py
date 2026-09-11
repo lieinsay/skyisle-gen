@@ -1,4 +1,4 @@
-"""验收（docs/12 第八节七条现象）+ 铁律自检（docs/01）+ 骨架一致性（docs/11，只报警）。
+"""验收（docs/12 第八节八条现象 P1–P8）+ 二维气候 C1–C4 + 铁律自检（docs/01）+ 骨架 / 历法一致性（docs/11，只报警）。
 
 退出码：2 = 硬项（铁律）失败；1 = 软项（七现象）失败；0 = 全过。
 每项附最差样例与复查命令。阈值全部在 config [check]。
@@ -703,10 +703,13 @@ def check_skeleton(w: World, cfg, rep: Report):
         age = float(ctx.cfg["s01"]["calendar"].get("system_age_gyr", 4.6))
         resid = abs(cal["year_days_solar"] - cal["seasons"] * cal["days_per_season_config"])
         ins_ok = abs(cal["insolation_derived"] - cal["insolation_config"]) <= 0.1 * max(cal["insolation_config"], 1e-9)
-        lock_ok = cal["tidal_lock_gyr"] >= age
+        accepted = bool(ctx.cfg["check"].get("cal_accept_tidal_tension", False))
+        lock_ok = cal["tidal_lock_gyr"] >= age or accepted
         mass_ok = 0.43 <= cal["star"]["mass_msun"] <= 2.0
         note = "warn-only"
-        if not lock_ok:
+        if accepted and cal["tidal_lock_gyr"] < age:
+            note += f"；潮汐锁定时标 {cal['tidal_lock_gyr']:.2f} Gyr < {age} Gyr 已作为设定接受（check.cal_accept_tidal_tension）"
+        elif not lock_ok:
             note += (f"；潮汐锁定时标 {cal['tidal_lock_gyr']:.2f} Gyr < 系统年龄 {age} Gyr：{cal['seasons']} 季 × {cal['days_per_season_config']:.0f} 日的年太短，"
                      f"行星被逼到 {cal['semi_major_axis_au']:.2f} AU 的 {cal['star']['spectral_class']} 型星旁；同季长至少 {cal.get('seasons_needed_for_no_lock', '?')} 季才安全，"
                      "或把它当作设定的已知张力（行星年轻 / 大卫星搅动）")

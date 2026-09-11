@@ -11,7 +11,7 @@
   ```
   $py -m zhouzhu_gen.cli run --seed 42            # 十步全跑（约 2 分钟；只改 [s08] 约 15 s；只改 [s09.polity] 约 1 分钟，大头是 ⑩ 的图）
   $py -m zhouzhu_gen.cli stage 6 --seed 42        # 从第 6 步强制重算
-  $py -m zhouzhu_gen.cli check --run out/seed42   # 七条验收 + 铁律自检（exit 0/1/2）
+  $py -m zhouzhu_gen.cli check --run out/seed42   # 八条验收（P1–P8）+ 气候 C1–C4 + 铁律自检 + 骨架/历法校准（exit 0/1/2）
   $py -m zhouzhu_gen.cli viz all|wind|islands|scale|routes|polity|isogloss|slot <id>|trait <id>|distance <node> --run out/seed42
   $py -m zhouzhu_gen.cli polity --run out/seed42  # ⑨ 政治层摘要：宗主 / 变法之国 / 兼并纪年 / 最大诸邦 / 开局候选
   $py -m zhouzhu_gen.cli probe node <id> | edge a b | path a b --mode m | trait <id> --node j
@@ -39,7 +39,7 @@ zhouzhu_gen/
   graph.py       CSR、Dijkstra(heapq)、Brandes 抽样介数、弱连通分量 —— 纯 Python，注意 inf 比较
   weights.py     w_m = λ_ref·cost_m + L_m（L = −ln perm，perm=0 → inf）
   culture.py     World 惰性读取；槽位份额（含本地行）；TV 文化距离；同言线边集
-  almanac.py     历法 ↔ 轨道自洽（R1）：纯换算，① 调用，写 planet.json.calendar；SK-cal 报警
+  almanac.py     历法 ↔ 轨道自洽（R1）：纯换算，① 调用，写 planet.json.calendar；check 的 SK-cal 校它
   polity.py      政治层产物的只读封装（Polity：邦名/状态/探针行；print_summary），ninegrid/probe/web 共用
   geology.py     地质表现层（R4）：③ 板块网格按节点采样 → 九格表 ① / 探针 / 操作台的叙事文本，不进推导（原则甲）
   check.py       P1–P8 + C1–C4 + IL-*（铁律）+ SK-*（骨架校准，warn-only）
@@ -64,17 +64,17 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 5. 区域障碍必须走 **Φ 穿越归一化**（`s05.node_phi`），不得逐边乘因子（跨带通过率会随岛数指数衰减）。SK-perm 校的是本障碍的 Σf（≈1），总通过率里还叠着邻带 Φ 域重叠与局部因子，别拿它调 s05。
 6. 随机数只从 `rng.stage_rng / entity_rng` 取；列表排序后使用；不迭代 set。
 7. 新增参数：写进 `config/default.toml` 对应阶段段落并给注释；操作台参数面板（`index.html` 的 `PARAM_SPEC` 或矩阵区块）按需加。
-8. `slots.toml` / `traits.toml` / `production_templates.toml` 不在 `default.toml` 里，通过 `pipeline.STAGE_EXTRA_SECTIONS` 进 ⑧⑨ 的缓存 key。新增这类独立配置文件要同步登记，否则改了不会失效。
+8. `slots.toml` / `traits.toml` / `production_templates.toml` 不在 `default.toml` 里，通过 `pipeline.STAGE_EXTRA_SECTIONS` 进 ⑧⑩ 的缓存 key（⑨ 政治层不读它们）。新增这类独立配置文件要同步登记，否则改了不会失效。
 
 ## 当前默认值的由来（调参前先看）
 
 - 带界 8/28/36/62°；G = 剪切纬度(28) − 6 = 22°N（第三批由 δ=5 改为 6：新降水模型下中心落在 14–18°N，G 得再南一度才压在主干线上，否则 P6 挂），经度 = D 中央 (−10)；D = lon [−30, 10] × lat [6, 36]。
 - 分类阈值 = 船只参数：桥 0.15 天 / 小船 1 天 / 大船 3 天（1 天 = 500 km），量的是**群与群之间**的间距（群内永远密接）。西风带密度 0.05、极地 0.012 才出稀疏/孤悬。
 - 半衰日程：daily 5–10、trade 15–30、migrate 30–60、envoy 40–80 天。阻力：低 .05–.2 / 中 .3–.6 / 高 .7–.95。
-- ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 2；每高隔离分量 3 条本地起源特征。
+- ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 3（第三批由 2 改，见下）；每高隔离分量 3 条本地起源特征。
 - 行星：半径 6371 km（地球）、自转 24 h、倾角 20°、1 日航程 500 km → 绕行 80 日。半径只经 `days_per_rad` 影响所有边的天数。
 - 历法（R1，`[s01.calendar]`，almanac.py）：一年 4 季 × 28 太阳日 = 112 日（1 航行日 = 1 太阳日）→ 公转 113 日 → K 型星 0.58 M☉、0.38 AU；
-  卫星朔望月 = 一季。历法**不反推带界**。潮汐锁定时标 0.92 Gyr < 4.6 Gyr 是已知张力，SK-cal 只报警（同季长要 6 季才安全）。
+  卫星朔望月 = 一季。历法**不反推带界**。潮汐锁定时标 0.92 Gyr < 4.6 Gyr 已于 2026-09-11 拍板作为设定接受（`check.cal_accept_tidal_tension = true`，SK-cal 不再报警；改 6 季才物理上安全，但用户定了保留 4 季）。
   `mode = orbit_to_calendar` 反向：给恒星质量 + 轨道半径推每季天数。只写 planet.json，不改任何场。
 - 尺度口径 `[shared.scale]`（BACKLOG 第一批拍板）：全世界陆地 25,000,000 km² / 可用地率 0.10 / 100 人/km² 可耕地 → 2.5 亿人。
 - 陆地（R8）：`area = 势力范围 × f`，势力范围 = 0.866 × (mean_nn × 500 km)²（与分类共用间距），
@@ -84,12 +84,12 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
   四个地形类的 f 恰落在印尼 0.35 / 菲律宾 0.15 / 夏威夷 0.007 / 孤悬 0.002。
 - 可用地率（R9）：`arable_frac` 均值 0.10、对数正态 σ 0.35、夹 [0.03, 0.30]，纯标量、不生成岛内地形。
   集雨容量 `catch = 可用地率 × 陆地 × 降水`（s04）。用处：s06 介数源权重、s07 适宜度（× 陆地规模^γ，**γ=0.5**）、s10 九格表 ①⑤⑧。γ=0 即退回旧式。
+  γ 不能取 1：归一化 log 陆地与 log 岛密度的 std ≈0.12–0.13 且相关 ≈ −0.3（旧模型 −0.21），等权会抹平适宜度的地理结构（seed 2026 的 P7 会挂）。R8 换模型后 γ=0.5 三 seed 直接通过，没有重校。
 - **政治层（第四批 R7，2026-09-11，`[s09.polity]`）**：人口 = P1 × 可耕地 × clip(降水/0.5, 0.25, 1)（≈2 亿）；控制权重 w = 商旅成本 × (索桥内 1 / 群间飞行 **3**) + R0·L_trade，
   控制力 exp(−w/R)，**R0 = 2.2 天**、θ = 0.2、R 随核心实力^0.25 放大（夹 0.5–2.5）；核心实力 S = 控制范围内 Σ 人口 × 控制力，**立都门槛 = S 中位（`capital_min_strength_frac=1.0`）**，
   0.5 时邦数翻倍、中位只 5 邑。三 seed：319/426/370 邦，中位 11–14 邑，密接之都的邦是中疏之都的 2.5–3.6 倍（P8 阈 1.5）。
   宗主半径 = R0 × 0.5 且不随实力放大、王畿锁定（否则中心处人口最稠，宗主反成圈内最大邦）。变法 80 年前、用 20 年、动员 ×3、守方 ×2、宗主顾忌 ×3；
   兼并只由变法之国发动（docs/02 §八 ↔ 铁律三 的调和），先易后难，占领消化按 docs/04 §四 的 [3, 8, 15, 25, 60] 年。来由见 DESIGN-NOTES 四点九。
-  γ 不能取 1：归一化 log 陆地与 log 岛密度的 std ≈0.12–0.13 且相关 ≈ −0.3（旧模型 −0.21），等权会抹平适宜度的地理结构（seed 2026 的 P7 会挂）。R8 换模型后 γ=0.5 三 seed 直接通过，没有重校。
 - **seed 2026 是 P7 的哨兵种子**（拒绝点数只有 seed 42/7 的零头；`k_sub=3` 与 ⑦ 的 `secondary_per_circle=3` 都是为它定的：它的 NE 圈分不到全局峰值）。改 ⑦ 适宜度或次级起源相关的东西，先拿它试。
 - **seed 7 是 P6 的哨兵种子**：G 邻域只有 8–13 个岛，枢纽 3–4 个，其中两个是穿 D 干线的门户型（反事实里流量反而上升）。改骨架、板块、绕道弧的东西先拿它试。
 - 第三批（2026-09-10）的默认值：板块 `[s03.plates]`（汇聚 ×3、离散 ×0.15、叠层核阈 0.9、D/G 邻域不修饰、乘子归一）、
@@ -102,7 +102,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 - 季节窗口进模型（现只有 `seasonal` 标志与 ④ 的窗口比例）；政治性障碍只支持经纬矩形覆盖
 - 九格表 ④ 特有种 / ⑦ 外观 标【待填】；⑨ 文本量词与归因还比较模板化。⑧ 的世仇 = 接壤且势均力敌、界边最多的邻邦（启发式）
 - 政治层：兼并史是静态快照 + 逐邦顺序（无年内事件、无分裂/复国）；附庸只一层；邦名是 `邦NNN` 占位；南圈与 NW 圈不发生变法（docs/11 §八）
-- 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图；气象层没有粒子动画（流线虚线已够用），R6 的水汽/雨影量待定案后走同一网格通道
+- 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图；气象层没有粒子动画（流线虚线已够用）；水汽 q / 抬升 uplift 已在网格通道里
 - 操作台改前端时注意：globe.gl 会清空 `#globe` 的内容，遮罩/悬停框必须放在 `#globeWrap`；`pathsData` 的点高度靠 `pathPointAlt(p=>p[2])` 才生效（DESIGN-NOTES 五）
 - 性能：8000 岛全跑约 2 分钟（s06 介数 30 s、s10 图 50 s 为大头；s09 政治层约 3 s）；20000 岛未系统测试
 - `check --seeds` 多种子批跑、`viz diff`、`config diff` 未做

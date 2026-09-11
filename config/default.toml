@@ -430,6 +430,8 @@ c_arid_min = 0.12             # C3 干旱岛（降水 < 0.3）比例区间（改
 c_arid_max = 0.30
 c_river_min = 0.4             # C4 有河的群比例（只报告）
 c_river_max = 0.85
+# SK-cal 历法（R1）：潮汐锁定时标 0.92 Gyr < 4.6 Gyr 已作为设定接受（2026-09-11 拍板：保留 4 季 × 28 日；行星年轻 / 大卫星搅动），不再报警
+cal_accept_tidal_tension = true
 # P8 政治层（第四批 R7）
 p8_dense_ratio_min = 1.5      # 密接之都的邦 / 中疏之都的邦 的邑数中位比（三 seed 实测 2.5–3.6）
 p8_n_states_min = 100         # 全世界邦数区间（「诸侯数百」；三 seed 实测 319–426）

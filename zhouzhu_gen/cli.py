@@ -64,7 +64,7 @@ def main(argv=None):
     p_probe.add_argument("--mode", default="trade")
     p_probe.add_argument("--node", type=int, default=None)
 
-    p_check = sub.add_parser("check", help="七条验收现象 + 铁律自检")
+    p_check = sub.add_parser("check", help="八条验收现象 + 气候 + 铁律自检 + 骨架/历法校准")
     p_check.add_argument("--run", default="out/seed42")
     p_check.add_argument("--calibrate", action="store_true")
 
