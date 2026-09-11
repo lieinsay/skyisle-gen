@@ -738,7 +738,7 @@ function selectIsland(i){
   rows.push(['节点',`#${i}（${fmt(A.lat[i],2)}°, ${fmt(A.lon[i],2)}°）`]);
   const qOf=(arr,v)=>{ let c=0; for(let k=0;k<arr.length;k++) if(arr[k]<=v) c++; return c/arr.length; };
   rows.push(['地形',`${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'（叠层）':''}`]);
-  if (A.age) rows.push(['板块',`板块 #${A.plate?A.plate[i]:'-'} · 岛龄 ${fmt(A.age[i])}（0 新 1 老）`]);
+  if (A.age){ const BT=['汇聚','离散','走滑']; const k=A.bkern?A.bkern[i]/255:0; const where=A.btype?(k>=0.5?`处于板块${BT[A.btype[i]]}带上`:(k>=0.2?`靠近板块${BT[A.btype[i]]}带`:'板块内部')):''; const a=A.age[i]; rows.push(['地质',`板块 #${A.plate?A.plate[i]:'-'} · ${where} · 岛龄 ${fmt(a)}（${a<0.3?'新岛':(a<0.65?'中年':'老岛')}）${A.layered[i]?' · 叠层':''}<div class="small">背景，不涉玩法（原则甲）</div>`]); }
   rows.push(['规模',`群陆地 ${fmt(A.area[i],0)} km²（分位 ${fmt(qOf(A.area,A.area[i]),2)}）· 陆地占比 ${A.land_frac?fmt(A.land_frac[i],3):'-'} · 可用地率 ${A.arable_frac?fmt(A.arable_frac[i],2):'-'} · 集雨容量 ${fmt(A.catch[i],1)}（分位 ${fmt(qOf(A.catch,A.catch[i]),2)}）`
     + `<div class="small">节点 = 岛群 = 一水共同体 = 一个基本政治单位（docs/02 §六；群内数十岛半小时可达，属第三层）</div>`]);
   if (A.main_area) rows.push(['主岛',`${fmt(A.main_area[i],0)} km²（占群 ${fmt(A.main_area[i]/Math.max(1e-9,A.area[i])*100,0)}%）· 岛体墙高 ${fmt(A.wall_m[i],0)} m · `

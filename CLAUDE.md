@@ -40,6 +40,7 @@ zhouzhu_gen/
   weights.py     w_m = λ_ref·cost_m + L_m（L = −ln perm，perm=0 → inf）
   culture.py     World 惰性读取；槽位份额（含本地行）；TV 文化距离；同言线边集
   polity.py      政治层产物的只读封装（Polity：邦名/状态/探针行；print_summary），ninegrid/probe/web 共用
+  geology.py     地质表现层（R4）：③ 板块网格按节点采样 → 九格表 ① / 探针 / 操作台的叙事文本，不进推导（原则甲）
   check.py       P1–P8 + C1–C4 + IL-*（铁律）+ SK-*（骨架校准，warn-only）
   ninegrid.py    九格表草稿（RegionData 聚合 + build_region_md + lint）
   viz.py / probe.py / web/(server.py bundle.py static/index.html static/vendor/globe.gl.min.js)

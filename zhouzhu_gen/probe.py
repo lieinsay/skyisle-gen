@@ -49,6 +49,10 @@ def probe_node(ctx, node: int):
     pol = Polity(ctx)
     if pol.available:
         print(f"政体 约 {float(pol.pop[n]) / 1e4:.1f} 万口 · {pol.node_line(n)}")
+    from .geology import Geology
+    geo = Geology(ctx)
+    if geo.available:
+        print(f"地质 {geo.node_zh(n)}（背景，不涉玩法）")
 
     ce = w.cand_edges
     mask = (ce["src"] == n) | (ce["dst"] == n)

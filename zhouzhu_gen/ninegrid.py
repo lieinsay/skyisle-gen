@@ -15,6 +15,7 @@ import numpy as np
 
 from . import MODES, MODE_ZH
 from .culture import World
+from .geology import Geology
 from .polity import Polity
 from .stages.s03_islands import CLASS_NAMES, CLASS_ZH
 from .stages.s05_barriers import REGIONAL_ORDER
@@ -160,6 +161,8 @@ class RegionData:
         self.trunk_flow_thr = pf[max(0, len(pf) // 10)] if pf else 0.0
         # 政治层（⑨，第四批 R7）：地区是展示分区，邦是政治单位；九格表 ⑤⑥⑧ 写邦级
         self.pol = Polity(ctx)
+        # 地质表现层（R4）：只出文字，不进推导
+        self.geo = Geology(ctx)
 
     # ---- 政治层：一个地区里有哪些邦 ----
     def region_polities(self, r: int) -> list[dict]:
@@ -269,6 +272,9 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
         l1 += f"约{tenths_r}成的群主岛有常年河流，余者全赖集雨。"
     else:
         l1 += "主岛少有河流，用水几乎全赖集雨。"
+    geo_zh = rd.geo.region_zh(members, rd.isl["lon"], rd.isl["lat"])
+    if geo_zh:
+        l1 += " " + geo_zh
 
     # ---------- ②
     band_zh = BAND_ZH[rd.band_major[r]]

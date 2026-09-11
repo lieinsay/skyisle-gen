@@ -9,6 +9,7 @@ import numpy as np
 
 from .. import MODES, MODE_ZH
 from ..culture import World
+from ..geology import Geology
 from ..polity import Polity
 from ..stages.s03_islands import CLASS_NAMES, CLASS_ZH
 from ..stages.s05_barriers import REGIONAL_ORDER
@@ -131,6 +132,10 @@ def build_world(ctx) -> dict:
     else:
         polity_meta = None
         polity_arrays = {}
+    geo = Geology(ctx)
+    if geo.available:
+        polity_arrays["btype"] = _arr(geo.btype.astype(np.int8), "int8")
+        polity_arrays["bkern"] = _q8(np.clip(geo.bkern, 0, 1))
     return {
         "run_id": ctx.out_dir.name, "seed": ctx.seed,
         "modes": list(MODES), "mode_zh": MODE_ZH,
