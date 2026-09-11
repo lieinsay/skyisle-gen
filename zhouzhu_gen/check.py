@@ -665,21 +665,59 @@ def check_skeleton(w: World, cfg, rep: Report):
         s0 = [p[1] for p in best_pairs[:3]]
         s1 = [p[2] for p in best_pairs[:3]]
         row = {}
+        f_reg = w.perm["f_regional"]
+        E_und = f_reg.shape[0]
+        bi = REGIONAL_ORDER.index(bid)
         for mi, m in enumerate(MODES):
             target_p = float(barriers_cfg[bid]["permeability"][m])
             wgt = 0.001 * g["cost"] + np.where(g["perm_d"][:, mi] > 0,
                                                -np.log(np.maximum(g["perm_d"][:, mi], 1e-300)),
                                                np.inf)
-            d, _, _ = dijkstra(csr, wgt, [int(x) for x in s0])
+            d, pn, pe = dijkstra(csr, wgt, [int(x) for x in s0])
             best = float(np.min(d[s1]))
             eff = float(np.exp(-best)) if np.isfinite(best) else 0.0
-            row[m] = {"effective": round(eff, 3), "config": target_p,
-                      "ok": abs(eff - target_p) <= max(tol, 0.03 if target_p <= 0.05 else tol)}
+            # 只算本障碍：沿最优路径 Σf_b（Φ 归一化的对象）。总通过率还叠着邻带的 Φ 域重叠（波状带界下 F 的顶就是 C 的底）
+            # 与局部因子（极地稀疏区的宽空域），那些不是本项要校的东西，只报告。
+            sum_f = 0.0
+            if np.isfinite(best):
+                u = int(np.array(s1)[int(np.argmin(d[s1]))])
+                while pn[u] >= 0:
+                    sum_f += float(f_reg[int(pe[u]) % E_und, bi])
+                    u = int(pn[u])
+            if not np.isfinite(best):
+                eff_b = 0.0                       # 该模式下根本过不去（吸收型 A 的 daily/trade/migrate）
+            else:
+                eff_b = float(target_p ** sum_f) if target_p > 0 else 0.0
+            row[m] = {"effective": round(eff_b, 3), "effective_total": round(eff, 3), "sum_f": round(sum_f, 3),
+                      "config": target_p,
+                      "ok": abs(eff_b - target_p) <= max(tol, 0.03 if target_p <= 0.05 else tol)}
             if not row[m]["ok"]:
                 all_ok = False
         rows[bid] = row
-    rep.add("SK-perm", "骨架一致性：障碍聚合通过率 ↔ docs/11 §六 矩阵（只报警）",
+    rep.add("SK-perm", "骨架一致性：障碍聚合通过率 ↔ docs/11 §六 矩阵（只报警；effective = 本障碍 Σf 的贡献，effective_total 含邻带与局部因子）",
             rows, f"逐格差 ≤ {tol}", all_ok, note="warn-only")
+
+    # 历法 ↔ 轨道自洽（R1，只报警）：年长整除季长；日照与配置一致；潮汐锁定时标 ≥ 系统年龄；恒星在主序标度适用范围
+    cal = ctx.load_json(1, "planet").get("calendar") or {}
+    if cal:
+        age = float(ctx.cfg["s01"]["calendar"].get("system_age_gyr", 4.6))
+        resid = abs(cal["year_days_solar"] - cal["seasons"] * cal["days_per_season_config"])
+        ins_ok = abs(cal["insolation_derived"] - cal["insolation_config"]) <= 0.1 * max(cal["insolation_config"], 1e-9)
+        lock_ok = cal["tidal_lock_gyr"] >= age
+        mass_ok = 0.43 <= cal["star"]["mass_msun"] <= 2.0
+        note = "warn-only"
+        if not lock_ok:
+            note += (f"；潮汐锁定时标 {cal['tidal_lock_gyr']:.2f} Gyr < 系统年龄 {age} Gyr：{cal['seasons']} 季 × {cal['days_per_season_config']:.0f} 日的年太短，"
+                     f"行星被逼到 {cal['semi_major_axis_au']:.2f} AU 的 {cal['star']['spectral_class']} 型星旁；同季长至少 {cal.get('seasons_needed_for_no_lock', '?')} 季才安全，"
+                     "或把它当作设定的已知张力（行星年轻 / 大卫星搅动）")
+        rep.add("SK-cal", "历法 ↔ 行星尺度自洽（docs/11 §十一；一季 28 太阳日 × 4 = 一年）",
+                {"year_days_solar": round(cal["year_days_solar"], 2), "season_residual_days": round(resid, 3),
+                 "star": f"{cal['star']['mass_msun']:.2f} M☉ {cal['star']['spectral_class']} {cal['star']['teff_k']:.0f} K",
+                 "a_au": round(cal["semi_major_axis_au"], 3), "insolation_derived": round(cal["insolation_derived"], 3),
+                 "tidal_lock_gyr": round(cal["tidal_lock_gyr"], 2),
+                 "moon_distance_planet_radii": round(cal["moon"]["distance_planet_radii"], 1) if cal.get("moon") else None},
+                {"season_residual<=": 0.5, "insolation_within": "10%", "tidal_lock_gyr>=": age, "star_mass_in": [0.43, 2.0]},
+                resid <= 0.5 and ins_ok and lock_ok and mass_ok, note=note)
 
     # 南带谱系分化最深
     pre = ctx.load_npz(7, "prehist")

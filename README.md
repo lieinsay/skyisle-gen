@@ -184,6 +184,8 @@ config/           default.toml · slots.toml · production_templates.toml · (tr
 zhouzhu_gen/
   stages/         s01_planet … s10_output（十步；s09_polity 为第四批 R7 的政治层）
   polity.py       政治层产物的只读封装（邦名 / 状态 / 探针行 / 摘要）
+  almanac.py      历法 ↔ 轨道自洽（4 季 × 28 太阳日 → 恒星质量 / 轨道半径 / 卫星；反向亦可），① 调用
+  geology.py      地质表现层：③ 板块格局 → 九格表 ① / 探针的叙事文本（原则甲：不进推导）
   graph.py        Dijkstra / 抽样介数 / 连通分量（纯 numpy + heapq）
   culture.py      槽位份额 / TV 文化距离 / 同言线
   check.py        七条验收 + 铁律自检 + 骨架一致性

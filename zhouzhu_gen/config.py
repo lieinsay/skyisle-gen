@@ -122,6 +122,14 @@ def validate(cfg: dict) -> None:
         raise ValueError("s01.planet.radius_km 必须 > 0（默认 6371 = 地球大小）")
     if float(cfg.get("shared", {}).get("day_range_km", 1.0)) <= 0:
         raise ValueError("shared.day_range_km 必须 > 0")
+    cal = cfg.get("s01", {}).get("calendar", {})
+    if cal:
+        if cal.get("mode", "calendar_to_orbit") not in ("calendar_to_orbit", "orbit_to_calendar"):
+            raise ValueError("s01.calendar.mode 必须是 calendar_to_orbit 或 orbit_to_calendar")
+        if int(cal.get("seasons", 4)) < 1 or float(cal.get("days_per_season", 28)) <= 0:
+            raise ValueError("s01.calendar.seasons ≥ 1 且 days_per_season > 0")
+        if cal.get("mode") == "orbit_to_calendar" and (float(cal.get("stellar_mass_msun", 0)) <= 0 or float(cal.get("semi_major_axis_au", 0)) <= 0):
+            raise ValueError("orbit_to_calendar 需要 stellar_mass_msun > 0 与 semi_major_axis_au > 0")
     s3 = cfg.get("s03", {}).get("islands", {})
     if "land_frac_alpha" in s3 and float(s3["land_frac_alpha"]) < 0:
         raise ValueError(

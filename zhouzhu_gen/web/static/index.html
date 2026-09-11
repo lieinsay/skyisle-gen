@@ -334,7 +334,8 @@ async function loadRun(rid){
   FA = {}; for (const k in F.arrays) FA[k] = decode(F.arrays[k]);
   home=null; selected=null; distCache=null; pathData=null;
   const pl=W.planet;
-  $('runinfo').textContent = `半径 ${pl.radius_km} km（地球 6371）· 绕行 ${pl.circumference_days.toFixed(0)} 日`
+  const cal=pl.calendar&&pl.calendar.year_days_solar?` · 年 ${pl.calendar.year_days_solar.toFixed(0)} 日（${pl.calendar.seasons} 季 × ${pl.calendar.days_per_season.toFixed(0)}）· 恒星 ${pl.calendar.star.mass_msun.toFixed(2)} M☉ ${pl.calendar.star.spectral_class} 型 · ${pl.calendar.semi_major_axis_au.toFixed(2)} AU`:'';
+  $('runinfo').textContent = `半径 ${pl.radius_km} km（地球 6371）· 绕行 ${pl.circumference_days.toFixed(0)} 日`+cal
     + ` · ${W.n_islands} 岛 · ${W.n_edges} 边 · ${W.traits.length} 特征 · ${W.slots.length} 槽位` + (W.polity?` · ${W.polity.n_states} 邦`:'');
   buildSelectors(); buildParams(); buildCheck(); buildPolity();
   const tex = INLINE ? INLINE.texture : '/api/texture?run='+rid;
@@ -820,6 +821,7 @@ async function loadGrid(r){
 // ------------------------------------------------------------ 参数
 const PARAM_SPEC = [
   {sec:'行星 [s01.planet]', items:[['s01.planet.radius_km','半径 km（地球 6371）'],['s01.planet.rotation_period_hr','自转周期 hr'],['s01.planet.axial_tilt_deg','轴倾角 °'],['s01.planet.insolation_rel','日照相对值'],['shared.day_range_km','1 日航程 km']]},
+  {sec:'历法 ↔ 轨道 [s01.calendar]', items:[['s01.calendar.mode','方向 calendar_to_orbit / orbit_to_calendar'],['s01.calendar.seasons','一年几季'],['s01.calendar.days_per_season','一季几个太阳日'],['s01.calendar.stellar_mass_msun','恒星质量 M☉（orbit 方向用）'],['s01.calendar.semi_major_axis_au','轨道半径 AU（orbit 方向用）'],['s01.calendar.synodic_month_days','朔望月天数'],['s01.calendar.tidal_q','潮汐 Q']]},
   {sec:'骨架 [skeleton]', items:[['skeleton.d_lon_west','D 西缘 °'],['skeleton.d_lon_east','D 东缘 °'],['skeleton.d_density_mult','D 密度倍率'],['skeleton.g_radius_deg','G 半径 °'],['skeleton.g_delta_deg','G 纬度偏移 δ °'],['skeleton.detour_arc_gap_deg','绕道弧间隙 °'],['skeleton.detour_arc_boost','绕道弧密度倍增'],['skeleton.center_window_deg','中心窗宽 °'],['skeleton.eq_core_halfwidth_deg','赤道无岛核心半宽 °']]},
   {sec:'岛屿 [s03]', items:[['s03.islands.n_islands','岛群数'],['s03.islands.noise_gamma','成簇程度 γ'],['s03.islands.band_density.trades','信风带密度'],['s03.islands.band_density.subtropical_calm','无风带密度'],['s03.islands.band_density.westerlies','西风带密度'],['s03.islands.band_density.polar','极地密度'],['s03.islands.land_frac_alpha','陆地占比~密度指数 α'],['s03.islands.land_frac_cap','陆地占比上限 f_cap'],['s03.islands.land_frac_sigma','陆地占比抖动 σ'],['s03.islands.arable_frac_sigma','可用地率抖动 σ']]},
   {sec:'尺度口径 [shared.scale]', items:[['shared.scale.total_land_km2','全世界陆地 km²'],['shared.scale.arable_frac_mean','可用地率均值'],['shared.scale.people_per_arable_km2','人口密度 人/km² 可耕地']]},

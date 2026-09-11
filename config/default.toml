@@ -44,6 +44,20 @@ insolation_rel = 1.0
 radius_km = 6371.0
 held_hou_scaling = false      # true：带界随自转率缩放（快转→窄哈德莱圈）
 
+[s01.calendar]                # 历法 ↔ 行星尺度双向自洽（BACKLOG R1；almanac.py；只写 planet.json，不改任何场）
+mode = "calendar_to_orbit"    # calendar_to_orbit：由 季数 × 季长 推公转周期 → 恒星质量 / 光度 / 轨道半径（日照取 insolation_rel）
+                              # orbit_to_calendar：由 stellar_mass_msun + semi_major_axis_au 推一年的太阳日数与每季天数（报残差；④ 仍用 insolation_rel）
+seasons = 4                   # 一年四季
+days_per_season = 28.0        # 一季 28 个太阳日（= 1 航行日 = 24 h 自转）；一年 = 112 日
+stellar_mass_msun = 0.58      # 仅 orbit_to_calendar 用（默认值 = calendar_to_orbit 推出的值，两个方向互为逆运算）
+semi_major_axis_au = 0.381    # 同上
+moon = true                   # 卫星：朔望月 = 一季 → 一年 = 4 朔望月（历法的物理锚点）；由此推卫星轨道半径
+synodic_month_days = 28.0
+planet_density_rel = 1.0      # 行星平均密度（地球 = 1）：与半径一起给行星质量与重力（只报告）
+tidal_q = 100.0               # 潮汐耗散品质因子 Q（岩质行星常用 100；地球今值因海洋约 12）
+tidal_k2 = 0.3                # 潮汐勒夫数
+system_age_gyr = 4.6          # 潮汐锁定时标短于此即 SK-cal 报警：历法把行星逼得太靠近恒星
+
 # ---------------- ② 大气环流 ----------------
 [s02.wind]
 eq_storm_top_deg = 8.0        # 赤道永暴带（风系）半宽

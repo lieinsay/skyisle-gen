@@ -18,7 +18,7 @@
   $py -m zhouzhu_gen.cli ninegrid --run out/seed42 [--region K]
   $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）
   $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 33 个测试，约 10 s
+  $py -m pytest tests -q                          # 35 个测试，约 10 s
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
@@ -39,6 +39,7 @@ zhouzhu_gen/
   graph.py       CSR、Dijkstra(heapq)、Brandes 抽样介数、弱连通分量 —— 纯 Python，注意 inf 比较
   weights.py     w_m = λ_ref·cost_m + L_m（L = −ln perm，perm=0 → inf）
   culture.py     World 惰性读取；槽位份额（含本地行）；TV 文化距离；同言线边集
+  almanac.py     历法 ↔ 轨道自洽（R1）：纯换算，① 调用，写 planet.json.calendar；SK-cal 报警
   polity.py      政治层产物的只读封装（Polity：邦名/状态/探针行；print_summary），ninegrid/probe/web 共用
   geology.py     地质表现层（R4）：③ 板块网格按节点采样 → 九格表 ① / 探针 / 操作台的叙事文本，不进推导（原则甲）
   check.py       P1–P8 + C1–C4 + IL-*（铁律）+ SK-*（骨架校准，warn-only）
@@ -60,7 +61,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
    **陆地不受此限**：`area_km2`/`arable_frac` 是集雨面与人口容量（docs/02 §六），可以进社会推导——高度才是「地理决定贵贱」的禁区。`arable_frac` 刻意不从 `height_m` 推（保持这条卫生习惯）。
 3. **铁律五**：文化只以 share/strength 浮点场存在。不得从 argmax 派生地区/标签，不得 flood fill。P1b（每条边的 TV 差 ≤ a + b·(λ_max·cost + max L)）是硬项。
 4. **原则己**：每岛必须可达（史前扩散全覆盖）、每槽位 share 和为 1（本地行 ε>0 保证）。任何会造出孤岛的改动（采样、边集、G 阻断）都要查 `IL-ji`。
-5. 区域障碍必须走 **Φ 穿越归一化**（`s05.node_phi`），不得逐边乘因子（跨带通过率会随岛数指数衰减）。
+5. 区域障碍必须走 **Φ 穿越归一化**（`s05.node_phi`），不得逐边乘因子（跨带通过率会随岛数指数衰减）。SK-perm 校的是本障碍的 Σf（≈1），总通过率里还叠着邻带 Φ 域重叠与局部因子，别拿它调 s05。
 6. 随机数只从 `rng.stage_rng / entity_rng` 取；列表排序后使用；不迭代 set。
 7. 新增参数：写进 `config/default.toml` 对应阶段段落并给注释；操作台参数面板（`index.html` 的 `PARAM_SPEC` 或矩阵区块）按需加。
 8. `slots.toml` / `traits.toml` / `production_templates.toml` 不在 `default.toml` 里，通过 `pipeline.STAGE_EXTRA_SECTIONS` 进 ⑧⑨ 的缓存 key。新增这类独立配置文件要同步登记，否则改了不会失效。
@@ -72,6 +73,9 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 - 半衰日程：daily 5–10、trade 15–30、migrate 30–60、envoy 40–80 天。阻力：低 .05–.2 / 中 .3–.6 / 高 .7–.95。
 - ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 2；每高隔离分量 3 条本地起源特征。
 - 行星：半径 6371 km（地球）、自转 24 h、倾角 20°、1 日航程 500 km → 绕行 80 日。半径只经 `days_per_rad` 影响所有边的天数。
+- 历法（R1，`[s01.calendar]`，almanac.py）：一年 4 季 × 28 太阳日 = 112 日（1 航行日 = 1 太阳日）→ 公转 113 日 → K 型星 0.58 M☉、0.38 AU；
+  卫星朔望月 = 一季。历法**不反推带界**。潮汐锁定时标 0.92 Gyr < 4.6 Gyr 是已知张力，SK-cal 只报警（同季长要 6 季才安全）。
+  `mode = orbit_to_calendar` 反向：给恒星质量 + 轨道半径推每季天数。只写 planet.json，不改任何场。
 - 尺度口径 `[shared.scale]`（BACKLOG 第一批拍板）：全世界陆地 25,000,000 km² / 可用地率 0.10 / 100 人/km² 可耕地 → 2.5 亿人。
 - 陆地（R8）：`area = 势力范围 × f`，势力范围 = 0.866 × (mean_nn × 500 km)²（与分类共用间距），
   `f = min(0.35, f0 · (ρ/ρ_med)^α · lognormal(σ=0.5))`，α=1，f0 由 Σarea = 25M 二分反解（三 seed 均 ≈0.167）。

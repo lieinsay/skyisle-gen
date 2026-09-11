@@ -1,7 +1,9 @@
-"""① 行星参数 → 派生常量（带界缩放、距离换算）。"""
+"""① 行星参数 → 派生常量（带界缩放、距离换算）+ 历法 ↔ 轨道自洽（R1，almanac.py）。"""
 from __future__ import annotations
 
 import math
+
+from ..almanac import derive as derive_calendar
 
 
 def run(ctx):
@@ -30,5 +32,12 @@ def run(ctx):
         "day_range_km": float(ctx.cfg["shared"]["day_range_km"]),
         "circumference_days": 2 * math.pi * float(p["radius_km"]) / float(ctx.cfg["shared"]["day_range_km"]),
     }
+    cal = derive_calendar(ctx.cfg)
+    out["calendar"] = cal
     ctx.save_json(1, "planet", out)
-    return {"circumference_days": round(out["circumference_days"], 1), "band_scale": scale}
+    summary = {"circumference_days": round(out["circumference_days"], 1), "band_scale": scale}
+    if cal:
+        summary.update({"year_days": round(cal["year_days_solar"], 2),
+                        "star_msun": round(cal["star"]["mass_msun"], 3), "a_au": round(cal["semi_major_axis_au"], 3),
+                        "tidal_lock_gyr": round(cal["tidal_lock_gyr"], 2)})
+    return summary

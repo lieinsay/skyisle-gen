@@ -322,3 +322,36 @@ def test_slots_change_invalidates_diffusion_stage():
     k2 = _stage_key_chain(c2, 42)
     assert base[:7] == k2[:7], "改槽位表不该让 ①–⑦ 失效"
     assert base[7] != k2[7] and base[9] != k2[9], "改槽位表必须让 ⑧⑩ 失效"
+
+
+# ---------------- 历法 ↔ 轨道（R1）----------------
+def test_calendar_orbit_roundtrip():
+    """calendar_to_orbit 推出的 (M★, a) 喂回 orbit_to_calendar 必须复现同一年长与日照；默认历法 = 4 × 28 太阳日。"""
+    import copy
+    from zhouzhu_gen.almanac import derive
+    cfg = load_config()
+    fwd = derive(cfg)
+    assert abs(fwd["year_days_solar"] - 112.0) < 1e-9
+    assert abs(fwd["insolation_derived"] - cfg["s01"]["planet"]["insolation_rel"]) < 1e-9
+    c2 = copy.deepcopy(cfg)
+    c2["s01"]["calendar"].update({"mode": "orbit_to_calendar", "stellar_mass_msun": fwd["star"]["mass_msun"],
+                                  "semi_major_axis_au": fwd["semi_major_axis_au"]})
+    back = derive(c2)
+    assert abs(back["year_days_solar"] - 112.0) < 1e-6
+    assert abs(back["days_per_season_residual"]) < 1e-6
+    assert abs(back["insolation_derived"] - fwd["insolation_derived"]) < 1e-9
+    # 卫星：朔望月 = 一季，一年恰 4 朔望月；恒星月 < 朔望月
+    assert abs(fwd["moon"]["months_per_year"] - 4.0) < 1e-9
+    assert fwd["moon"]["sidereal_month_days"] < fwd["moon"]["synodic_month_days"]
+
+
+def test_calendar_longer_year_relaxes_tidal_lock():
+    """年越长 → 轨道越远 → 潮汐锁定时标越长（a⁶ 压过 M★²）。"""
+    import copy
+    from zhouzhu_gen.almanac import derive
+    cfg = load_config()
+    t4 = derive(cfg)["tidal_lock_gyr"]
+    c2 = copy.deepcopy(cfg)
+    c2["s01"]["calendar"]["seasons"] = 12
+    t12 = derive(c2)["tidal_lock_gyr"]
+    assert t12 > t4
