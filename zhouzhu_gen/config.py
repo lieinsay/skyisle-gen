@@ -155,12 +155,39 @@ def validate(cfg: dict) -> None:
         raise ValueError("s03.islands.main_frac_sigma 必须 ≥ 0")
     if "keel_clearance_m" in s3 and float(s3["keel_clearance_m"]) < 0:
         raise ValueError("s03.islands.keel_clearance_m 必须 ≥ 0")
+    pl = cfg.get("s03", {}).get("plates", {})
+    if "n_plates" in pl and int(pl["n_plates"]) < 4:
+        raise ValueError("s03.plates.n_plates 必须 ≥ 4")
+    if "p_convergent" in pl and "p_divergent" in pl:
+        if not (0.0 <= float(pl["p_convergent"]) and 0.0 <= float(pl["p_divergent"])
+                and float(pl["p_convergent"]) + float(pl["p_divergent"]) <= 1.0):
+            raise ValueError("s03.plates.p_convergent + p_divergent 必须在 [0, 1]")
+    if "divergent_cut" in pl and not (0.0 <= float(pl["divergent_cut"]) <= 1.0):
+        raise ValueError("s03.plates.divergent_cut 必须在 [0, 1]")
+    if "height_age_decay" in pl and not (0.0 <= float(pl["height_age_decay"]) < 1.0):
+        raise ValueError("s03.plates.height_age_decay 必须在 [0, 1)")
     c4 = cfg.get("s04", {}).get("climate", {})
     for k in ("river_main_area_km2", "river_height_m", "river_capacity_bonus"):
         if k in c4 and float(c4[k]) < 0:
             raise ValueError(f"s04.climate.{k} 必须 ≥ 0")
     if "river_precip_min" in c4 and not (0.0 <= float(c4["river_precip_min"]) <= 1.0):
         raise ValueError("s04.climate.river_precip_min 必须在 [0, 1]")
+    # ---- 水汽模型与岛对风的扰动（第三批 3、4）----
+    if "moisture_tau_days" in c4 and float(c4["moisture_tau_days"]) <= 0:
+        raise ValueError("s04.climate.moisture_tau_days 必须 > 0")
+    if "moisture_res_deg" in c4:
+        g = float(cfg.get("shared", {}).get("grid_res_deg", 1.0))
+        r = float(c4["moisture_res_deg"])
+        if r < g or abs(r / g - round(r / g)) > 1e-9:
+            raise ValueError("s04.climate.moisture_res_deg 必须是 shared.grid_res_deg 的整数倍")
+    if "moisture_polar_filter_lat" in c4 and not (0.0 < float(c4["moisture_polar_filter_lat"]) < 90.0):
+        raise ValueError("s04.climate.moisture_polar_filter_lat 必须在 (0, 90)")
+    lwc = cfg.get("s04", {}).get("localwind", {})
+    for k in ("friction_k", "wake_k", "storm_k"):
+        if k in lwc and not (0.0 <= float(lwc[k]) < 1.0):
+            raise ValueError(f"s04.localwind.{k} 必须在 [0, 1)（风速与风暴不能被岛减到负）")
+    if "shift_max_deg" in lwc and not (0.0 <= float(lwc["shift_max_deg"]) < 4.0):
+        raise ValueError("s04.localwind.shift_max_deg 必须在 [0, 4)（无风带 8° 宽，两侧带界不能交叉）")
 
 
 def canonical(obj: Any) -> str:

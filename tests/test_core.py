@@ -118,6 +118,69 @@ def test_grid_interp_periodic():
 
 
 # ---------------- 配置 ----------------
+def test_moisture_uniform_balance():
+    """无风、均匀源：稳态 q = E·τ/ε，P = E（质量守恒）。"""
+    import numpy as np
+    from zhouzhu_gen.moisture import solve
+    from zhouzhu_gen.sphere import grid_axes
+    lats, lons = grid_axes(10.0)
+    z = np.zeros((lats.size, lons.size))
+    E = np.ones_like(z); eps = np.full_like(z, 2.0)
+    p = {"moisture_tau_days": 2.0, "moisture_polar_filter_lat": 70.0, "moisture_days": 40.0}
+    q, P, info = solve(z, z, E, eps, lats, lons, p)
+    assert np.allclose(P, 1.0, atol=1e-3) and np.allclose(q, 2.0 * 86400.0 / 2.0, rtol=1e-3)
+
+
+def test_moisture_advection_depletes_downwind():
+    """纬向均匀东风 + 只在一处抬升（ε 大）：抬升点下风的水汽应低于上风。"""
+    import numpy as np
+    from zhouzhu_gen.moisture import solve
+    from zhouzhu_gen.sphere import grid_axes
+    lats, lons = grid_axes(5.0)
+    u = np.full((lats.size, lons.size), -8.0); v = np.zeros_like(u)
+    E = np.ones_like(u); eps = np.ones_like(u)
+    row = np.argmin(np.abs(lats - 20.0)); col = np.argmin(np.abs(lons - 0.0))
+    eps[row, col - 1:col + 2] = 8.0                      # 「山」在 0°E
+    p = {"moisture_tau_days": 4.0, "moisture_polar_filter_lat": 70.0, "moisture_days": 60.0}
+    q, P, _ = solve(u, v, E, eps, lats, lons, p)
+    up = q[row, col + 4]        # 东风：上风在东
+    down = q[row, col - 4]
+    assert down < 0.8 * up, (up, down)
+
+
+def test_band_displacement_keeps_edges_ordered():
+    import numpy as np
+    from zhouzhu_gen.localwind import band_displacement, edge_lats, EDGE_KEYS
+    from zhouzhu_gen.sphere import grid_axes
+    lats, lons = grid_axes(1.0)
+    rng = np.random.default_rng(3)
+    O = np.clip(rng.uniform(0, 1, (lats.size, lons.size)) ** 3, 0, 1)
+    bands = {"eq_storm_top_deg": 8.0, "trades_top_deg": 28.0, "calm_top_deg": 36.0, "westerlies_top_deg": 62.0}
+    p = {"shift_window_deg": 6.0, "shift_wavenumber_max": 4, "shift_gain_deg": 2.5, "shift_max_deg": 3.5}
+    dphi, D = band_displacement(O, lats, lons, bands, p)
+    e = edge_lats(bands)
+    edges = {k: e[k] + dphi[k] for k in EDGE_KEYS}
+    assert all(np.abs(dphi[k]).max() <= 3.5 + 1e-9 for k in EDGE_KEYS)
+    assert np.all(edges["eq_n"] < edges["trades_n"]) and np.all(edges["trades_n"] < edges["calm_n"]) \
+        and np.all(edges["calm_n"] < edges["west_n"])
+    assert np.all(edges["west_s"] < edges["calm_s"]) and np.all(edges["calm_s"] < edges["trades_s"]) \
+        and np.all(edges["trades_s"] < edges["eq_s"])
+    assert np.isfinite(D).all() and np.abs(D).max() <= 3.5 + 1e-9
+
+
+def test_band_id_local_reduces_to_global_when_flat():
+    import numpy as np
+    from zhouzhu_gen.stages.s02_wind import band_id_of, band_id_of_lat
+    from zhouzhu_gen.localwind import edge_lats, EDGE_KEYS
+    bands = {"eq_storm_top_deg": 8.0, "trades_top_deg": 28.0, "calm_top_deg": 36.0, "westerlies_top_deg": 62.0}
+    lons = np.arange(-179.5, 180.0, 1.0)
+    e = edge_lats(bands)
+    bl = {"lons": lons, "edges": np.stack([np.full(lons.size, e[k]) for k in EDGE_KEYS]), "keys": np.array(EDGE_KEYS)}
+    rng = np.random.default_rng(1)
+    lat = rng.uniform(-89, 89, 2000); lon = rng.uniform(-180, 180, 2000)
+    assert np.array_equal(band_id_of(lat, lon, bands, bl), band_id_of_lat(lat, bands))
+
+
 def test_default_config_valid():
     cfg = load_config()
     assert cfg["s05"]["barriers"]["A"]["permeability"]["envoy"] == 0.03

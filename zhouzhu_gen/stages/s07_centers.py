@@ -12,7 +12,7 @@ from .. import MODES
 from ..graph import CSR, dijkstra
 from ..sphere import angdist
 from ..weights import lambda_ref, load_directed, mode_weight
-from .s02_wind import band_id_of_lat
+from .s02_wind import band_id_of
 
 CENTER_IDS = ["north_west", "north_east", "south"]
 CENTER_ZH = {"north_west": "北带西中心", "north_east": "北带东中心", "south": "南带中心"}
@@ -45,11 +45,11 @@ def _suitability(ctx, isl, clim, ce):
     return suit
 
 
-def _windows(cfg, bands, lat, lon):
+def _windows(cfg, bands, lat, lon, band_local=None):
     sk = cfg["skeleton"]
     w = float(sk["center_window_deg"])
     lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
-    band = band_id_of_lat(lat, bands)
+    band = band_id_of(lat, lon, bands, band_local)     # 局部带界（第三批 3）
     in_lon = lambda lo, hi: ((lon - lo) % 360.0) <= ((hi - lo) % 360.0)  # noqa: E731
     return {
         "north_west": (band == 1) & in_lon(lon_w - w, lon_w),
@@ -72,11 +72,21 @@ def run(ctx):
     suit = _suitability(ctx, isl, clim, ce)
 
     # ---- 三个骨架窗内的涌现（docs/11 §五 定稿；窗内取 argmax）----
-    wins = _windows(ctx.cfg, bands, lat, lon)
+    band_local = ctx.load_npz(4, "band_local")
+    wins = _windows(ctx.cfg, bands, lat, lon, band_local)
     global_max = float(suit.max())
     centers = {}
     for cid in CENTER_IDS:
         m = wins[cid]
+        if not m.any():
+            # 板块把窗内岛群抽空（小规模测试尤其容易）：按 1.5 倍逐步放宽窗宽再取，最多放到 4 倍
+            cfg_w = dict(ctx.cfg); sk_w = dict(cfg_w["skeleton"]); base_w = float(sk_w["center_window_deg"])
+            mult = 1.5
+            while not m.any() and mult <= 4.0:
+                sk_w["center_window_deg"] = base_w * mult
+                cfg_w["skeleton"] = sk_w
+                m = _windows(cfg_w, bands, lat, lon, band_local)[cid]
+                mult *= 1.5
         if not m.any():
             raise ValueError(f"文明中心窗 {cid} 内没有岛：请检查 skeleton 与密度配置")
         node = int(np.where(m)[0][np.argmax(suit[m])])
@@ -110,10 +120,32 @@ def run(ctx):
         ok = all(angdist(xyz[p], xyz[q]) * days_per_rad >= min_sep for q in chosen + main_nodes)
         if ok:
             chosen.append(int(p))
-
-    # ---- 史前扩散：抱石而渡，顺风单向（docs/11 §七）----
     g = load_directed(ctx)
     csr = CSR(N, g["src_d"], g["dst_d"])
+    # 每圈保底（第三批）：全局峰值会集中在适宜度高的一两个圈里（板块世界里圈更不均，seed 2026 的 NE 圈只分到 1 个
+    # 次级起源，P7 拒绝点为 0），每圈至少 secondary_per_circle 个。圈归属用与 ⑧ 完全相同的规则：
+    # 商旅权重下离哪个主中心最近（顺风 0.6 / 逆风 2.0 让圈的形状很不对称，角距代理会归错圈）。
+    per = int(c7.get("secondary_per_circle", 0))
+    min_sep_q = float(c7.get("secondary_per_circle_min_sep_days", min_sep))   # 小圈（NE 只有 900 岛）塞不下 6 天间距的三个峰，保底用较小间距
+    if per > 0:
+        lam_all = lambda_ref(ctx.cfg)
+        trade_i = MODES.index("trade")
+        w_tr = lam_all["trade"] * g["cost_m"][:, trade_i] + g["L"][:, trade_i]
+        dists_c = np.stack([dijkstra(csr, w_tr, [cn])[0] for cn in main_nodes])   # [3, N]
+        circle_of = np.argmin(dists_c, axis=0)
+        counts = [0] * len(main_nodes)
+        for p in chosen:
+            counts[int(circle_of[p])] += 1
+        for p in peak_nodes:
+            p = int(p)
+            ci = int(circle_of[p])
+            if counts[ci] >= per or p in chosen:
+                continue
+            if all(angdist(xyz[p], xyz[q]) * days_per_rad >= min_sep_q for q in chosen + main_nodes):
+                chosen.append(p)
+                counts[ci] += 1
+
+    # ---- 史前扩散：抱石而渡，顺风单向（docs/11 §七）----
     exp_w = float(c7["prehist_wind_exponent"])
     # 物理成本已含 w^1；再乘 w^(exp-1) 需要 w 本身 —— 用 cost/dist 近似风因子（storm、climb 也被强化，可接受）
     ce_dist = np.concatenate([ce["dist_days"], ce["dist_days"]])
@@ -122,7 +154,7 @@ def run(ctx):
     w_pre = ce_dist * wf ** exp_w
     origin_cfg = c7["origin"]
     if origin_cfg == "auto":
-        band_i = band_id_of_lat(lat, bands)
+        band_i = band_id_of(lat, lon, bands, band_local)
         lon_e = float(ctx.cfg["skeleton"]["d_lon_east"])
         m = (band_i == 1) & (((lon - lon_e) % 360.0) <= 90.0)
         origin_node = int(np.where(m)[0][np.argmax(suit[m])]) if m.any() else centers["north_east"]["node"]
@@ -132,8 +164,8 @@ def run(ctx):
     n_unreach = int((~np.isfinite(dist_pre)).sum())
     if n_unreach:
         raise ValueError(f"史前扩散有 {n_unreach} 个岛不可达 —— 违反原则己（处处有人）。图连通性有误")
-    # 谱系：沿树在带界变化处切分
-    band_i = band_id_of_lat(lat, bands)
+    # 谱系：沿树在带界变化处切分（局部带界，第三批 3）
+    band_i = band_id_of(lat, lon, bands, band_local)
     lineage = np.full(N, -1, dtype=np.int64)
     order = np.argsort(dist_pre, kind="stable")
     next_lineage = 0

@@ -2,7 +2,8 @@
 
 节点 = 岛群（R10）：一个节点是一个岛群 = 一个「邑」= 一个水共同体；群内数十小岛彼此 5–15 km，
 属第三层、不进管线。产物字段沿用 islands/n_islands 等旧名，语义均为「群」。
-密度 = 带基线 × exp(γ·噪声) × 骨架修饰（D 空域、绕道岛弧、赤道无岛核心）。
+密度 = 带基线 × 板块乘子（tectonics.py：汇聚脊 / 离散谷 / 走滑错断 / 热点链 / 辐合纹理）× exp(γ·残余噪声)
+       × 骨架修饰（D 空域、绕道岛弧、赤道无岛核心；骨架优先于板块）。
 陆地 area_km2 = 势力范围 T × 陆地占比 f（R8）；T 依赖 kNN，故 kNN 必须先于陆地计算。
 候选边 = kNN 并集 + 远程边（≤ 大船航程）+ 跨赤道远征边 + 连通性回退。
 """
@@ -13,6 +14,7 @@ import numpy as np
 from ..noise import fractal_noise
 from ..rng import stage_rng
 from ..sphere import angdist, grid_axes, grid_interp, knn, latlon_to_xyz
+from ..tectonics import plate_fields
 from .s02_wind import band_id_of_lat
 
 CLASS_NAMES = ["dense", "medium", "sparse", "isolated"]
@@ -20,7 +22,8 @@ CLASS_ZH = {"dense": "密接群岛", "medium": "中疏诸岛", "sparse": "稀疏
 KIND_KNN, KIND_FAR, KIND_EXPEDITION, KIND_FALLBACK = 0, 1, 2, 3
 
 
-def _density_grid(ctx, rng) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _density_grid(ctx, rng):
+    """返回 (lats, lons, dens, tect)；tect 是 tectonics.plate_fields 的网格产物（③ 高度与叠层也用）。"""
     s = ctx.section(3)["islands"]
     sk = ctx.cfg["skeleton"]
     planet = ctx.load_json(1, "planet")
@@ -39,10 +42,29 @@ def _density_grid(ctx, rng) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         [float(bd["equatorial_margin"]), float(bd["trades"]), float(bd["subtropical_calm"]),
          float(bd["westerlies"]), float(bd["polar"])])
 
+    # 骨架几何先算出来：D 空域与 G 邻域内不做板块修饰（骨架优先于板块，docs/11 定稿与 SK-* 校准不能被板块冲掉）
+    lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
+    d_lat_mask = (LAT >= float(sk["eq_core_halfwidth_deg"])) & (LAT <= bands["calm_top_deg"])
+    in_d_lon = ((LON - lon_w) % 360.0) <= ((lon_e - lon_w) % 360.0)
+    d_mask = d_lat_mask & in_d_lon
+    g_xyz = latlon_to_xyz(np.array(g_info["lat"]), np.array(g_info["lon"]))
+    pts = latlon_to_xyz(LAT.ravel(), LON.ravel()).reshape(LAT.shape + (3,))
+    dg = np.degrees(angdist(pts, g_xyz[None, None, :]))
+    skeleton_zone = d_mask | (dg < 3.0 * float(g_info["radius_deg"]))
+
+    # 板块逻辑（第三批 2）：大格局由板块与边界类型决定，分形噪声退为残余纹理
+    wind = ctx.load_npz(2, "wind")
+    tect = plate_fields(rng, lats, lons, ctx.section(3)["plates"], wind["u"], wind["v"])
+    factor = tect["factor"]
+    # 归一到带内均值 1：板块只重新分配岛，不改变各带 / 骨架区之间的相对份额（否则绕道弧的岛数会被脊上的峰值稀释）
+    dom = (~skeleton_zone) & (base > 0)
+    factor = factor / max(1e-9, float(factor[dom].mean()))
+    factor = np.where(skeleton_zone, 1.0, factor)
+    tect["factor"] = factor
     noise = fractal_noise(rng, lats.size, lons.size,
                           base_cells=int(s["noise_base_cells"]), octaves=int(s["noise_octaves"]),
                           persistence=float(s["noise_persistence"]))
-    dens = base * np.exp(float(s["noise_gamma"]) * noise)
+    dens = base * factor * np.exp(float(s["noise_gamma"]) * noise)
 
     # 赤道无岛核心（障碍 A 的几何：全球皆海洋 → 永暴带内无立足处）
     core = float(sk["eq_core_halfwidth_deg"])
@@ -50,23 +72,16 @@ def _density_grid(ctx, rng) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     # 中央宽空域 D：从赤道无岛核心边缘到无风带顶，经度 [west, east]
     # （下界必须是核心边缘而非风系带界，否则赤道缘岛条带成为绕过 D 的走廊）
-    lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
-    d_lat_mask = (LAT >= float(sk["eq_core_halfwidth_deg"])) & (LAT <= bands["calm_top_deg"])
-    in_d_lon = ((LON - lon_w) % 360.0) <= ((lon_e - lon_w) % 360.0)
-    d_mask = d_lat_mask & in_d_lon
     dens[d_mask] *= float(sk["d_density_mult"])
 
     # 绕道岛弧：G 南北两段（仍远低于带基线）→ 中转岛的物理基础
-    g_xyz = latlon_to_xyz(np.array(g_info["lat"]), np.array(g_info["lon"]))
-    pts = latlon_to_xyz(LAT.ravel(), LON.ravel()).reshape(LAT.shape + (3,))
-    dg = np.degrees(angdist(pts, g_xyz[None, None, :]))
     arc_r = float(g_info["radius_deg"]) + float(sk["detour_arc_gap_deg"])
     arc = (np.abs(dg - arc_r) < float(sk["detour_arc_halfwidth_deg"])) & d_mask
     dens[arc] *= float(sk["detour_arc_boost"])
     # G 盘内无岛：靠得太近就是死（docs/11 §六）。否则盘内岛全边被阻断，成为孤岛
     dens[dg < float(g_info["radius_deg"])] = 0.0
 
-    return lats, lons, dens
+    return lats, lons, dens, tect
 
 
 def _sample_islands(rng, lats, lons, dens, n_target: int, g_xyz, g_r_deg, core_deg):
@@ -139,7 +154,8 @@ def run(ctx):
     km_per_rad = planet["radius_km"]
     days_per_rad = km_per_rad / planet["day_range_km"]
 
-    lats_g, lons_g, dens = _density_grid(ctx, rng)
+    lats_g, lons_g, dens, tect = _density_grid(ctx, rng)
+    pl = ctx.section(3)["plates"]
     n_target = int(s["n_islands"])
     g_info0 = ctx.load_json(2, "bands")["G"]
     g_xyz0 = latlon_to_xyz(np.array(g_info0["lat"]), np.array(g_info0["lon"]))
@@ -158,12 +174,18 @@ def run(ctx):
                            base_cells=int(s["height_noise_cells"]), octaves=3)
     height = (0.5 + 0.5 * grid_interp(hfield, lats_g, lons_g, lat, lon)) * float(s["height_scale_m"])
     height = height + rng.normal(0.0, float(s["height_jitter_m"]), n_target)
-    # 叠层岛区：堆叠噪声区内高度呈双层分布（岛在不同高度堆叠，docs/02 §三）
-    stack_field = fractal_noise(rng, lats_g.size, lons_g.size, base_cells=12, octaves=2)
-    in_stack = grid_interp(stack_field, lats_g, lons_g, lat, lon) > float(s["stack_zone_threshold"])
+    # 板块对高度的作用（第三批 2）：汇聚带抬升、老岛下沉（docs/02 §九 老岛下沉 → 新岛升起）
+    conv_at = grid_interp(tect["conv_kernel"], lats_g, lons_g, lat, lon)
+    age = np.clip(grid_interp(tect["age"], lats_g, lons_g, lat, lon), 0.0, 1.0)
+    height = height * (1.0 + float(pl["height_convergent_boost"]) * conv_at) \
+                    * (1.0 - float(pl["height_age_decay"]) * age)
+    # 叠层岛区 = 碰撞带：汇聚边界核超过阈值处高度呈双层分布（岛在不同高度堆叠，docs/02 §三）
+    in_stack = conv_at > float(s["stack_zone_threshold"])
     height = np.where(in_stack & (rng.uniform(0, 1, n_target) < 0.5),
                       height + float(s["stack_range_m"]), height)
     height = np.clip(height, 50.0, None)
+    plate_at = tect["plate_id"][np.clip(np.round((lat - lats_g[0]) / (lats_g[1] - lats_g[0])).astype(int), 0, lats_g.size - 1),
+                                (np.round((lon - lons_g[0]) / (lons_g[1] - lons_g[0])).astype(int)) % lons_g.size]
 
     # ---- kNN 与候选边 ----
     k = int(s["knn_k"])
@@ -298,8 +320,15 @@ def run(ctx):
                  main_frac=main_frac.astype(np.float32),
                  main_area_km2=main_area.astype(np.float32),
                  wall_m=wall.astype(np.float32),
+                 age=age.astype(np.float32), plate=plate_at.astype(np.int16),
                  cls=cls, layered=layered, density_at=density_at.astype(np.float32),
                  mean_nn_days=mean_nn.astype(np.float32))
+    ctx.save_npz(3, "plates", lats=lats_g, lons=lons_g,
+                 plate_id=tect["plate_id"], btype=tect["btype"],
+                 boundary_kernel=tect["boundary_kernel"].astype(np.float32),
+                 conv_kernel=tect["conv_kernel"].astype(np.float32),
+                 age=tect["age"].astype(np.float32), factor=tect["factor"].astype(np.float32),
+                 seeds_xyz=tect["seeds_xyz"])
     ctx.save_npz(3, "cand_edges", src=e_src, dst=e_dst,
                  dist_days=e_dist, kind=e_kind)
     ctx.save_npz(3, "density_grid", lats=lats_g, lons=lons_g, density=dens.astype(np.float32))
@@ -316,6 +345,8 @@ def run(ctx):
             "n_fallback": n_fallback, "n_g_chords": n_chord, "class_share": share,
             "layered_share": round(float(layered.mean()), 3),
             "main_area_median_km2": round(float(np.median(main_area)), 0),
+            "stack_share": round(float(in_stack.mean()), 3),
+            "age_median": round(float(np.median(age)), 2),
             "wall_median_m": round(float(np.median(wall)), 0),
             "land_total_km2": round(float(area.sum()), 0),
             "land_target_km2": float(scale["total_land_km2"]),

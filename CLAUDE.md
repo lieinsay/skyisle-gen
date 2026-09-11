@@ -17,7 +17,7 @@
   $py -m zhouzhu_gen.cli ninegrid --run out/seed42 [--region K]
   $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）
   $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 26 个测试，约 4 s
+  $py -m pytest tests -q                          # 31 个测试，约 10 s
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
@@ -31,6 +31,9 @@ zhouzhu_gen/
   pipeline.py    阶段注册、缓存 key 链（config[s0k]+shared+skeleton+seed+STAGE_VERSION）、产物 IO
   config.py      TOML 加载/深合并/--set/校验（通过率∈[0,1]、r≤0.98、半衰序 daily≤trade≤migrate≤envoy、eps0>0）
   stages/s01…s09 九步；每步 run(ctx) 读上游产物、写 npz/json + _meta.json
+  tectonics.py   浮石板块（③ 密度乘子、汇聚核、岛龄；第三批 2）
+  localwind.py   ②b 岛对风的扰动（④ 前半：障碍场、带界位移、摩擦/绕流/尾流、可靠局地风；第三批 3）
+  moisture.py    上风水汽追踪降水（④ 后半：2° 粗网格显式迎风推进到稳态；第三批 4）
   graph.py       CSR、Dijkstra(heapq)、Brandes 抽样介数、弱连通分量 —— 纯 Python，注意 inf 比较
   weights.py     w_m = λ_ref·cost_m + L_m（L = −ln perm，perm=0 → inf）
   culture.py     World 惰性读取；槽位份额（含本地行）；TV 文化距离；同言线边集
@@ -42,7 +45,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 ```
 
 **节点 = 岛群（R10）**：`islands`/`n_islands`/`area_km2` 等字段名沿用，语义都是「群」——一个节点 = 一个岛群 = 一个邑 = 一个水共同体；群内数十小岛属第三层，不进管线。
-关键产物：`s03 islands.npz`（含 `area_km2`：群的总陆地 = 集雨面 = 政治体量；`territory_km2` 势力范围、`land_frac` 陆地占比、`arable_frac` 可用地率；`main_area_km2` 主岛陆地、`wall_m` 岛体墙高 = max(0, height − 300)，第三批 1）`/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s04 climate_islands.npz`（含 `catch` = 可用地率×陆地×降水，集雨容量；`has_river`/`river_size` 主岛河流，默认只进九格表文本）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`。
+关键产物：`s03 islands.npz`（含 `area_km2`：群的总陆地 = 集雨面 = 政治体量；`territory_km2` 势力范围、`land_frac` 陆地占比、`arable_frac` 可用地率；`main_area_km2` 主岛陆地、`wall_m` 岛体墙高 = max(0, height − 300)，第三批 1；`age`/`plate` 岛龄与板块）`/plates.npz`（板块网格）`/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s04 wind_local.npz`（**⑤⑥⑦、check、操作台都从这里读风**：扰动后的 u/v、v_local、obstacle、wake、局部带号）`/band_local.npz`（八条局部带界 edges[8, nlon]，⑤ 的 Φ 与 ⑦ 的窗都按它）`/climate_grid.npz`（precip 由水汽模型算出、q、uplift、conv）`/climate_islands.npz`（含 `catch` = 可用地率×陆地×降水，集雨容量；`has_river`/`river_size` 主岛河流，默认只进九格表文本）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`。
 
 ## 改代码时必须遵守
 
@@ -58,7 +61,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 
 ## 当前默认值的由来（调参前先看）
 
-- 带界 8/28/36/62°；G = 剪切纬度(28) − 5 = 23°N，经度 = D 中央 (−10)；D = lon [−30, 10] × lat [6, 36]。
+- 带界 8/28/36/62°；G = 剪切纬度(28) − 6 = 22°N（第三批由 δ=5 改为 6：新降水模型下中心落在 14–18°N，G 得再南一度才压在主干线上，否则 P6 挂），经度 = D 中央 (−10)；D = lon [−30, 10] × lat [6, 36]。
 - 分类阈值 = 船只参数：桥 0.15 天 / 小船 1 天 / 大船 3 天（1 天 = 500 km），量的是**群与群之间**的间距（群内永远密接）。西风带密度 0.05、极地 0.012 才出稀疏/孤悬。
 - 半衰日程：daily 5–10、trade 15–30、migrate 30–60、envoy 40–80 天。阻力：低 .05–.2 / 中 .3–.6 / 高 .7–.95。
 - ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 2；每高隔离分量 3 条本地起源特征。
@@ -72,7 +75,10 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 - 可用地率（R9）：`arable_frac` 均值 0.10、对数正态 σ 0.35、夹 [0.03, 0.30]，纯标量、不生成岛内地形。
   集雨容量 `catch = 可用地率 × 陆地 × 降水`（s04）。用处：s06 介数源权重、s07 适宜度（× 陆地规模^γ，**γ=0.5**）、s09 九格表 ①⑤⑧。γ=0 即退回旧式。
   γ 不能取 1：归一化 log 陆地与 log 岛密度的 std ≈0.12–0.13 且相关 ≈ −0.3（旧模型 −0.21），等权会抹平适宜度的地理结构（seed 2026 的 P7 会挂）。R8 换模型后 γ=0.5 三 seed 直接通过，没有重校。
-- **seed 2026 是 P7 的哨兵种子**（拒绝点数只有 seed 42/7 的零头）。改 ⑦ 适宜度或次级起源相关的东西，先拿它试。
+- **seed 2026 是 P7 的哨兵种子**（拒绝点数只有 seed 42/7 的零头；`k_sub=3` 与 ⑦ 的 `secondary_per_circle=3` 都是为它定的：它的 NE 圈分不到全局峰值）。改 ⑦ 适宜度或次级起源相关的东西，先拿它试。
+- **seed 7 是 P6 的哨兵种子**：G 邻域只有 8–13 个岛，枢纽 3–4 个，其中两个是穿 D 干线的门户型（反事实里流量反而上升）。改骨架、板块、绕道弧的东西先拿它试。
+- 第三批（2026-09-10）的默认值：板块 `[s03.plates]`（汇聚 ×3、离散 ×0.15、叠层核阈 0.9、D/G 邻域不修饰、乘子归一）、
+  障碍增益 `obstacle_gain=4`、带界位移夹 ±3.5°、水汽 `evap_temp_coeff=0.03`/`precip_conv_k=0.6`/τ 4 天、`k_sub=3`。来由见 DESIGN-NOTES 四点八。
 - 验收阈值中几个是按三 seed 校准过的：P5 强度比 2.0、重心顺风占比 0.75；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
 
 ## 未做 / 可改进（按价值排序）

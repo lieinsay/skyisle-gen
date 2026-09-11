@@ -27,7 +27,7 @@ def run(ctx):
     r = ctx.section(6)["routes"]
     isl = ctx.load_npz(3, "islands")
     ce = ctx.load_npz(3, "cand_edges")
-    wind = ctx.load_npz(2, "wind")
+    wind = ctx.load_npz(4, "wind_local")       # ②b 扰动后的风 + 可靠局地风（第三批 3）
     clim = ctx.load_npz(4, "climate_grid")
     clim_i = ctx.load_npz(4, "climate_islands")
     pm = ctx.load_npz(5, "perm")
@@ -55,11 +55,15 @@ def run(ctx):
     v = grid_interp(wind["v"].astype(np.float64), wind["lats"], wind["lons"], mlat, mlon)
     v_wind = np.hypot(u, v)
     wind_dir = np.arctan2(u, v)  # 方位角约定：0 = 北，顺时针
+    # 可靠局地风（R3 的陷阱）：密集群岛的热力日循环给出可预期的风，无风惩罚按 max(风速, v_local) 算，
+    # 而不是把风速调低（那会让密接群岛内部往来变贵，与 docs/11 的结论相反）
+    v_loc = grid_interp(wind["v_local"].astype(np.float64), wind["lats"], wind["lons"], mlat, mlon)
+    v_eff = np.maximum(v_wind, v_loc)
 
     # ---- 有向成本 ----
     tail, head = float(r["tailwind_factor"]), float(r["headwind_factor"])
     calm = np.minimum(float(r["calm_max"]),
-                      1.0 + float(r["calm_kappa"]) * np.maximum(0.0, 1.0 - v_wind / float(r["calm_v_ref"])))
+                      1.0 + float(r["calm_kappa"]) * np.maximum(0.0, 1.0 - v_eff / float(r["calm_v_ref"])))
     storm_f = 1.0 + float(r["storm_kappa"]) * storm_max
     storm_f_ng = 1.0 + float(r["storm_kappa"]) * storm_ng
     h = isl["height_m"].astype(np.float64)

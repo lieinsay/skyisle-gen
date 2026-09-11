@@ -15,16 +15,27 @@ from ..sphere import latlon_to_xyz, angdist
 REGIONAL_ORDER = ["A", "B", "C", "D", "F_N", "F_S"]  # G 单独处理（删边）
 
 
-def _band_range(band: str, bands: dict) -> tuple[float, float]:
-    t = {"subtropical_calm_n": (bands["trades_top_deg"], bands["calm_top_deg"]),
-         "subtropical_calm_s": (-bands["calm_top_deg"], -bands["trades_top_deg"]),
-         "westerlies_n": (bands["calm_top_deg"], bands["westerlies_top_deg"]),
-         "westerlies_s": (-bands["westerlies_top_deg"], -bands["calm_top_deg"])}
+def _band_range(band: str, bands: dict, band_local: dict | None = None, lon=None):
+    """带障碍的 (lo, hi)。给了 band_local（④ 产物）就按每个点的经度取局部带界（第三批 3：带界是波状线），
+    Φ = (lat − lo(lon)) / (hi(lon) − lo(lon))，「任一单调穿越 Σf = 1」的性质不变。"""
+    if band_local is None:
+        t = {"subtropical_calm_n": (bands["trades_top_deg"], bands["calm_top_deg"]),
+             "subtropical_calm_s": (-bands["calm_top_deg"], -bands["trades_top_deg"]),
+             "westerlies_n": (bands["calm_top_deg"], bands["westerlies_top_deg"]),
+             "westerlies_s": (-bands["westerlies_top_deg"], -bands["calm_top_deg"])}
+        return t[band]
+    from .s02_wind import local_edges
+    e = local_edges(band_local, lon)
+    t = {"subtropical_calm_n": (e["trades_n"], e["calm_n"]),
+         "subtropical_calm_s": (e["calm_s"], e["trades_s"]),
+         "westerlies_n": (e["calm_n"], e["west_n"]),
+         "westerlies_s": (e["west_s"], e["calm_s"])}
     return t[band]
 
 
-def node_phi(cfg: dict, planet_bands: dict, lat: np.ndarray, lon: np.ndarray) -> dict[str, np.ndarray]:
-    """每个区域障碍的穿越坐标 Φ_b（NaN = 该节点不在障碍定义域内，f 记 0）。"""
+def node_phi(cfg: dict, planet_bands: dict, lat: np.ndarray, lon: np.ndarray,
+             band_local: dict | None = None) -> dict[str, np.ndarray]:
+    """每个区域障碍的穿越坐标 Φ_b（NaN = 该节点不在障碍定义域内，f 记 0）。band_local：局部带界（④）。"""
     sk = cfg["skeleton"]
     phis: dict[str, np.ndarray] = {}
     barriers = cfg["s05"]["barriers"]
@@ -34,7 +45,7 @@ def node_phi(cfg: dict, planet_bands: dict, lat: np.ndarray, lon: np.ndarray) ->
             core = float(sk["eq_core_halfwidth_deg"])
             phis[bid] = np.clip((lat + core) / (2 * core), 0.0, 1.0)
         elif b["kind"] == "band":
-            lo, hi = _band_range(b["band"], planet_bands)
+            lo, hi = _band_range(b["band"], planet_bands, band_local, lon)
             phis[bid] = np.clip((lat - lo) / (hi - lo), 0.0, 1.0)
         elif b["kind"] == "void":
             lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
@@ -46,7 +57,11 @@ def node_phi(cfg: dict, planet_bands: dict, lat: np.ndarray, lon: np.ndarray) ->
             phi = np.where(inside, delta / width, np.where(east_side, 1.0, 0.0))
             # 纬度域：从赤道无岛核心边缘到无风带顶（与 s03 的密度修饰一致，
             # 否则赤道缘岛条带成为绕过 D 的走廊）
-            in_lat = (lat >= float(sk["eq_core_halfwidth_deg"])) & (lat <= planet_bands["calm_top_deg"])
+            calm_hi = planet_bands["calm_top_deg"]
+            if band_local is not None:
+                from .s02_wind import local_edges
+                calm_hi = local_edges(band_local, lon)["calm_n"]
+            in_lat = (lat >= float(sk["eq_core_halfwidth_deg"])) & (lat <= calm_hi)
             phis[bid] = np.where(in_lat, phi, np.nan)
         else:
             raise ValueError(f"未知区域障碍 kind: {b['kind']}")
@@ -91,7 +106,8 @@ def run(ctx):
     ships = cfg["shared"]["ships"]
 
     # ---- 区域障碍 Φ 与边指数 f ----
-    phis = node_phi(cfg, bands, lat, lon)
+    band_local = ctx.load_npz(4, "band_local")     # 局部带界（第三批 3）
+    phis = node_phi(cfg, bands, lat, lon, band_local)
     f = np.zeros((E, len(REGIONAL_ORDER)), dtype=np.float64)
     for bi, bid in enumerate(REGIONAL_ORDER):
         phi = phis[bid]

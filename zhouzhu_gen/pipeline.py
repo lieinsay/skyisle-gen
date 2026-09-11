@@ -30,11 +30,12 @@ STAGES = [
 
 # 改动会使缓存失效的实现版本号（每阶段独立）
 STAGE_VERSIONS = {i: "1" for i, _ in STAGES}
-STAGE_VERSIONS[3] = "8"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率 arable_frac（R9）；kNN 提前；主岛 main_frac 与岛体墙高 wall_m（第三批 1）
-STAGE_VERSIONS[4] = "5"  # storm_no_g；集雨容量 catch = 可用地率 × 陆地 × 降水；河流 has_river / river_size（第三批 1）
-STAGE_VERSIONS[5] = "3"  # perm_no_g；D 的 Φ 域与 s03 对齐
-STAGE_VERSIONS[6] = "4"  # betweenness_sources；cost_no_g；源权重改用集雨容量
-STAGE_VERSIONS[7] = "2"  # 适宜度含岛群陆地规模项
+STAGE_VERSIONS[3] = "10"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率（R9）；主岛/墙高（第三批 1）；板块密度与岛龄（第三批 2）
+STAGE_VERSIONS[2] = "2"  # 费雷尔 / 极地环流的经向分量；wind_profile / g_vortex 拆成函数供 ④ 复用（第三批 3）
+STAGE_VERSIONS[4] = "6"  # ②b 岛对风的扰动与局部带界（第三批 3）；上风水汽追踪降水（第三批 4）；河流（第三批 1）
+STAGE_VERSIONS[5] = "4"  # perm_no_g；D 的 Φ 域与 s03 对齐；Φ 改读局部带界（第三批 3）
+STAGE_VERSIONS[6] = "5"  # betweenness_sources；cost_no_g；源权重改用集雨容量；读 ④ 扰动风 + 可靠局地风（第三批 3）
+STAGE_VERSIONS[7] = "4"  # 适宜度含岛群陆地规模项；中心窗读局部带界（第三批 3）；次级极大每圈保底 secondary_per_circle
 STAGE_VERSIONS[9] = "3"  # 九格表 ① 按「节点 = 岛群」重写（R10），含陆地/可耕/口径人口
 
 

@@ -40,31 +40,57 @@ def _qmm(a: np.ndarray, bits: int = 8) -> dict:
 # 传给操作台的 1° 网格场（R2）。8 位场 64,800 点 → base64 ≈ 86 KB，u/v 16 位各 ≈ 173 KB；
 # 六场合计 ≈ 690 KB，相对单文件导出的 12 MB（globe.gl 1.9 MB + 特征场）可接受。
 # 体积紧张时在 [web].grid_fields 只留 u/v/temp。
-GRID_FIELDS_DEFAULT = ["u", "v", "temp", "precip", "storm", "band"]
+GRID_FIELDS_DEFAULT = ["u", "v", "temp", "precip", "storm", "band",
+                       "q", "uplift", "obstacle", "wake", "plate", "age"]   # 第三批：水汽 / 抬升 / 障碍 / 尾流 / 板块 / 岛龄
 GRID_BITS = {"u": 16, "v": 16}
 
 
 def build_grid(ctx) -> dict:
     """② wind.npz 与 ④ climate_grid.npz 的网格场（量化 + base64），供流线积分、标量填色与悬停读数。
     不重算任何东西；只读现有产物。风速在前端由 u/v 算出（不单独传）。"""
-    wind = ctx.load_npz(2, "wind")
+    try:
+        wind = ctx.load_npz(4, "wind_local")   # ②b 扰动后的风与局部带号（第三批 3）
+    except FileNotFoundError:
+        wind = ctx.load_npz(2, "wind")
     clim = ctx.load_npz(4, "climate_grid")
     bands = ctx.load_json(2, "bands")
     lats, lons = wind["lats"], wind["lons"]
     src = {"u": wind["u"], "v": wind["v"], "band": wind["band"],
            "temp": clim["temp"], "precip": clim["precip"], "storm": clim["storm"],
            "storm_no_g": clim["storm_no_g"], "stability": clim["stability"], "window": clim["window"]}
+    for k in ("q", "uplift", "conv", "eps"):
+        if k in clim:
+            src[k] = clim[k]
+    for k in ("obstacle", "wake", "v_local", "u_bg", "v_bg", "land"):
+        if k in wind:
+            src[k] = wind[k]
+    try:
+        pl = ctx.load_npz(3, "plates")
+        src["plate"] = pl["plate_id"]
+        src["age"] = pl["age"]
+        src["btype"] = pl["btype"]
+        src["boundary_kernel"] = pl["boundary_kernel"]
+    except FileNotFoundError:
+        pass
     want = list(ctx.cfg.get("web", {}).get("grid_fields", GRID_FIELDS_DEFAULT))
     fields = {}
     for k in want:
         if k not in src:
             continue
-        fields[k] = _arr(src[k], "uint8") if k == "band" else _qmm(src[k], GRID_BITS.get(k, 8))
+        fields[k] = _arr(src[k], "uint8") if k in ("band", "plate", "btype") else _qmm(src[k], GRID_BITS.get(k, 8))
+    band_local = None
+    try:
+        bl = ctx.load_npz(4, "band_local")
+        band_local = {"keys": [str(x) for x in bl["keys"]], "lons": [round(float(x), 2) for x in bl["lons"]],
+                      "edges": [[round(float(x), 2) for x in row] for row in bl["edges"]]}
+    except FileNotFoundError:
+        pass
     return {
         "nlat": int(lats.size), "nlon": int(lons.size),
         "lat0": float(lats[0]), "lon0": float(lons[0]),
         "res": float(lats[1] - lats[0]) if lats.size > 1 else 1.0,
         "band_names": bands["band_names"],
+        "band_local": band_local,
         "fields": fields,
     }
 
@@ -113,6 +139,8 @@ def build_world(ctx) -> dict:
             "land_frac": _arr(isl["land_frac"], "float32"),
             "arable_frac": _arr(isl["arable_frac"], "float32"),
             "main_area": _arr(isl["main_area_km2"], "float32"),
+            "age": _arr(isl["age"], "float32") if "age" in isl else _arr(np.zeros(isl["lat"].size), "float32"),
+            "plate": _arr(isl["plate"], "int16") if "plate" in isl else _arr(np.zeros(isl["lat"].size), "int16"),
             "wall_m": _arr(isl["wall_m"], "float32"),
             "catch": _arr(clim["catch"], "float32"),
             "has_river": _arr(clim["has_river"], "uint8"),
@@ -153,7 +181,10 @@ def build_texture(ctx, width: int = 2048) -> bytes:
     """行星表面贴图（等距圆柱 PNG）：木星式条带 + 风暴暗纹 + G 漩涡 + 密度微纹。"""
     import matplotlib
     matplotlib.use("Agg")
-    wind = ctx.load_npz(2, "wind")
+    try:
+        wind = ctx.load_npz(4, "wind_local")   # 扰动后的风与局部带号（第三批 3）
+    except FileNotFoundError:
+        wind = ctx.load_npz(2, "wind")
     clim = ctx.load_npz(4, "climate_grid")
     dens = ctx.load_npz(3, "density_grid")["density"].astype(np.float64)
     from ..sphere import grid_axes

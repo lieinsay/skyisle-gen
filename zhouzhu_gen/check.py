@@ -268,7 +268,7 @@ def check_p5(w: World, cfg, rep: Report):
     c = cfg["check"]
     isl = w.islands
     lat, lon = isl["lat"], isl["lon"]
-    wind = w.ctx.load_npz(2, "wind")
+    wind = w.ctx.load_npz(4, "wind_local")     # 扰动后的风（第三批 3）
     from .sphere import grid_interp
     reach = w.fields["reach"].astype(np.float64)
     good = 0
@@ -467,6 +467,56 @@ def check_p7(w: World, cfg, rep: Report):
             ok, worst=examples[:5], viz="zhouzhu probe trait <trait_id> --node <节点>")
 
 
+# ---------------------------------------------------------------- C 二维气候（第三批，PLAN-BATCH3 六）
+def check_climate(w: World, cfg, rep: Report):
+    """C1 雨影存在；C2 带界起伏在带结构仍可辨的范围内；C3 干旱岛比例；C4 有河的群比例（只报告）。"""
+    from .sphere import grid_interp
+    c = cfg["check"]
+    ctx = w.ctx
+    isl = w.islands
+    clim_i = ctx.load_npz(4, "climate_islands")
+    grid = ctx.load_npz(4, "climate_grid")
+    wind = ctx.load_npz(4, "wind_local")
+    bl = ctx.load_npz(4, "band_local")
+    lat, lon = isl["lat"].astype(np.float64), isl["lon"].astype(np.float64)
+    # C1：高墙岛群，沿本地风向上游 / 下游各 offset 度取降水，迎风侧应更湿
+    big = isl["wall_m"].astype(np.float64) >= float(c["c_shadow_wall_m"])
+    u = grid_interp(wind["u"].astype(np.float64), wind["lats"], wind["lons"], lat[big], lon[big])
+    v = grid_interp(wind["v"].astype(np.float64), wind["lats"], wind["lons"], lat[big], lon[big])
+    spd = np.hypot(u, v)
+    ok_w = spd > 2.0
+    ratio, frac = float("nan"), float("nan")
+    if ok_w.sum() >= 10:
+        uh, vh = u[ok_w] / spd[ok_w], v[ok_w] / spd[ok_w]
+        la, lo = lat[big][ok_w], lon[big][ok_w]
+        d = float(c["c_shadow_offset_deg"])
+        cosl = np.maximum(np.cos(np.radians(la)), 0.1)
+        pr = grid["precip"].astype(np.float64)
+        p_up = grid_interp(pr, grid["lats"], grid["lons"], la - d * vh, lo - d * uh / cosl)
+        p_dn = grid_interp(pr, grid["lats"], grid["lons"], la + d * vh, lo + d * uh / cosl)
+        ratio = float(np.median(p_up / np.maximum(p_dn, 0.02)))
+        frac = float((p_up > p_dn).mean())
+    ok1 = (not np.isnan(ratio)) and ratio >= float(c["c_shadow_ratio_min"]) and frac >= float(c["c_shadow_frac_min"])
+    rep.add("C1", "雨影：高墙岛群的迎风侧比背风侧湿（上风水汽追踪）",
+            {"n_groups": int(ok_w.sum()), "updown_precip_ratio_median": round(ratio, 3), "windward_wetter_frac": round(frac, 3)},
+            {"ratio>=": c["c_shadow_ratio_min"], "frac>=": c["c_shadow_frac_min"]}, ok1, viz="zhouzhu viz climate")
+    # C2：带界起伏幅度
+    amp = float(np.max(np.abs(bl["dphi"])))
+    ok2 = float(c["c_band_amp_min"]) <= amp <= float(c["c_band_amp_max"])
+    rep.add("C2", "带界是波状线：位移幅度在「有变化但仍是条带」的范围内（R11）",
+            {"max_shift_deg": round(amp, 2)}, {"in": [c["c_band_amp_min"], c["c_band_amp_max"]]}, ok2, viz="zhouzhu viz wind")
+    # C3：干旱岛比例（九格表 arid 口径：降水 < 0.3）
+    arid = float((clim_i["precip"] < 0.3).mean())
+    ok3 = float(c["c_arid_min"]) <= arid <= float(c["c_arid_max"])
+    rep.add("C3", "干旱岛比例在校准区间（副热带辐散 + 雨影，沙漠不需要大陆）",
+            {"arid_share": round(arid, 3)}, {"in": [c["c_arid_min"], c["c_arid_max"]]}, ok3, viz="zhouzhu viz climate")
+    # C4：有河的群比例（决定 1：地球常见程度；只报告）
+    rs = float(clim_i["has_river"].mean())
+    ok4 = float(c["c_river_min"]) <= rs <= float(c["c_river_max"])
+    rep.add("C4", "有常年河流的群比例（按地球常见程度；只报告）",
+            {"river_share": round(rs, 3)}, {"in": [c["c_river_min"], c["c_river_max"]]}, ok4, note="warn-only")
+
+
 # ---------------------------------------------------------------- 铁律
 def check_ironlaws(w: World, cfg, rep: Report):
     ctx = w.ctx
@@ -535,7 +585,7 @@ def check_skeleton(w: World, cfg, rep: Report):
     from .stages.s05_barriers import node_phi
     planet = ctx.load_json(1, "planet")["bands"]
     isl = w.islands
-    phis = node_phi(ctx.cfg, planet, isl["lat"], isl["lon"])
+    phis = node_phi(ctx.cfg, planet, isl["lat"], isl["lon"], ctx.load_npz(4, "band_local"))
     barriers_cfg = ctx.cfg["s05"]["barriers"]
     rows = {}
     all_ok = True
@@ -599,6 +649,7 @@ def run_check(ctx, calibrate=False) -> int:
     check_p5(w, ctx.cfg, rep)
     check_p6(w, ctx.cfg, rep)
     check_p7(w, ctx.cfg, rep)
+    check_climate(w, ctx.cfg, rep)
     check_skeleton(w, ctx.cfg, rep)
 
     warn_only = {i["id"] for i in rep.items if (i.get("note") or "").startswith("warn")}

@@ -103,7 +103,10 @@ def _save(fig, ctx, name, show=False):
 
 # ---------------------------------------------------------------- layers
 def viz_wind(ctx, show=False):
-    w = ctx.load_npz(2, "wind")
+    try:
+        w = ctx.load_npz(4, "wind_local")     # 扰动后的风（第三批 3）；旧产物退回 ②
+    except FileNotFoundError:
+        w = ctx.load_npz(2, "wind")
     center = _center_lon(ctx)
     fig, ax = plt.subplots(figsize=(14, 7))
     lats, lons = w["lats"], w["lons"]
@@ -117,7 +120,7 @@ def viz_wind(ctx, show=False):
               color="0.25", width=0.0012, zorder=2)
     _basemap(ax, ctx, center)
     fig.colorbar(im, ax=ax, label="风速 m/s", shrink=0.8)
-    _stamp(fig, ctx, "② 行星风系（木星式条带 + 定点永暴 G）")
+    _stamp(fig, ctx, "② 行星风系 + ②b 岛群扰动（波状带界、摩擦与尾流）+ 定点永暴 G")
     return _save(fig, ctx, "s02_wind", show)
 
 

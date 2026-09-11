@@ -28,12 +28,12 @@ d_lon_west = -30.0            # 中央宽空域 D 的经度范围（①② 之�
 d_lon_east = 10.0
 d_density_mult = 0.05
 eq_core_halfwidth_deg = 6.0   # 赤道永暴带无岛核心（障碍 A 的几何）
-g_delta_deg = 5.0             # G 纬度 = 信风/无风带剪切纬度 − δ（决策 3：由剪切边界派生）
+g_delta_deg = 6.0             # G 纬度 = 信风/无风带剪切纬度 − δ（决策 3：由剪切边界派生）。第三批改 5 → 6（G 22°N）：新降水模型下文明中心落在 14–18°N，δ=5 时主干线从 G 南侧直过、G 不挡路，seed 7 的 P6 挂；δ=6 三 seed 全过（δ=7 时 P4 的共享使节条件翻转，别用）
 g_radius_deg = 4.0            # G 绝对阻断半径
 detour_arc_gap_deg = 2.0      # 绕道岛弧半径 = R_G + gap；弧上两侧弦长必须 ≤ 大船航程，
                               # 「若无 G 本可直穿」才成立，G 的改道才是真实的（验收 6 的反事实）
 detour_arc_halfwidth_deg = 1.5
-detour_arc_boost = 4.0        # 弧上密度倍增（仍远低于带基线）
+detour_arc_boost = 4.0        # 弧上密度倍增（仍远低于带基线）。别调到 8：D 对日常往来也通了，P4 在 seed 42/7 上挂
 center_window_deg = 40.0      # 文明中心窗宽（缺省 = D 宽）
 
 # ---------------- ① 行星 ----------------
@@ -53,7 +53,9 @@ westerlies_top_deg = 62.0
 trade_speed = 8.0             # m/s
 westerly_speed = 11.0
 polar_speed = 4.0
-hadley_inflow_speed = 2.0     # 信风带的向赤道分量
+hadley_inflow_speed = 2.0     # 信风带的向赤道分量（哈德莱环流表层）
+ferrel_outflow_speed = 1.5    # 西风带的向极分量（费雷尔环流表层）→ 副热带辐散（干）、中纬辐合（湿）；④ 水汽模型的雨带来源
+polar_outflow_speed = 1.0     # 极地东风的向赤道分量（极地环流表层）→ 极区辐散（干）
 g_vortex_speed = 25.0         # G 气旋切向峰速
 
 # ---------------- ③ 岛屿分布 ----------------
@@ -64,7 +66,7 @@ n_far = 3                     # 每节点额外远程候选边（≤ big_days）
 noise_base_cells = 8
 noise_octaves = 5
 noise_persistence = 0.55
-noise_gamma = 3.0             # 密度 = 带基线 × exp(gamma × noise)：成簇程度
+noise_gamma = 1.5             # 残余纹理：密度 = 带基线 × 板块乘子 × exp(gamma × noise)（板块接管大格局后调小，原 3.0）
 # 陆地（R8/R10）：节点 = 岛群，area_km2 = 群的总陆地 = 集雨面 = 人口容量 = 政治体量
 # （docs/02 §六/§七），不是装饰字段。建模为「势力范围 × 陆地占比」而非绝对面积：
 #   势力范围 T = 0.866 × (群间平均间距)²（六边形填充；间距 = mean_nn，与分类共用）
@@ -83,7 +85,7 @@ arable_frac_range = [0.03, 0.30]  # 夹断：火山岩岛 ~0.03，冲积平坦�
 height_scale_m = 1500.0
 height_noise_cells = 5
 height_jitter_m = 150.0
-stack_zone_threshold = 0.55   # 叠层岛区：堆叠噪声超过此值的区域高度呈双层分布
+stack_zone_threshold = 0.9    # 叠层岛区：汇聚边界核（[s03.plates]）超过此值的碰撞带，高度呈双层分布（第三批 2 起不再用独立噪声）
 stack_range_m = 1200.0
 layered_height_std_m = 320.0  # 邻域高度标准差超过此值 → 叠层
 # 主岛与岛体（第三批第 1 步，docs/PLAN-BATCH3.md 5.1）。群内最大的一座岛 = 主岛；河与挡风都看它。
@@ -95,6 +97,28 @@ main_frac_range = [0.2, 0.9]  # 夹断：碎成几十座差不多的小岛 ~0.2�
 keel_clearance_m = 300.0
 expedition_pairs = 6          # 跨赤道远征边数
 expedition_min_lon_sep_deg = 30.0
+
+[s03.plates]                  # 浮石板块（第三批第 2 步，docs/PLAN-BATCH3.md 5.2；实现在 tectonics.py）
+# docs/02 §九：浮石骨架随洋流汇聚嵌合 → 汇聚边界堆出密度脊与叠层，离散边界拉出空域，走滑错断岛链；
+# 热点链是固定点拖出的线性岛链（年龄单调）。只产出静态格局，不违反原则甲。
+n_plates = 28
+plate_sigma = 0.35            # 各板块整体丰度的对数正态抖动（板块定大格局）
+boundary_width_deg = 3.0      # 边界核宽度（高斯 σ）
+p_convergent = 0.45           # 边界类型概率：汇聚 / 离散 / 其余走滑
+p_divergent = 0.30
+convergent_boost = 2.0        # 汇聚：密度 ×(1 + boost·核)
+divergent_cut = 0.85          # 离散：密度 ×(1 − cut·核)
+transform_boost = 0.8         # 走滑：密度 ×(1 + boost·核·错断调制)
+transform_segment_deg = 12.0  # 走滑错断的段长
+convergence_kappa = 0.3       # ② 风场辐合纹理：×exp(κ·标准化辐合)，0 = 关
+n_hotspots = 4
+hotspot_length_deg = 40.0
+hotspot_spacing_deg = 3.0
+hotspot_radius_deg = 1.5
+hotspot_boost = 3.0
+height_convergent_boost = 0.6 # 汇聚带抬升：高度 ×(1 + boost·核)
+height_age_decay = 0.35       # 老岛下沉：高度 ×(1 − decay·age)
+age_scale_deg = 30.0          # 离散边界起算的岛龄尺度（age = 距离/尺度，夹 [0,1]）
 
 [s03.islands.band_density]    # 相对密度基线（按纬度带）
 trades = 1.0
@@ -116,22 +140,43 @@ river_capacity_bonus = 0.0
 temp_eq_c = 28.0
 temp_pole_c = -18.0
 lapse_c_per_km = 6.0
-precip_base = 0.5
-precip_itcz_amp = 0.5
-precip_itcz_width_deg = 10.0
-precip_subtrop_dip = 0.38
-precip_subtrop_width_deg = 6.0
-precip_midlat_amp = 0.22
-precip_midlat_center_deg = 49.0
-precip_midlat_width_deg = 9.0
-precip_polar_dip = 0.3
-precip_noise_amp = 0.08
+# 降水 = 上风水汽追踪（第三批第 4 步，moisture.py；决定 2、4）：∂q/∂t + ∇·(q u) = E − P，P = q·ε/τ。
+# 雨影与赤道湿 / 副热带干 / 中纬湿 / 极地干都从扰动后的风场算出，原来手画的四个高斯项已退役。
+moisture_res_deg = 2.0        # 求解网格（须为 shared.grid_res_deg 的整数倍；2° 约 3 s，1° 约 8 倍）
+moisture_days = 40.0          # 推进天数（τ 的十倍即接近稳态）
+moisture_tau_days = 4.0       # 水汽停留时间 τ
+moisture_polar_filter_lat = 70.0  # 超过此纬度做纬向平均（CFL 极点问题）
+evap_temp_coeff = 0.03        # 蒸发源 E = exp(coeff × (T − T_ref))：Clausius–Clapeyron 是 6 %/°C，但相对降水按 3 % 才不把中纬雨带压没（扫描见 DESIGN-NOTES 四点八）
+evap_temp_ref_c = 15.0
+precip_conv_k = 0.6           # 降水效率 ε = exp(k × 标准化辐合)：辐合抬升多雨、辐散下沉压制
+precip_uplift_k = 3.0         # ε ×(1 + k × 撞墙抬升)：迎风坡多雨 → 背风雨影
+precip_storm_k = 0.5          # ε ×(1 + k × 风暴)：锋面 / 风暴带多雨
+precip_norm_pct = 98.0        # 归一：P 的此分位 = 1
+precip_noise_amp = 0.0        # 残余纹理（0 = 全部由模型算出）
 storm_eq_amp = 1.0
 storm_shear_amp = 0.35
 storm_shear_width_deg = 2.5
 storm_midlat_amp = 0.55
 storm_midlat_width_deg = 8.0
 storm_g_amp = 1.0
+
+[s04.localwind]               # ②b 岛对风的扰动（第三批第 3 步，localwind.py；决定 3：岛是从云带顶立到山顶的浮山）
+boundary_layer_m = 3000.0     # 障碍场 O = gain × 墙高/此厚度 × 陆地占比 × 势力范围覆盖，夹 [0,1]
+obstacle_gain = 4.0           # 增益：截面份额本身只有百分之几，乘 4 后密集群岛上空 O ≈ 0.5–0.9（一排悬空的山）
+smooth_deg = 1.5              # 障碍场与陆地覆盖场的高斯抹开 σ
+friction_k = 0.35             # 摩擦：风速 ×(1 − k·O)，密集群岛上空最多降三成
+deflect_k = 1.0               # 绕流：速度 −= k·|U|·∇O（每度梯度）
+wake_steps = 8                # 尾流：沿风向上游回溯的步数 / 步长 / 几何衰减 / 亏损系数
+wake_step_deg = 1.0
+wake_decay = 0.75
+wake_k = 0.3
+shift_window_deg = 6.0        # 带界位移 Δφ(lon)：带界 ±window 内障碍的纬向异常 → 低通到波数 ≤ kmax
+shift_wavenumber_max = 4
+shift_gain_deg = 2.5          # 按标准差定标到 gain 度（R11：起伏 ±2–5°，带结构仍可辨）
+shift_max_deg = 3.5           # 夹断；无风带只有 8° 宽，两侧反向各 3.5° 仍不交叉（校验限 < 4）
+storm_k = 0.15                # 风暴 ×(1 − k·O)：二阶小量，永暴带不能被岛打散
+local_wind_max = 4.0          # 可靠局地风 v_local = max × min(1, 陆地覆盖/ref)：密集群岛的热力日循环；⑥ 无风惩罚取 max(风速, v_local)
+local_land_ref = 0.3
 
 # ---------------- ⑤ 障碍（docs/11 第六节矩阵 + 边局部因子） ----------------
 [s05]
@@ -227,6 +272,8 @@ origin = "north_east"         # 人类起源地：中心 id 或 "auto"
 prehist_wind_exponent = 2.0   # 史前抱石而渡：风因子指数（强单向）
 yr_per_day = 50.0             # 史前扩散 1 天航程 ≈ 多少年（叙事换算）
 n_secondary = 12              # 无约束次级极大（供次级起源）
+secondary_per_circle = 3      # 每圈保底的次级极大数（第三批：NE 圈分不到峰值时 P7 拒绝点为 0；与 s08.k_sub 配套）
+secondary_per_circle_min_sep_days = 3.0  # 保底峰之间的最小间距（NE 圈按商旅成本只有 900 岛、经度 24–100°，6 天塞不下三个）
 secondary_min_sep_days = 6.0
 
 [s07.regions]
@@ -247,7 +294,7 @@ iso_d0 = 3.0                  # 隔离度尺度（权重单位）
 iso_thr = 0.8                 # 超过此隔离度的连通分量 → 反射型 + 本地起源特征
 iso_min_component = 3
 local_slots_per_component = 3 # 每个高隔离分量生成几条本地起源特征
-k_sub = 2                     # 中/高阻力槽位每文明圈的次级起源数
+k_sub = 3                     # 中/高阻力槽位每文明圈的次级起源数（第三批：板块世界里文明圈更大更散，2 时哨兵种子 2026 的 P7 拒绝点为 0，3 时 459）
 sub_origin_delay_days = 50.0  # 次级起源的 origin_time 延迟（仅可选先到层用）
 first_arrival_weight = false  # 可选「先到者优势」层，默认关（决策 2）
 
@@ -272,7 +319,7 @@ dpi = 130
 # 只影响 3D 操作台与单文件导出的显示；不在任何阶段的缓存 key 里，改了不会触发重算。
 # 下面的流线/填色参数是前端的初始值，面板里的滑块可以现场覆盖。
 [web]
-grid_fields = ["u", "v", "temp", "precip", "storm", "band"]   # 传给前端的 1° 网格场（u/v 16 位各 ≈ 173 KB，其余 8 位各 ≈ 86 KB，合计 ≈ 690 KB）；体积紧张时只留 u/v/temp
+grid_fields = ["u", "v", "temp", "precip", "storm", "band", "q", "uplift", "obstacle", "wake", "plate", "age"]   # 传给前端的 1° 网格场（u/v 16 位各 ≈ 173 KB，其余 8 位各 ≈ 86 KB，12 场合计 ≈ 1.2 MB）；体积紧张时只留 u/v/temp
 streamline_spacing_deg = 4.0  # 流线播种间距（°，视高 2.2 时）；拉近时按视高等比加密，拉远时稀疏
 streamline_steps = 40         # 每条流线的积分步数（顺风、逆风各半，中点法）
 streamline_step_deg = 0.5     # 每步弧长（°）；步数 × 步长 ≈ 流线总长
@@ -306,7 +353,7 @@ lambda_ratio_distinct = 1.5
 p4_envoy_ratio = 0.5
 p4_gap_min = 0.4
 p4_daily_min = 0.3
-p4_share_min = 0.15
+p4_share_min = 0.10              # 第三批：每圈 3 个次级起源后使节槽位有 12 个变体，单个变体份额 0.1–0.18，0.15 的「共享」门槛会整体翻转（D_envoy 0.17 ≪ D_daily 0.9 却判失败）
 p4_pass_frac = 0.8
 # 5 单向传播
 p5_centroid_frac = 0.75       # 部分次级起源的顺风向被障碍挡住（地理压过风向），0.9 过严
@@ -326,3 +373,14 @@ p7_adopt_max = 0.4
 p7_region_frac = 0.2          # 某地区 ≥ 此比例的岛是「拒绝点」→ 拒绝是地点性的
 # 骨架一致性（只报警）
 skeleton_tol = 0.15
+# C 二维气候（第三批）：雨影 / 带界起伏 / 干旱比例 / 河流比例
+c_shadow_wall_m = 1000.0      # C1 只看岛体墙高 ≥ 此值的群
+c_shadow_offset_deg = 2.5     # 沿本地风向上游、下游各取样的距离
+c_shadow_ratio_min = 1.15     # 迎风 / 背风降水比的中位数
+c_shadow_frac_min = 0.6       # 迎风侧更湿的群占比
+c_band_amp_min = 1.0          # C2 带界最大位移（°）区间
+c_band_amp_max = 6.0
+c_arid_min = 0.12             # C3 干旱岛（降水 < 0.3）比例区间（改前 19.3%）
+c_arid_max = 0.30
+c_river_min = 0.4             # C4 有河的群比例（只报告）
+c_river_max = 0.85

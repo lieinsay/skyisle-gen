@@ -86,6 +86,7 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
     <label class="chk"><input type="checkbox" id="lyHubs" checked> 枢纽与文明中心</label>
     <label class="chk"><input type="checkbox" id="lyTrunks" checked> 中心间干线</label>
     <label class="chk"><input type="checkbox" id="lyGeo" checked> 障碍几何（A / D / G）</label>
+    <label class="chk"><input type="checkbox" id="lyBands" checked> 局部带界（波状线）</label>
     <label class="chk"><input type="checkbox" id="lyIso"> 同言线（跨 θ 的边）</label>
   </div>
   <div class="sec"><h3>气象层（② 风场 · ④ 气候网格）</h3>
@@ -96,7 +97,13 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
         <option value="temp">海面温度 °C</option>
         <option value="precip">降水（相对）</option>
         <option value="storm">风暴强度</option>
-        <option value="band">风带</option>
+        <option value="q">水汽（相对）</option>
+        <option value="uplift">撞墙抬升（雨影的来源）</option>
+        <option value="obstacle">岛体障碍场</option>
+        <option value="wake">尾流亏损</option>
+        <option value="band">风带（局部带界）</option>
+        <option value="plate">浮石板块</option>
+        <option value="age">岛龄</option>
       </select></div>
     <div class="row" id="rowSurfAlpha"><label>不透明度</label><input type="range" id="surfAlpha" min="0.3" max="1" step="0.05" value="0.85"><span id="surfAlphav">0.85</span></div>
     <label class="chk" id="rowContour"><input type="checkbox" id="surfContour" checked> 等值线</label>
@@ -205,13 +212,22 @@ const CMAP_TEMP=mkCmap([[0,'#1d2b7a'],[0.2,'#2f6fd0'],[0.4,'#cfe3f5'],[0.6,'#f4d
 const CMAP_PRECIP=mkCmap([[0,'#f2ead2'],[0.3,'#9fd3c7'],[0.6,'#3f8fbf'],[0.85,'#1d3f8a'],[1,'#0d1d4a']]);
 const CMAP_STORM=mkCmap([[0,'#0b0b1e'],[0.3,'#5a1f6e'],[0.6,'#b8386a'],[0.85,'#f08a3c'],[1,'#f8e08a']]);
 const CMAP_WINDEDGE=mkCmap([[0,'#7f8899'],[0.5,'#f39c3c'],[1,'#e05a5a']]);
+const CMAP_OBST=mkCmap([[0,'#0f131a'],[0.5,'#7a5a3a'],[1,'#e2b264']]);
+const CMAP_WAKE=mkCmap([[0,'#0f131a'],[0.5,'#2e86c1'],[1,'#cfe3f5']]);
+const CMAP_AGE=mkCmap([[0,'#f8e08a'],[0.5,'#c0663a'],[1,'#4a2c6e']]);
 // 标量填色层：field = 网格场名；range 固定刻度（跨 run 可比）；contour = 等值线间隔
 const SURF={
   speed:{label:'风速',unit:'m/s',field:'speed',cmap:CMAP_WIND,contour:4,range:()=>[0,Math.ceil(GR.max.speed/4)*4]},
   temp:{label:'海面温度',unit:'°C',field:'temp',cmap:CMAP_TEMP,contour:5,range:()=>[-20,30]},
   precip:{label:'降水（相对）',unit:'',field:'precip',cmap:CMAP_PRECIP,contour:0.1,range:()=>[0,1]},
   storm:{label:'风暴强度',unit:'',field:'storm',cmap:CMAP_STORM,contour:0.1,range:()=>[0,1]},
+  q:{label:'水汽（相对）',unit:'',field:'q',cmap:CMAP_PRECIP,contour:0.1,range:()=>[0,1]},
+  uplift:{label:'撞墙抬升',unit:'',field:'uplift',cmap:CMAP_STORM,contour:0.2,range:()=>[0,1]},
+  obstacle:{label:'岛体障碍场',unit:'',field:'obstacle',cmap:CMAP_OBST,contour:0.2,range:()=>[0,1]},
+  wake:{label:'尾流亏损',unit:'',field:'wake',cmap:CMAP_WAKE,contour:0.2,range:()=>[0,1]},
   band:{label:'风带',unit:'',field:'band',categorical:true},
+  plate:{label:'浮石板块',unit:'',field:'plate',categorical:true,palette:TAB20,legend:'板块（颜色仅为区分；边界处压暗）'},
+  age:{label:'岛龄',unit:'',field:'age',cmap:CMAP_AGE,contour:0.2,range:()=>[0,1]},
 };
 let GR=null;                                   // {nlat,nlon,lat0,lon0,res,band_names,f:{u,v,temp,precip,storm,band,speed},max:{speed}}
 let WEB={...WEB_DEFAULT};                      // [web] 段的显示默认值（config.resolved.toml 没有该段时用内置值）
@@ -225,7 +241,7 @@ function decodeGrid(g){
     if(a.min===undefined){ f[k]=q; continue; }
     const qmax=a.dtype==='uint16'?65535:255; const out=new Float32Array(q.length); const sc=(a.max-a.min)/qmax; for(let i=0;i<q.length;i++) out[i]=a.min+q[i]*sc; f[k]=out; }
   if(f.u&&f.v){ const s=new Float32Array(f.u.length); let m=0; for(let i=0;i<s.length;i++){ s[i]=Math.hypot(f.u[i],f.v[i]); if(s[i]>m) m=s[i]; } f.speed=s; mx.speed=m; }
-  return {nlat:g.nlat,nlon:g.nlon,lat0:g.lat0,lon0:g.lon0,res:g.res,band_names:g.band_names,f,max:mx};
+  return {nlat:g.nlat,nlon:g.nlon,lat0:g.lat0,lon0:g.lon0,res:g.res,band_names:g.band_names,band_local:g.band_local||null,f,max:mx};
 }
 // 双线性采样（同 sphere.grid_interp：经度周期、纬度夹断）
 function gsample(arr,lat,lon){
@@ -236,7 +252,7 @@ function gsample(arr,lat,lon){
   return arr[i0*nlon+j0]*(1-ti)*(1-tj)+arr[i0*nlon+j1]*(1-ti)*tj+arr[i1*nlon+j0]*ti*(1-tj)+arr[i1*nlon+j1]*ti*tj;
 }
 function gread(lat,lon){ // 某点的全部气象读数
-  if(!GR) return null; const f=GR.f; const r={};
+  if(!GR) return null; const f=GR.f; const r={}; r.lat=lat; r.lon=lon;
   if(f.u&&f.v){ r.u=gsample(f.u,lat,lon); r.v=gsample(f.v,lat,lon); r.spd=Math.hypot(r.u,r.v); r.toward=(Math.atan2(r.u,r.v)*180/Math.PI+360)%360; r.from=(r.toward+180)%360; }
   if(f.temp) r.temp=gsample(f.temp,lat,lon);
   if(f.precip) r.precip=gsample(f.precip,lat,lon);
@@ -246,10 +262,13 @@ function gread(lat,lon){ // 某点的全部气象读数
 }
 function compass(deg){ return COMPASS8[Math.round(deg/45)%8]; }
 function windText(r){ return r.spd===undefined?'':`${compass(r.from)}风 ${fmt(r.spd,1)} m/s（吹向 ${compass(r.toward)} ${Math.round(r.toward)}°）`; }
-function metHtml(r){ if(!r) return ''; const parts=[];
+function metHtml(r){ if(!r) return ''; const parts=[]; const f=GR.f; const lat=r.lat, lon=r.lon;
   if(r.spd!==undefined) parts.push(`风 ${windText(r)} · u ${fmt(r.u,1)} v ${fmt(r.v,1)}`);
   const p2=[]; if(r.temp!==undefined) p2.push(`海面温度 ${fmt(r.temp,1)} °C`); if(r.precip!==undefined) p2.push(`降水 ${fmt(r.precip)}`); if(r.storm!==undefined) p2.push(`风暴 ${fmt(r.storm)}`); if(r.band!==undefined) p2.push(BAND_ZH[GR.band_names[r.band]]||('带 '+r.band));
-  if(p2.length) parts.push(p2.join(' · ')); return parts.join('<br>'); }
+  if(p2.length) parts.push(p2.join(' · '));
+  const p3=[]; if(f.q) p3.push(`水汽 ${fmt(gsample(f.q,lat,lon))}`); if(f.uplift) p3.push(`抬升 ${fmt(gsample(f.uplift,lat,lon))}`); if(f.obstacle) p3.push(`障碍 ${fmt(gsample(f.obstacle,lat,lon))}`); if(f.wake) p3.push(`尾流 ${fmt(gsample(f.wake,lat,lon))}`);
+  if(p3.length) parts.push(`<span class="small">${p3.join(' · ')}</span>`);
+  return parts.join('<br>'); }
 
 function decode(a){
   const bin = atob(a.b64); const buf = new ArrayBuffer(bin.length); const u8 = new Uint8Array(buf);
@@ -477,6 +496,12 @@ function repaintEdges(){
     const box=[[lo,sk.d_lon_west,0.006],[hi,sk.d_lon_west,0.006],[hi,sk.d_lon_east,0.006],[lo,sk.d_lon_east,0.006],[lo,sk.d_lon_west,0.006]];
     paths.push({pts:box,c:'rgba(210,140,230,.8)',w:1.5});
   }
+  // 局部带界（第三批 3：带界随经度起伏的波状线）
+  if ($('lyBands').checked && GR && GR.band_local){
+    const bl=GR.band_local; const n=bl.lons.length;
+    bl.edges.forEach((row,k)=>{ const pts=[]; for(let j=0;j<n;j+=2) pts.push([row[j],bl.lons[j],0.007]); pts.push([row[0],bl.lons[0]+360,0.007]);
+      const eqEdge=bl.keys[k].startsWith('eq'); paths.push({pts,c:eqEdge?'rgba(255,140,140,.75)':'rgba(255,255,255,.5)',w:1}); });
+  }
   // 中心间干线
   if ($('lyTrunks').checked){ for (const k in W.center_trunks){ const p=W.center_trunks[k]; if(p.length>1) paths.push({pts:p.map(i=>[A.lat[i],A.lon[i],0.012]),c:'#5aa9f0',w:2}); } }
   // 探针路径
@@ -577,7 +602,7 @@ function gradBar(cmap,range,unit,compact){
 function surfLegend(key){
   const box=$('surfLegend'); if(key==='base'||!GR||!SURF[key]){ box.innerHTML=''; return; }
   const S=SURF[key];
-  if(S.categorical){ box.innerHTML=GR.band_names.map((n,k)=>`<span class="pill" style="background:${BAND_COLOR[k]};color:#000">${BAND_ZH[n]||n}</span>`).join(''); return; }
+  if(S.categorical){ box.innerHTML = S.palette ? `<div>${S.legend||S.label}</div>` : GR.band_names.map((n,k)=>`<span class="pill" style="background:${BAND_COLOR[k]};color:#000">${BAND_ZH[n]||n}</span>`).join(''); return; }
   box.innerHTML=gradBar(S.cmap,S.range(),S.unit)+`<div>${S.label}${S.unit?' '+S.unit:''}${$('surfContour').checked?` · 等值线间隔 ${S.contour}`:''}</div>`;
 }
 function renderOverlay(key,alpha,contours){
@@ -590,12 +615,13 @@ function renderOverlay(key,alpha,contours){
   for(let y=0;y<H;y++){ const fi=((90-(y+0.5)*180/H)-lat0)/res; const i0=Math.max(0,Math.min(nlat-1,Math.floor(fi))); I0[y]=i0*nlon; I1[y]=Math.min(i0+1,nlat-1)*nlon; TI[y]=Math.max(0,Math.min(1,fi-i0)); }
   for(let x=0;x<W;x++){ const fj=((-180+(x+0.5)*360/W)-lon0)/res; const j0f=Math.floor(fj); J0[x]=((j0f%nlon)+nlon)%nlon; J1[x]=(J0[x]+1)%nlon; TJ[x]=fj-j0f; }
   const lut=new Uint8ClampedArray(256*3); let lo=0,hi=1;
-  if(S.categorical){ BAND_COLOR.forEach((h,k)=>{ lut[k*3]=parseInt(h.slice(1,3),16); lut[k*3+1]=parseInt(h.slice(3,5),16); lut[k*3+2]=parseInt(h.slice(5,7),16); }); }
+  const pal=S.palette||BAND_COLOR;
+  if(S.categorical){ pal.forEach((h,k)=>{ lut[k*3]=parseInt(h.slice(1,3),16); lut[k*3+1]=parseInt(h.slice(3,5),16); lut[k*3+2]=parseInt(h.slice(5,7),16); }); }
   else { [lo,hi]=S.range(); for(let k=0;k<256;k++){ const m=S.cmap(k/255).match(/\d+/g); lut[k*3]=+m[0]; lut[k*3+1]=+m[1]; lut[k*3+2]=+m[2]; } }
   const doLev=contours||S.categorical; const lev=doLev?new Int16Array(W*H):null; const cstep=S.contour||1; const sc=255/Math.max(1e-9,hi-lo);
   const CI=new Uint8ClampedArray(W*H);   // 量化索引：写入时自动四舍五入并夹到 [0,255]
   for(let y=0;y<H;y++){ const i0=I0[y],i1=I1[y],ti=TI[y],si=1-ti; const row=y*W;
-    if(S.categorical){ for(let x=0;x<W;x++){ const ci=arr[i0+J0[x]]; CI[row+x]=ci; lev[row+x]=ci; } continue; }
+    if(S.categorical){ const np_=pal.length; for(let x=0;x<W;x++){ const raw=arr[i0+J0[x]]; CI[row+x]=raw%np_; lev[row+x]=raw; } continue; }
     for(let x=0;x<W;x++){ const tj=TJ[x],sj=1-tj; const v=arr[i0+J0[x]]*si*sj+arr[i0+J1[x]]*si*tj+arr[i1+J0[x]]*ti*sj+arr[i1+J1[x]]*ti*tj;
       CI[row+x]=(v-lo)*sc; if(doLev) lev[row+x]=Math.floor(v/cstep); } }
   for(let k=0,o=0;k<W*H;k++,o+=4){ const c3=CI[k]*3; d[o]=lut[c3]; d[o+1]=lut[c3+1]; d[o+2]=lut[c3+2]; d[o+3]=255; }
@@ -695,6 +721,7 @@ function selectIsland(i){
   rows.push(['节点',`#${i}（${fmt(A.lat[i],2)}°, ${fmt(A.lon[i],2)}°）`]);
   const qOf=(arr,v)=>{ let c=0; for(let k=0;k<arr.length;k++) if(arr[k]<=v) c++; return c/arr.length; };
   rows.push(['地形',`${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'（叠层）':''}`]);
+  if (A.age) rows.push(['板块',`板块 #${A.plate?A.plate[i]:'-'} · 岛龄 ${fmt(A.age[i])}（0 新 1 老）`]);
   rows.push(['规模',`群陆地 ${fmt(A.area[i],0)} km²（分位 ${fmt(qOf(A.area,A.area[i]),2)}）· 陆地占比 ${A.land_frac?fmt(A.land_frac[i],3):'-'} · 可用地率 ${A.arable_frac?fmt(A.arable_frac[i],2):'-'} · 集雨容量 ${fmt(A.catch[i],1)}（分位 ${fmt(qOf(A.catch,A.catch[i]),2)}）`
     + `<div class="small">节点 = 岛群 = 一水共同体 = 一个基本政治单位（docs/02 §六；群内数十岛半小时可达，属第三层）</div>`]);
   if (A.main_area) rows.push(['主岛',`${fmt(A.main_area[i],0)} km²（占群 ${fmt(A.main_area[i]/Math.max(1e-9,A.area[i])*100,0)}%）· 岛体墙高 ${fmt(A.wall_m[i],0)} m · `
@@ -846,7 +873,7 @@ function showTab(t){ document.querySelectorAll('.tabs button').forEach(b=>b.clas
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 ['colorBy','slotSel','valueSel','traitSel','fieldSel','modeSel'].forEach(id=>$(id).addEventListener('change',()=>{ if(id==='slotSel') fillValueSel(); if(id==='modeSel') distCache=null; updateRowVisibility(); repaintIslands(); if($('lyIso').checked) repaintEdges(); }));
 ['lyIslands','lyScale'].forEach(id=>$(id).addEventListener('change',repaintIslands));
-['lyEdges','lyHubs','lyTrunks','lyGeo','lyIso','edgeColor','edgeMode','edgeFilter','theta'].forEach(id=>$(id).addEventListener('change',()=>{ updateRowVisibility(); repaintEdges(); }));
+['lyEdges','lyHubs','lyTrunks','lyGeo','lyBands','lyIso','edgeColor','edgeMode','edgeFilter','theta'].forEach(id=>$(id).addEventListener('change',()=>{ updateRowVisibility(); repaintEdges(); }));
 $('edgeN').addEventListener('input',()=>$('edgeNv').textContent=$('edgeN').value);
 $('edgeN').addEventListener('change',repaintEdges);
 $('theta').addEventListener('input',()=>$('thetav').textContent=$('theta').value);

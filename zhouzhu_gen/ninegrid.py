@@ -86,7 +86,10 @@ class RegionData:
         self.seeds = w.centers["region_seeds"]
         self.clim = ctx.load_npz(4, "climate_islands")
         self.pre = ctx.load_npz(7, "prehist")
-        self.wind = ctx.load_npz(2, "wind")
+        try:
+            self.wind = ctx.load_npz(4, "wind_local")   # 扰动后的风（第三批 3）
+        except FileNotFoundError:
+            self.wind = ctx.load_npz(2, "wind")
         self.prod = ctx.cfg.get("production_templates", {})
         ce = w.cand_edges
         self.src, self.dst = ce["src"], ce["dst"]
@@ -128,9 +131,13 @@ class RegionData:
         river_i = self.clim["has_river"] if "has_river" in self.clim else np.zeros(area_i.size, bool)
         self.main_med = np.array([float(np.median(main_i[m])) if m.size else 0.0 for m in self.members])
         self.river_share = np.array([float(river_i[m].mean()) if m.size else 0.0 for m in self.members])
-        from .stages.s02_wind import band_id_of_lat
+        from .stages.s02_wind import band_id_of
         planet = ctx.load_json(1, "planet")["bands"]
-        self.band_of = band_id_of_lat(self.isl["lat"], planet)
+        try:
+            band_local = ctx.load_npz(4, "band_local")
+        except FileNotFoundError:
+            band_local = None
+        self.band_of = band_id_of(self.isl["lat"], self.isl["lon"], planet, band_local)
         self.band_major = [int(np.bincount(self.band_of[m]).argmax()) if m.size else 0
                            for m in self.members]
         # 邻接与跨界边
