@@ -326,22 +326,23 @@ def test_slots_change_invalidates_diffusion_stage():
 
 # ---------------- 历法 ↔ 轨道（R1）----------------
 def test_calendar_orbit_roundtrip():
-    """calendar_to_orbit 推出的 (M★, a) 喂回 orbit_to_calendar 必须复现同一年长与日照；默认历法 = 4 × 28 太阳日。"""
+    """calendar_to_orbit 推出的 (M★, a) 喂回 orbit_to_calendar 必须复现同一年长与日照；默认历法 = 4 季 × 84 太阳日 = 336（骨架第二版）。"""
     import copy
     from zhouzhu_gen.almanac import derive
     cfg = load_config()
     fwd = derive(cfg)
-    assert abs(fwd["year_days_solar"] - 112.0) < 1e-9
+    assert abs(fwd["year_days_solar"] - 336.0) < 1e-9
     assert abs(fwd["insolation_derived"] - cfg["s01"]["planet"]["insolation_rel"]) < 1e-9
     c2 = copy.deepcopy(cfg)
     c2["s01"]["calendar"].update({"mode": "orbit_to_calendar", "stellar_mass_msun": fwd["star"]["mass_msun"],
                                   "semi_major_axis_au": fwd["semi_major_axis_au"]})
     back = derive(c2)
-    assert abs(back["year_days_solar"] - 112.0) < 1e-6
+    assert abs(back["year_days_solar"] - 336.0) < 1e-6
     assert abs(back["days_per_season_residual"]) < 1e-6
     assert abs(back["insolation_derived"] - fwd["insolation_derived"]) < 1e-9
-    # 卫星：朔望月 = 一季，一年恰 4 朔望月；恒星月 < 朔望月
-    assert abs(fwd["moon"]["months_per_year"] - 4.0) < 1e-9
+    # 卫星：朔望月 = 一月（28 日），一季 3 月，一年恰 12 朔望月；恒星月 < 朔望月
+    assert abs(fwd["moon"]["months_per_year"] - 12.0) < 1e-9
+    assert fwd["months_per_season"] * fwd["seasons"] == 12
     assert fwd["moon"]["sidereal_month_days"] < fwd["moon"]["synodic_month_days"]
 
 
@@ -355,3 +356,37 @@ def test_calendar_longer_year_relaxes_tidal_lock():
     c2["s01"]["calendar"]["seasons"] = 12
     t12 = derive(c2)["tidal_lock_gyr"]
     assert t12 > t4
+
+
+# ---------------- 骨架第二版：季节强度与纬度密度剖面 ----------------
+def test_season_range_earth_calibration():
+    """季节强度公式在地球参数下（倾角 23.44°、365 日）复现郑州 / 石家庄 / 香港的全年温差（±3 °C）。"""
+    from zhouzhu_gen.skeleton import season_range
+    c = load_config()["s04"]["climate"]
+    for lat, cont, observed in ((34.7, 0.6, 26.0), (38.0, 0.7, 29.0), (22.3, 0.4, 13.0)):
+        got = float(season_range(np.array([lat]), cont, 23.44, 365.0, c)[0])
+        assert abs(got - observed) <= 3.0, (lat, got, observed)
+
+
+def test_season_range_short_year_damps_ocean():
+    """一年越短，海洋性地区的季节被热惯性削得越多；陆地性地区几乎不受影响（PLAN-SKELETON2 §一）。"""
+    from zhouzhu_gen.skeleton import season_range
+    c = load_config()["s04"]["climate"]
+    lat = np.array([35.0])
+    ocean_short, ocean_long = (float(season_range(lat, 0.0, 30.0, d, c)[0]) for d in (112.0, 336.0))
+    land_short, land_long = (float(season_range(lat, 1.0, 30.0, d, c)[0]) for d in (112.0, 336.0))
+    assert ocean_short < 0.5 * ocean_long
+    assert land_short > 0.85 * land_long
+
+
+def test_lat_density_core_is_densest():
+    """③ 的纬度密度剖面：温带核心最密，信风带次之，45° 以北稀疏，南北对称。"""
+    from zhouzhu_gen.skeleton import lat_density
+    cfg = load_config()
+    s = cfg["s03"]["islands"]
+    planet = {"band_scale": 1.0}
+    d = lat_density(s, planet, np.array([36.0, 18.0, 55.0, -36.0]))
+    assert d[0] > d[1] > d[2]
+    assert d[0] == d[3]
+    lo, hi = cfg["skeleton"]["core_lat_range"]
+    assert float(lat_density(s, planet, np.array([0.5 * (lo + hi)]))[0]) == max(s["lat_density"]["density"])

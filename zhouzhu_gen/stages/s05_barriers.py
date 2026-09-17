@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from .. import MODES
+from ..skeleton import d_lat_range
 from ..sphere import latlon_to_xyz, angdist
 
 REGIONAL_ORDER = ["A", "B", "C", "D", "F_N", "F_S"]  # G 单独处理（删边）
@@ -34,8 +35,9 @@ def _band_range(band: str, bands: dict, band_local: dict | None = None, lon=None
 
 
 def node_phi(cfg: dict, planet_bands: dict, lat: np.ndarray, lon: np.ndarray,
-             band_local: dict | None = None) -> dict[str, np.ndarray]:
-    """每个区域障碍的穿越坐标 Φ_b（NaN = 该节点不在障碍定义域内，f 记 0）。band_local：局部带界（④）。"""
+             band_local: dict | None = None, band_scale: float = 1.0) -> dict[str, np.ndarray]:
+    """每个区域障碍的穿越坐标 Φ_b（NaN = 该节点不在障碍定义域内，f 记 0）。band_local：局部带界（④）。
+    kind：eq_core（赤道核心）/ band（整条风带，随局部带界起伏）/ lat_band（固定纬度区间，骨架第二版）/ void（D）。"""
     sk = cfg["skeleton"]
     phis: dict[str, np.ndarray] = {}
     barriers = cfg["s05"]["barriers"]
@@ -47,6 +49,9 @@ def node_phi(cfg: dict, planet_bands: dict, lat: np.ndarray, lon: np.ndarray,
         elif b["kind"] == "band":
             lo, hi = _band_range(b["band"], planet_bands, band_local, lon)
             phis[bid] = np.clip((lat - lo) / (hi - lo), 0.0, 1.0)
+        elif b["kind"] == "lat_band":
+            lo, hi = (float(x) * band_scale for x in b["lat_range"])
+            phis[bid] = np.clip((lat - lo) / (hi - lo), 0.0, 1.0)
         elif b["kind"] == "void":
             lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
             width = (lon_e - lon_w) % 360.0
@@ -55,13 +60,9 @@ def node_phi(cfg: dict, planet_bands: dict, lat: np.ndarray, lon: np.ndarray,
             # 空域外：两侧是 0/1 台地（按更近的一侧），保证进入空域的第一跳也计入份额
             east_side = (delta - width) <= (360.0 - delta)
             phi = np.where(inside, delta / width, np.where(east_side, 1.0, 0.0))
-            # 纬度域：从赤道无岛核心边缘到无风带顶（与 s03 的密度修饰一致，
-            # 否则赤道缘岛条带成为绕过 D 的走廊）
-            calm_hi = planet_bands["calm_top_deg"]
-            if band_local is not None:
-                from .s02_wind import local_edges
-                calm_hi = local_edges(band_local, lon)["calm_n"]
-            in_lat = (lat >= float(sk["eq_core_halfwidth_deg"])) & (lat <= calm_hi)
+            # 纬度域 = skeleton.d_lat_range（与 s03 的密度修饰同一份定义；骨架第二版随核心北移）
+            d_lo, d_hi = (float(x) * band_scale for x in sk["d_lat_range"])
+            in_lat = (lat >= d_lo) & (lat <= d_hi)
             phis[bid] = np.where(in_lat, phi, np.nan)
         else:
             raise ValueError(f"未知区域障碍 kind: {b['kind']}")
@@ -107,7 +108,7 @@ def run(ctx):
 
     # ---- 区域障碍 Φ 与边指数 f ----
     band_local = ctx.load_npz(4, "band_local")     # 局部带界（第三批 3）
-    phis = node_phi(cfg, bands, lat, lon, band_local)
+    phis = node_phi(cfg, bands, lat, lon, band_local, float(planet.get("band_scale", 1.0)))
     f = np.zeros((E, len(REGIONAL_ORDER)), dtype=np.float64)
     for bi, bid in enumerate(REGIONAL_ORDER):
         phi = phis[bid]
@@ -187,12 +188,14 @@ def run(ctx):
         if b["kind"] == "band":
             lo, hi = _band_range(b["band"], bands)
             geom = {"lat_range": [lo, hi]}
+        elif b["kind"] == "lat_band":
+            geom = {"lat_range": [float(x) * float(planet.get("band_scale", 1.0)) for x in b["lat_range"]]}
         elif b["kind"] == "eq_core":
             core = float(cfg["skeleton"]["eq_core_halfwidth_deg"])
             geom = {"lat_range": [-core, core], "wraps_globe": True}
         elif b["kind"] == "void":
             geom = {"lon_range": [cfg["skeleton"]["d_lon_west"], cfg["skeleton"]["d_lon_east"]],
-                    "lat_range": [bands["eq_storm_top_deg"], bands["calm_top_deg"]]}
+                    "lat_range": list(d_lat_range(cfg, planet))}
         barriers_out[bid] = {
             "kind": b["kind"], "type": b["type"], "geometry": geom,
             "seasonal": bool(b.get("seasonal", False)),

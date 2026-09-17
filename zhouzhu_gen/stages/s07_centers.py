@@ -1,6 +1,8 @@
 """⑦ 文明中心（骨架窗内涌现 + 固定 id）、史前扩散、⑦b 地区划分与中心间干线。
 
-适宜度 = 降水 × 稳定气候 × 岛密度 × 岛群陆地^γ（docs/12 §五 ⑦ + docs/02 §六 集雨面）。
+适宜度 = 降水 × 稳定气候 × 岛密度 × 岛群陆地^γ × 谷物门槛（docs/12 §五 ⑦ + docs/02 §六 集雨面）。
+谷物门槛（骨架第二版 §4.2）= f(海面冬温)：冬天够冷才选得出一年生耐储谷物，太冷则生长季不够；
+常夏之地与苦寒之地都起不了谷物农业。季节量取 ④ 的海面口径（区域陆地性，不含岛高，原则乙）。
 不含高度（原则乙）；陆地不是海拔，是集雨面与人口容量。节点 = 岛群（R10）。
 铁律自检：本阶段的社会推导不读 height_m。
 """
@@ -12,6 +14,7 @@ from .. import MODES
 from ..graph import CSR, dijkstra
 from ..sphere import angdist
 from ..weights import lambda_ref, load_directed, mode_weight
+from ..skeleton import in_core, smoothstep
 from .s02_wind import band_id_of
 
 CENTER_IDS = ["north_west", "north_east", "south"]
@@ -30,6 +33,13 @@ def _suitability(ctx, isl, clim, ce):
     an = np.log(np.maximum(isl["area_km2"].astype(np.float64), 1e-9))
     an = (an - an.min()) / max(1e-9, an.max() - an.min())
     suit = pn * clim["stability"].astype(np.float64) * dn * an ** gamma
+    c7 = ctx.section(7)["centers"]
+    if "season_range_sea" in clim and "season_winter_warm_c" in c7:
+        winter = clim["temp_sea"].astype(np.float64) - 0.5 * clim["season_range_sea"].astype(np.float64)
+        wlo, whi = (float(x) for x in c7["season_winter_warm_c"])
+        clo, chi = (float(x) for x in c7["season_winter_cold_c"])
+        grain = (1.0 - smoothstep(winter, wlo, whi)) * smoothstep(winter, clo, chi)
+        suit = suit * grain
     # 候选边上 2 跳邻域平滑
     src, dst = ce["src"], ce["dst"]
     n = dens.size
@@ -45,16 +55,18 @@ def _suitability(ctx, isl, clim, ce):
     return suit
 
 
-def _windows(cfg, bands, lat, lon, band_local=None):
+def _windows(cfg, planet, lat, lon):
+    """骨架第二版：中心窗 = 温带核心纬度区间（skeleton.core_lat_range，南北对称）× 经度窗。
+    旧版取南北信风带（带号 1 / 5）。"""
     sk = cfg["skeleton"]
     w = float(sk["center_window_deg"])
     lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
-    band = band_id_of(lat, lon, bands, band_local)     # 局部带界（第三批 3）
+    core = in_core(cfg, planet, lat)
     in_lon = lambda lo, hi: ((lon - lo) % 360.0) <= ((hi - lo) % 360.0)  # noqa: E731
     return {
-        "north_west": (band == 1) & in_lon(lon_w - w, lon_w),
-        "north_east": (band == 1) & in_lon(lon_e, lon_e + w),
-        "south": band == 5,
+        "north_west": core & (lat > 0) & in_lon(lon_w - w, lon_w),
+        "north_east": core & (lat > 0) & in_lon(lon_e, lon_e + w),
+        "south": core & (lat < 0),
     }
 
 
@@ -73,7 +85,7 @@ def run(ctx):
 
     # ---- 三个骨架窗内的涌现（docs/11 §五 定稿；窗内取 argmax）----
     band_local = ctx.load_npz(4, "band_local")
-    wins = _windows(ctx.cfg, bands, lat, lon, band_local)
+    wins = _windows(ctx.cfg, planet, lat, lon)
     global_max = float(suit.max())
     centers = {}
     for cid in CENTER_IDS:
@@ -85,7 +97,7 @@ def run(ctx):
             while not m.any() and mult <= 4.0:
                 sk_w["center_window_deg"] = base_w * mult
                 cfg_w["skeleton"] = sk_w
-                m = _windows(cfg_w, bands, lat, lon, band_local)[cid]
+                m = _windows(cfg_w, planet, lat, lon)[cid]
                 mult *= 1.5
         if not m.any():
             raise ValueError(f"文明中心窗 {cid} 内没有岛：请检查 skeleton 与密度配置")

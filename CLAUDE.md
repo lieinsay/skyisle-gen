@@ -11,14 +11,14 @@
   ```
   $py -m zhouzhu_gen.cli run --seed 42            # 十步全跑（约 2 分钟；只改 [s08] 约 15 s；只改 [s09.polity] 约 1 分钟，大头是 ⑩ 的图）
   $py -m zhouzhu_gen.cli stage 6 --seed 42        # 从第 6 步强制重算
-  $py -m zhouzhu_gen.cli check --run out/seed42   # 八条验收（P1–P8）+ 气候 C1–C4 + 铁律自检 + 骨架/历法校准（exit 0/1/2）
+  $py -m zhouzhu_gen.cli check --run out/seed42   # 八条验收（P1–P8）+ 气候 C1–C5（C5 四季分明）+ 铁律自检 + 骨架/历法校准（exit 0/1/2）
   $py -m zhouzhu_gen.cli viz all|wind|islands|scale|routes|polity|isogloss|slot <id>|trait <id>|distance <node> --run out/seed42
   $py -m zhouzhu_gen.cli polity --run out/seed42  # ⑨ 政治层摘要：宗主 / 变法之国 / 兼并纪年 / 最大诸邦 / 开局候选
   $py -m zhouzhu_gen.cli probe node <id> | edge a b | path a b --mode m | trait <id> --node j
   $py -m zhouzhu_gen.cli ninegrid --run out/seed42 [--region K]
   $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）
   $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 35 个测试，约 10 s
+  $py -m pytest tests -q                          # 38 个测试，约 10 s
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
@@ -40,9 +40,10 @@ zhouzhu_gen/
   weights.py     w_m = λ_ref·cost_m + L_m（L = −ln perm，perm=0 → inf）
   culture.py     World 惰性读取；槽位份额（含本地行）；TV 文化距离；同言线边集
   almanac.py     历法 ↔ 轨道自洽（R1）：纯换算，① 调用，写 planet.json.calendar；check 的 SK-cal 校它
+  skeleton.py    骨架第二版的共享定义：D 纬度域、文明核心窗、G 锚定、纬度密度剖面、季节强度公式（全部 |纬度|、随 band_scale 缩放）
   polity.py      政治层产物的只读封装（Polity：邦名/状态/探针行；print_summary），ninegrid/probe/web 共用
   geology.py     地质表现层（R4）：③ 板块网格按节点采样 → 九格表 ① / 探针 / 操作台的叙事文本，不进推导（原则甲）
-  check.py       P1–P8 + C1–C4 + IL-*（铁律）+ SK-*（骨架校准，warn-only）
+  check.py       P1–P8 + C1–C5 + IL-*（铁律）+ SK-*（骨架校准，warn-only）
   ninegrid.py    九格表草稿（RegionData 聚合 + build_region_md + lint）
   viz.py / probe.py / web/(server.py bundle.py static/index.html static/vendor/globe.gl.min.js)
                  操作台数据通道：/api/world、/api/fields、/api/grid（② 风 / ④ 气候的 1° 网格场，R2）、/api/texture；单文件版全部内嵌于 INLINE
@@ -68,13 +69,18 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 
 ## 当前默认值的由来（调参前先看）
 
-- 带界 8/28/36/62°；G = 剪切纬度(28) − 6 = 22°N（第三批由 δ=5 改为 6：新降水模型下中心落在 14–18°N，G 得再南一度才压在主干线上，否则 P6 挂），经度 = D 中央 (−10)；D = lon [−30, 10] × lat [6, 36]。
-- 分类阈值 = 船只参数：桥 0.15 天 / 小船 1 天 / 大船 3 天（1 天 = 500 km），量的是**群与群之间**的间距（群内永远密接）。西风带密度 0.05、极地 0.012 才出稀疏/孤悬。
+- **骨架第二版（2026-09-17，PLAN-SKELETON2，DESIGN-NOTES 四点十三）**：文明核心在温带。带界仍 8/28/36/62°；
+  文明中心窗 `core_lat_range` 30–42°（三 seed 中心落在 33.5–37°），经度窗 50°；G = 无风带顶 36 − δ(−1.5) = **37.5°N**，经度 = D 中央 (−10)；
+  D = lon [−30, 10] × lat **[6, 62]**（取窄了会有绕行走廊）；岛密度按 `lat_density` 剖面（核心 29–44° 平台 1.0、信风带 0.25、48° 以北 0.25 → 0.05）；
+  障碍 B/C = 22–30°（核心 ↔ 南方），F_N/F_S = 45–62°（`kind = "lat_band"`）；人类起源 `origin = "auto"`（北信风带）。
+  谷物门槛：适宜度 × f(海面冬温)，warm [6, 12] / cold [−2, 4]；季节强度 λ 10、τ 陆 8 / 海 110 日。
+  旧版：中心 14–18°N、G 22°N（δ=6 的校准史在 DESIGN-NOTES 四点八）、D lat [6, 36]、按风带给密度常数。
+- 分类阈值 = 船只参数：桥 0.15 天 / 小船 1 天 / 大船 3 天（1 天 = 500 km），量的是**群与群之间**的间距（群内永远密接）。48° 以北密度 0.05–0.04、极地 0.012 才出稀疏/孤悬。
 - 半衰日程：daily 5–10、trade 15–30、migrate 30–60、envoy 40–80 天。阻力：低 .05–.2 / 中 .3–.6 / 高 .7–.95。
 - ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 3（第三批由 2 改，见下）；每高隔离分量 3 条本地起源特征。
-- 行星：半径 6371 km（地球）、自转 24 h、倾角 20°、1 日航程 500 km → 绕行 80 日。半径只经 `days_per_rad` 影响所有边的天数。
-- 历法（R1，`[s01.calendar]`，almanac.py）：一年 4 季 × 28 太阳日 = 112 日（1 航行日 = 1 太阳日）→ 公转 113 日 → K 型星 0.58 M☉、0.38 AU；
-  卫星朔望月 = 一季。历法**不反推带界**。潮汐锁定时标 0.92 Gyr < 4.6 Gyr 已于 2026-09-11 拍板作为设定接受（`check.cal_accept_tidal_tension = true`，SK-cal 不再报警；改 6 季才物理上安全，但用户定了保留 4 季）。
+- 行星：半径 6371 km（地球）、自转 24 h、**倾角 34°**（骨架第二版，旧 20°）、1 日航程 500 km → 绕行 80 日。半径只经 `days_per_rad` 影响所有边的天数。
+- 历法（R1，`[s01.calendar]`，almanac.py）：**一年 4 季 × 3 月 × 28 太阳日 = 336 日**（骨架第二版，旧 4 × 28 = 112）→ G 型星 0.96 M☉、0.94 AU、潮汐锁定 73 Gyr；
+  卫星朔望月 = 一月（28 日）。历法**不反推带界**。旧版的潮汐锁定张力随之消失（`cal_accept_tidal_tension` 改回 false）。
   `mode = orbit_to_calendar` 反向：给恒星质量 + 轨道半径推每季天数。只写 planet.json，不改任何场。
 - 尺度口径 `[shared.scale]`（BACKLOG 第一批拍板）：全世界陆地 25,000,000 km² / 可用地率 0.10 / 100 人/km² 可耕地 → 2.5 亿人。
 - 陆地（R8）：`area = 势力范围 × f`，势力范围 = 0.866 × (mean_nn × 500 km)²（与分类共用间距），
@@ -85,16 +91,17 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 - 可用地率（R9）：`arable_frac` 均值 0.10、对数正态 σ 0.35、夹 [0.03, 0.30]，纯标量、不生成岛内地形。
   集雨容量 `catch = 可用地率 × 陆地 × 降水`（s04）。用处：s06 介数源权重、s07 适宜度（× 陆地规模^γ，**γ=0.5**）、s10 九格表 ①⑤⑧。γ=0 即退回旧式。
   γ 不能取 1：归一化 log 陆地与 log 岛密度的 std ≈0.12–0.13 且相关 ≈ −0.3（旧模型 −0.21），等权会抹平适宜度的地理结构（seed 2026 的 P7 会挂）。R8 换模型后 γ=0.5 三 seed 直接通过，没有重校。
-- **政治层（第四批 R7，2026-09-11，`[s09.polity]`）**：人口 = P1 × 可耕地 × clip(降水/0.5, 0.25, 1)（≈2 亿）；控制权重 w = 商旅成本 × (索桥内 1 / 群间飞行 **3**) + R0·L_trade，
+- **政治层（第四批 R7，2026-09-11，`[s09.polity]`）**：人口 = P1 × 可耕地 × clip(降水/**0.25**, 0.25, 1)（≈2.3 亿；骨架第二版由 0.5 改，谷物口径）；控制权重 w = 商旅成本 × (索桥内 1 / 群间飞行 **3**) + R0·L_trade，
   控制力 exp(−w/R)，**R0 = 2.2 天**、θ = 0.2、R 随核心实力^0.25 放大（夹 0.5–2.5）；核心实力 S = 控制范围内 Σ 人口 × 控制力，**立都门槛 = S 中位（`capital_min_strength_frac=1.0`）**，
-  0.5 时邦数翻倍、中位只 5 邑。三 seed：319/426/370 邦，中位 11–14 邑，密接之都的邦是中疏之都的 2.5–3.6 倍（P8 阈 1.5）。
+  0.5 时邦数翻倍、中位只 5 邑。三 seed（骨架第二版）：591/590/607 邦，中位 9–10 邑，密接之都的邦是中疏之都的 3.5–4.8 倍（P8 阈 1.5）。
   宗主半径 = R0 × 0.5 且不随实力放大、王畿锁定（否则中心处人口最稠，宗主反成圈内最大邦）。变法 80 年前、用 20 年、动员 ×3、守方 ×2、宗主顾忌 ×3；
   兼并只由变法之国发动（docs/02 §八 ↔ 铁律三 的调和），先易后难，占领消化按 docs/04 §四 的 [3, 8, 15, 25, 60] 年。来由见 DESIGN-NOTES 四点九。
 - **seed 2026 是 P7 的哨兵种子**（拒绝点数只有 seed 42/7 的零头；`k_sub=3` 与 ⑦ 的 `secondary_per_circle=3` 都是为它定的：它的 NE 圈分不到全局峰值）。改 ⑦ 适宜度或次级起源相关的东西，先拿它试。
 - **seed 7 是 P6 的哨兵种子**：G 邻域只有 8–13 个岛，枢纽 3–4 个，其中两个是穿 D 干线的门户型（反事实里流量反而上升）。改骨架、板块、绕道弧的东西先拿它试。
 - 第三批（2026-09-10）的默认值：板块 `[s03.plates]`（汇聚 ×3、离散 ×0.15、叠层核阈 0.9、D/G 邻域不修饰、乘子归一）、
   障碍增益 `obstacle_gain=4`、带界位移夹 ±3.5°、水汽 `evap_temp_coeff=0.03`/`precip_conv_k=0.6`/τ 4 天、`k_sub=3`。来由见 DESIGN-NOTES 四点八。
-- 验收阈值中几个是按三 seed 校准过的：P5 强度比 2.0、重心顺风占比 0.75；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
+- 验收阈值中几个是按三 seed 校准过的：P5 强度比 2.0、重心顺风占比 0.75（起源风速门槛 2 m/s）；C5 中心周边岛上全年温差 ≥ 20 °C、冬温 ≤ 5、夏温 ≥ 20；
+  「干旱」口径 `arid_precip` 0.2（≈560 mm）；河流降水门槛 0.22；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
 
 ## 未做 / 可改进（按价值排序）
 

@@ -77,6 +77,7 @@ def derive(cfg: dict) -> dict:
     prograde_extra = 1.0          # 顺行自转：一年的太阳日数 = 恒星日数 − 1
 
     out = {"mode": mode, "seasons": seasons, "days_per_season_config": dps,
+           "months_per_season": int(c.get("months_per_season", 1)),
            "solar_day_hr": rot_hr, "sailing_day_is_solar_day": True,
            "gravity_rel": (r_km / 6371.0) * dens, "planet_mass_rel_earth": (r_km / 6371.0) ** 3 * dens}
 

@@ -209,11 +209,13 @@ def check_p4(w: World, cfg, rep: Report):
     sk = w.ctx.cfg["skeleton"]
     isl = w.islands
     lat, lon = isl["lat"], isl["lon"]
-    planet = w.ctx.load_json(1, "planet")["bands"]
+    planet_full = w.ctx.load_json(1, "planet")
     g_info = w.ctx.load_json(2, "bands")["G"]
     node_flow = w.routes["node_flow"]
     lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
-    in_band = (lat >= planet["eq_storm_top_deg"]) & (lat <= planet["trades_top_deg"])
+    from .skeleton import core_lat_range
+    c_lo, c_hi = core_lat_range(w.ctx.cfg, planet_full)      # 骨架第二版：取样纬度 = 文明核心区（北半球），旧版写死信风带 8–28°
+    in_band = (lat >= c_lo) & (lat <= c_hi)
     margin = 20.0
     west = in_band & (((lon_w - lon) % 360.0) <= margin)
     east = in_band & (((lon - lon_e) % 360.0) <= margin)
@@ -271,6 +273,7 @@ def check_p5(w: World, cfg, rep: Report):
     wind = w.ctx.load_npz(4, "wind_local")     # 扰动后的风（第三批 3）
     from .sphere import grid_interp
     reach = w.fields["reach"].astype(np.float64)
+    u_min = float(c.get("p5_min_wind_ms", 1.0))   # 只看风稳的起源：骨架第二版核心在无风带 / 西风带过渡处，1–2 m/s 的弱风里「顺风」无从谈起
     good = 0
     total = 0
     for t in w.traits:
@@ -279,7 +282,7 @@ def check_p5(w: World, cfg, rep: Report):
         o = t["origin_node"]
         u_o = float(grid_interp(wind["u"].astype(np.float64), wind["lats"], wind["lons"],
                                 lat[o], lon[o]))
-        if abs(u_o) < 1.0:
+        if abs(u_o) < u_min:
             continue
         r = reach[t["index"]]
         dlon = ((lon - lon[o] + 180.0) % 360.0) - 180.0
@@ -292,6 +295,9 @@ def check_p5(w: World, cfg, rep: Report):
     frac = good / total if total else float("nan")
 
     # (b) 同带内上下风特征对：上风的传得过去，下风的传不回来
+    u_grid = wind["u"].astype(np.float64)
+    origins = sorted({int(t["origin_node"]) for t in w.traits if t["kind"] in ("main", "sub")})
+    u_at = {o: float(grid_interp(u_grid, wind["lats"], wind["lons"], lat[o], lon[o])) for o in origins}
     ratios = []
     for m in ("daily", "trade"):
         ts = [t for t in w.traits if t["mode"] == m and t["kind"] in ("main", "sub")]
@@ -303,8 +309,12 @@ def check_p5(w: World, cfg, rep: Report):
                 if not (5.0 <= abs(((lon[oa] - lon[ob] + 180) % 360) - 180) <= 60.0):
                     continue
                 dlon_ab = ((lon[ob] - lon[oa] + 180) % 360) - 180
-                # 信风带（东风）：下风 = 西。up = 东侧者
-                up, dn = (ta, tb) if dlon_ab < 0 else (tb, ta)
+                # 上下风按两起源处本地纬向风的均值判（骨架第二版：核心在西风带，上风在西；旧版写死「东风带：上风 = 东侧」）
+                u_ab = 0.5 * (u_at[oa] + u_at[ob])
+                if abs(u_ab) < u_min:
+                    continue
+                a_is_west = dlon_ab > 0
+                up, dn = (ta, tb) if (a_is_west == (u_ab > 0)) else (tb, ta)
                 s_up_at_dn = w.fields["strength"][up["index"], dn["origin_node"]]
                 s_dn_at_up = w.fields["strength"][dn["index"], up["origin_node"]]
                 if s_dn_at_up > 1e-9:
@@ -505,8 +515,8 @@ def check_climate(w: World, cfg, rep: Report):
     ok2 = float(c["c_band_amp_min"]) <= amp <= float(c["c_band_amp_max"])
     rep.add("C2", "带界是波状线：位移幅度在「有变化但仍是条带」的范围内（R11）",
             {"max_shift_deg": round(amp, 2)}, {"in": [c["c_band_amp_min"], c["c_band_amp_max"]]}, ok2, viz="zhouzhu viz wind")
-    # C3：干旱岛比例（九格表 arid 口径：降水 < 0.3）
-    arid = float((clim_i["precip"] < 0.3).mean())
+    # C3：干旱岛比例（九格表 arid 口径：降水 < check.arid_precip）
+    arid = float((clim_i["precip"] < float(c.get("arid_precip", 0.3))).mean())
     ok3 = float(c["c_arid_min"]) <= arid <= float(c["c_arid_max"])
     rep.add("C3", "干旱岛比例在校准区间（副热带辐散 + 雨影，沙漠不需要大陆）",
             {"arid_share": round(arid, 3)}, {"in": [c["c_arid_min"], c["c_arid_max"]]}, ok3, viz="zhouzhu viz climate")
@@ -639,7 +649,8 @@ def check_skeleton(w: World, cfg, rep: Report):
     from .stages.s05_barriers import node_phi
     planet = ctx.load_json(1, "planet")["bands"]
     isl = w.islands
-    phis = node_phi(ctx.cfg, planet, isl["lat"], isl["lon"], ctx.load_npz(4, "band_local"))
+    phis = node_phi(ctx.cfg, planet, isl["lat"], isl["lon"], ctx.load_npz(4, "band_local"),
+                    float(ctx.load_json(1, "planet").get("band_scale", 1.0)))
     barriers_cfg = ctx.cfg["s05"]["barriers"]
     rows = {}
     all_ok = True
@@ -647,6 +658,17 @@ def check_skeleton(w: World, cfg, rep: Report):
         phi = phis[bid]
         side0 = np.where(np.nan_to_num(phi, nan=-1) == 0.0)[0]
         side1 = np.where(np.nan_to_num(phi, nan=-1) == 1.0)[0]
+        if barriers_cfg[bid]["kind"] == "void":
+            # 空域外的 0/1 台地在 D 的对跖经度处翻转（按「更近的一侧」），那里的相邻节点对不是真的两侧；
+            # 骨架第二版 D 伸到 62° 后，纬度域边缘（极区、赤道核心缘）的节点对会沿域外「绕过」D，那是别的障碍在起作用。
+            # D 要校的是它横在两个文明中心之间的那一段：只取紧贴 D 东西两缘 15° 内、且在文明核心纬度区间的节点
+            from .skeleton import in_core
+            sk_ = ctx.cfg["skeleton"]
+            lon_ = w.islands["lon"]
+            core_ = in_core(ctx.cfg, ctx.load_json(1, "planet"), w.islands["lat"]) & (w.islands["lat"] > 0)
+            lw_, le_ = float(sk_["d_lon_west"]), float(sk_["d_lon_east"])
+            side0 = side0[(((lw_ - lon_[side0]) % 360.0) <= 15.0) & core_[side0]]
+            side1 = side1[(((lon_[side1] - le_) % 360.0) <= 15.0) & core_[side1]]
         if side0.size == 0 or side1.size == 0:
             rows[bid] = "无两侧节点"
             continue
@@ -713,7 +735,7 @@ def check_skeleton(w: World, cfg, rep: Report):
             note += (f"；潮汐锁定时标 {cal['tidal_lock_gyr']:.2f} Gyr < 系统年龄 {age} Gyr：{cal['seasons']} 季 × {cal['days_per_season_config']:.0f} 日的年太短，"
                      f"行星被逼到 {cal['semi_major_axis_au']:.2f} AU 的 {cal['star']['spectral_class']} 型星旁；同季长至少 {cal.get('seasons_needed_for_no_lock', '?')} 季才安全，"
                      "或把它当作设定的已知张力（行星年轻 / 大卫星搅动）")
-        rep.add("SK-cal", "历法 ↔ 行星尺度自洽（docs/11 §十一；一季 28 太阳日 × 4 = 一年）",
+        rep.add("SK-cal", "历法 ↔ 行星尺度自洽（docs/11 §十一；季数 × 季长 = 一年，一月 = 一个朔望月）",
                 {"year_days_solar": round(cal["year_days_solar"], 2), "season_residual_days": round(resid, 3),
                  "star": f"{cal['star']['mass_msun']:.2f} M☉ {cal['star']['spectral_class']} {cal['star']['teff_k']:.0f} K",
                  "a_au": round(cal["semi_major_axis_au"], 3), "insolation_derived": round(cal["insolation_derived"], 3),
@@ -732,6 +754,41 @@ def check_skeleton(w: World, cfg, rep: Report):
             "south > north", div_ok, note="warn-only")
 
 
+# ---------------------------------------------------------------- C5 四季分明（骨架第二版）
+def check_season(w: World, cfg, rep: Report):
+    """三个文明中心岛上（含岛高的温度与陆地性）全年温差、冬夏均温达到北方式四季分明（PLAN-SKELETON2 决定 1）。
+    验收读岛上口径没有问题：⑦ 选中心只用海面口径（原则乙），这里只是检验结果。"""
+    c = cfg["check"]
+    ctx = w.ctx
+    clim = ctx.load_npz(4, "climate_islands")
+    if "season_range_sea" not in clim:
+        rep.add("C5", "文明中心四季分明", "该 run 没有季节强度场（旧版产物）", "-", False)
+        return
+    centers = ctx.load_json(7, "centers")["centers"]
+    xyz = w.islands["xyz"]
+    radius_km = float(ctx.load_json(1, "planet")["radius_km"])
+    rad_km = float(c.get("c5_radius_km", 400.0))
+    rows, ok = {}, True
+    for cid, cc in centers.items():
+        i = int(cc["node"])
+        near = np.where(np.arccos(np.clip(xyz @ xyz[i], -1.0, 1.0)) * radius_km <= rad_km)[0]
+        # 中心周边岛群的中位数（单个中心岛可能是高山，冬冷夏凉，不代表这片文明区的气候）
+        rng_c = float(np.median(clim["season_range"][near]))
+        t_mean = float(np.median(clim["temp"][near]))
+        winter, summer = t_mean - 0.5 * rng_c, t_mean + 0.5 * rng_c
+        good = (rng_c >= float(c["c5_range_min_c"]) and winter <= float(c["c5_winter_max_c"])
+                and summer >= float(c["c5_summer_min_c"]))
+        ok &= good
+        rows[cid] = {"lat": cc["lat"], "n_near": int(near.size), "range_c": round(rng_c, 1), "winter_c": round(winter, 1),
+                     "summer_c": round(summer, 1), "ok": good}
+    isl_rng = clim["season_range"]
+    rep.add("C5", "文明中心四季分明（北方式：全年温差、冬冷、夏热；岛上口径）",
+            {"centers": rows,
+             "island_range_share_ge_min": round(float((isl_rng >= float(c["c5_range_min_c"])).mean()), 3)},
+            {"range>=": c["c5_range_min_c"], "winter<=": c["c5_winter_max_c"], "summer>=": c["c5_summer_min_c"]},
+            ok)
+
+
 # ---------------------------------------------------------------- entry
 def run_check(ctx, calibrate=False) -> int:
     w = World(ctx)
@@ -745,6 +802,7 @@ def run_check(ctx, calibrate=False) -> int:
     check_p6(w, ctx.cfg, rep)
     check_p7(w, ctx.cfg, rep)
     check_climate(w, ctx.cfg, rep)
+    check_season(w, ctx.cfg, rep)
     check_polity(w, ctx.cfg, rep)
     check_skeleton(w, ctx.cfg, rep)
 

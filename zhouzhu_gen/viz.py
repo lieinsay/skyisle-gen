@@ -73,11 +73,12 @@ def _basemap(ax, ctx, center):
             g["lat"] + r * np.sin(th), color="#8e2d2d", lw=1.2, zorder=5)
     lon_w = _recenter(sk["d_lon_west"], center)
     lon_e = _recenter(sk["d_lon_east"], center)
-    d_lo = float(sk["eq_core_halfwidth_deg"])
-    for yy in (d_lo, planet["calm_top_deg"]):
+    from .skeleton import d_lat_range
+    d_lo, d_hi = d_lat_range(ctx.cfg, ctx.load_json(1, "planet"))
+    for yy in (d_lo, d_hi):
         ax.plot([lon_w, lon_e], [yy, yy], color="#c58bc5", lw=0.8, ls=":", zorder=1)
     for xx in (lon_w, lon_e):
-        ax.plot([xx, xx], [d_lo, planet["calm_top_deg"]],
+        ax.plot([xx, xx], [d_lo, d_hi],
                 color="#c58bc5", lw=0.8, ls=":", zorder=1)
     ax.set_xlim(-180, 180)
     ax.set_ylim(-90, 90)

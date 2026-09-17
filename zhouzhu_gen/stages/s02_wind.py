@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..skeleton import g_latitude
 from ..sphere import grid_axes, latlon_to_xyz, angdist
 
 BAND_NAMES = [
@@ -121,9 +122,9 @@ def run(ctx):
 
     u, v = wind_profile(LAT, w, bands)
 
-    # ---- 定点永暴 G：位置由剪切纬度派生（决策 3）----
+    # ---- 定点永暴 G：位置由剪切纬度派生（决策 3；骨架第二版锚定无风带 / 西风带交界）----
     tr_top = bands["trades_top_deg"]
-    g_lat = tr_top - float(sk["g_delta_deg"])
+    g_lat, g_edge = g_latitude(ctx.cfg, bands)
     g_lon = 0.5 * (float(sk["d_lon_west"]) + float(sk["d_lon_east"]))
     du, dv = g_vortex(LAT, LON, g_lat, g_lon, float(sk["g_radius_deg"]), float(w["g_vortex_speed"]))
     u = u + du
@@ -142,7 +143,7 @@ def run(ctx):
         "edges_deg": {k: bands[k] for k in bands},
         "shear_lats_deg": shear_lats,
         "G": {"lat": g_lat, "lon": g_lon, "radius_deg": float(sk["g_radius_deg"]),
-              "derived_from": f"trades_top({tr_top:.1f}) - delta({sk['g_delta_deg']})"},
+              "derived_from": f"{g_edge}({bands[g_edge]:.1f}) - delta({sk['g_delta_deg']})"},
     })
     return {"G_lat": round(g_lat, 1), "G_lon": round(g_lon, 1),
             "u_range": [round(float(u.min()), 1), round(float(u.max()), 1)]}

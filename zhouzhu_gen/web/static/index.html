@@ -597,7 +597,7 @@ function repaintEdges(){
     const circ=[]; for(let k=0;k<=64;k++){const t=k/64*2*Math.PI; circ.push([g.lat+g.radius_deg*Math.sin(t), g.lon+g.radius_deg*Math.cos(t)/Math.cos(g.lat*Math.PI/180),0.01]);}
     paths.push({pts:circ,c:'#ff3b3b',w:2});
     for (const s of [1,-1]){ const line=[]; for(let k=0;k<=72;k++) line.push([s*core,-180+k*5,0.006]); paths.push({pts:line,c:'rgba(255,120,120,.8)',w:1.5}); }
-    const sk=W.skeleton, pb=W.planet.bands; const lo=sk.eq_core_halfwidth_deg, hi=pb.calm_top_deg;
+    const sk=W.skeleton, bs=W.planet.band_scale||1; const dr=sk.d_lat_range||[sk.eq_core_halfwidth_deg, W.planet.bands.calm_top_deg/bs]; const lo=dr[0]*bs, hi=dr[1]*bs;   // D 的纬度域（骨架第二版：skeleton.d_lat_range）
     const box=[[lo,sk.d_lon_west,0.006],[hi,sk.d_lon_west,0.006],[hi,sk.d_lon_east,0.006],[lo,sk.d_lon_east,0.006],[lo,sk.d_lon_west,0.006]];
     paths.push({pts:box,c:'rgba(210,140,230,.8)',w:1.5});
   }
@@ -920,8 +920,8 @@ async function loadGrid(r){
 const PARAM_SPEC = [
   {sec:'行星 [s01.planet]', items:[['s01.planet.radius_km','半径 km（地球 6371）'],['s01.planet.rotation_period_hr','自转周期 hr'],['s01.planet.axial_tilt_deg','轴倾角 °'],['s01.planet.insolation_rel','日照相对值'],['shared.day_range_km','1 日航程 km']]},
   {sec:'历法 ↔ 轨道 [s01.calendar]', items:[['s01.calendar.mode','方向 calendar_to_orbit / orbit_to_calendar'],['s01.calendar.seasons','一年几季'],['s01.calendar.days_per_season','一季几个太阳日'],['s01.calendar.stellar_mass_msun','恒星质量 M☉（orbit 方向用）'],['s01.calendar.semi_major_axis_au','轨道半径 AU（orbit 方向用）'],['s01.calendar.synodic_month_days','朔望月天数'],['s01.calendar.tidal_q','潮汐 Q']]},
-  {sec:'骨架 [skeleton]', items:[['skeleton.d_lon_west','D 西缘 °'],['skeleton.d_lon_east','D 东缘 °'],['skeleton.d_density_mult','D 密度倍率'],['skeleton.g_radius_deg','G 半径 °'],['skeleton.g_delta_deg','G 纬度偏移 δ °'],['skeleton.detour_arc_gap_deg','绕道弧间隙 °'],['skeleton.detour_arc_boost','绕道弧密度倍增'],['skeleton.center_window_deg','中心窗宽 °'],['skeleton.eq_core_halfwidth_deg','赤道无岛核心半宽 °']]},
-  {sec:'岛屿 [s03]', items:[['s03.islands.n_islands','岛群数'],['s03.islands.noise_gamma','成簇程度 γ'],['s03.islands.band_density.trades','信风带密度'],['s03.islands.band_density.subtropical_calm','无风带密度'],['s03.islands.band_density.westerlies','西风带密度'],['s03.islands.band_density.polar','极地密度'],['s03.islands.land_frac_alpha','陆地占比~密度指数 α'],['s03.islands.land_frac_cap','陆地占比上限 f_cap'],['s03.islands.land_frac_sigma','陆地占比抖动 σ'],['s03.islands.arable_frac_sigma','可用地率抖动 σ']]},
+  {sec:'骨架 [skeleton]', items:[['skeleton.d_lon_west','D 西缘 °'],['skeleton.d_lon_east','D 东缘 °'],['skeleton.d_density_mult','D 密度倍率'],['skeleton.g_radius_deg','G 半径 °'],['skeleton.g_delta_deg','G 纬度偏移 δ °'],['skeleton.core_lat_range','文明核心纬度区间'],['skeleton.d_lat_range','D 纬度域'],['skeleton.detour_arc_gap_deg','绕道弧间隙 °'],['skeleton.detour_arc_boost','绕道弧密度倍增'],['skeleton.center_window_deg','中心窗宽 °'],['skeleton.eq_core_halfwidth_deg','赤道无岛核心半宽 °']]},
+  {sec:'岛屿 [s03]', items:[['s03.islands.n_islands','岛群数'],['s03.islands.noise_gamma','成簇程度 γ'],['s03.islands.lat_density.lat','密度剖面结点 |纬度|'],['s03.islands.lat_density.density','密度剖面值'],['s03.islands.land_frac_alpha','陆地占比~密度指数 α'],['s03.islands.land_frac_cap','陆地占比上限 f_cap'],['s03.islands.land_frac_sigma','陆地占比抖动 σ'],['s03.islands.arable_frac_sigma','可用地率抖动 σ']]},
   {sec:'尺度口径 [shared.scale]', items:[['shared.scale.total_land_km2','全世界陆地 km²'],['shared.scale.arable_frac_mean','可用地率均值'],['shared.scale.people_per_arable_km2','人口密度 人/km² 可耕地']]},
   {sec:'文明中心 [s07]', items:[['s07.centers.area_exponent','适宜度中岛群陆地权重 γ'],['s07.centers.tau_c','窗内适宜度门槛 τ_c'],['s07.regions.max_region_islands','地区最大岛数']]},
   {sec:'航线 [s06]', items:[['s06.routes.tailwind_factor','顺风成本系数'],['s06.routes.headwind_factor','逆风成本系数'],['s06.routes.storm_kappa','风暴成本 κ'],['s06.routes.calm_max','无风惩罚上限']]},
@@ -978,7 +978,7 @@ function buildParams(){
   html+=`<div class="sec"><h3>采纳阻力三档 [s08.resistance_range]</h3><div class="param-grid" style="grid-template-columns:auto 1fr 1fr"><div></div><div class="h">下限</div><div class="h">上限</div>`;
   for (const t of ['low','mid','high']){ const v=cfg.s08.resistance_range[t]; html+=`<div>${t}</div><div><input type="number" step="0.05" data-key="s08.resistance_range.${t}" data-idx="0" value="${v[0]}"></div><div><input type="number" step="0.05" data-key="s08.resistance_range.${t}" data-idx="1" value="${v[1]}"></div>`; }
   html+='</div></div>';
-  for (const sec of PARAM_SPEC){ html+=`<div class="sec"><h3>${sec.sec}</h3>`; for (const [k,label] of sec.items){ const v=getPath(cfg,k); html+=`<div class="row"><label style="min-width:120px">${label}</label><input type="text" data-key="${k}" value="${v}"></div>`; } html+='</div>'; }
+  for (const sec of PARAM_SPEC){ html+=`<div class="sec"><h3>${sec.sec}</h3>`; for (const [k,label] of sec.items){ const v0=getPath(cfg,k); const v=Array.isArray(v0)?JSON.stringify(v0):v0; html+=`<div class="row"><label style="min-width:120px">${label}</label><input type="text" data-key="${k}" value="${v}"></div>`; } html+='</div>'; }
   html+=`<div class="btnrow"><button class="primary" id="btnRun">重新生成（缓存只重算受影响阶段）</button><button id="btnResetParams">恢复当前值</button></div>
   <div class="small">耗时参考：只改 [s08] 约 15 s；改障碍/航线约 1 min；改岛数/骨架约 2 min（含全套图与九格表）。</div>
   <div id="log"></div>`;

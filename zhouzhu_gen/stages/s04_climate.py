@@ -14,6 +14,7 @@ from ..localwind import EDGE_KEYS, band_displacement, edge_lats, obstacle_fields
 from ..moisture import run_on_coarse
 from ..noise import fractal_noise
 from ..rng import stage_rng
+from ..skeleton import season_range, year_days
 from ..sphere import angdist, grid_axes, grid_interp, latlon_to_xyz
 from ..tectonics import _divergence
 from .s02_wind import band_id_of, g_vortex, wind_profile
@@ -65,10 +66,14 @@ def run(ctx):
     # ---------- 风暴强度 0..1：赤道带 + 带间剪切 + 中纬风暴带（都按局部带界）+ G；岛群略耗散 ----------
     ae = np.abs(lat_eff)
     storm = float(c["storm_eq_amp"]) * _gauss(ae, 0.0, 0.8 * bands["eq_storm_top_deg"])
-    for sl in (bands["eq_storm_top_deg"], bands["trades_top_deg"],
-               bands["calm_top_deg"], bands["westerlies_top_deg"]):
-        storm = storm + float(c["storm_shear_amp"]) * _gauss(ae, sl, float(c["storm_shear_width_deg"]))
-    mid_c = 0.5 * (bands["calm_top_deg"] + bands["westerlies_top_deg"])
+    shear_edges = (bands["eq_storm_top_deg"], bands["trades_top_deg"],
+                   bands["calm_top_deg"], bands["westerlies_top_deg"])
+    amps = c["storm_shear_amp"]
+    amps = [float(amps)] * 4 if not isinstance(amps, (list, tuple)) else [float(x) for x in amps]
+    for sl, amp in zip(shear_edges, amps):     # 骨架第二版：按带界分别给幅度（无风带顶的副热带急流穿过核心，压低）
+        storm = storm + amp * _gauss(ae, sl, float(c["storm_shear_width_deg"]))
+    mid_c = (float(c["storm_midlat_lat_deg"]) * float(planet.get("band_scale", 1.0))
+             if "storm_midlat_lat_deg" in c else 0.5 * (bands["calm_top_deg"] + bands["westerlies_top_deg"]))
     storm = storm + float(c["storm_midlat_amp"]) * _gauss(ae, mid_c, float(c["storm_midlat_width_deg"]))
     storm = storm * (1.0 - float(lw["storm_k"]) * O)         # 二阶小量：永暴带不能被岛打散
     storm_no_g = np.clip(storm, 0.0, 1.0)                    # 反事实：从未有过 G 的风暴场（P6 用）
@@ -106,7 +111,22 @@ def run(ctx):
     tilt = float(planet["axial_tilt_deg"])
     window = np.clip(1.0 - 0.85 * storm - 0.004 * tilt * _gauss(ae, mid_c, 12.0), 0.03, 1.0)
 
+    # ---------- 季节强度（骨架第二版 §4.2）：全年温差 = 日照年变化 / λ × 热惯性振幅保留 ----------
+    # 陆地性 = 区域陆地覆盖（L 去掉障碍增益，≈ 1° 格内陆地占比的抹开值）。⑦ 的谷物门槛只读这一份（不含岛高，原则乙）；
+    # 岛群产物另给含高度修正的「岛上」全年温差（岛在云带之上，越高越脱离洋面调节），只供九格表与岛群生成器
+    ydays = year_days(planet)
+    tilt_deg = float(planet["axial_tilt_deg"])
+    cont = np.clip(L / max(1e-9, float(lw.get("obstacle_gain", 1.0))), 0.0, 1.0)
+    season = season_range(lats[:, None], cont, tilt_deg, ydays, c, float(planet["insolation_rel"]))
+
     lat_i, lon_i = isl["lat"], isl["lon"]
+    cont_i = grid_interp(cont, lats, lons, lat_i, lon_i)
+    season_sea_i = season_range(lat_i, cont_i, tilt_deg, ydays, c, float(planet["insolation_rel"]))
+    keel = float(ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))
+    cont_alt_i = np.clip(cont_i + float(c.get("season_alt_continentality", 0.0))
+                         * np.clip((isl["height_m"].astype(np.float64) - keel) / 2000.0, 0.0, 1.0), 0.0, 1.0)
+    season_i = season_range(lat_i, cont_alt_i, tilt_deg, ydays, c, float(planet["insolation_rel"]))
+    temp_sea_i = grid_interp(t, lats, lons, lat_i, lon_i)
     precip_i = grid_interp(precip, lats, lons, lat_i, lon_i)
     storm_i = grid_interp(storm, lats, lons, lat_i, lon_i)
     stability_i = grid_interp(stability, lats, lons, lat_i, lon_i)
@@ -120,7 +140,8 @@ def run(ctx):
                  stability=stability.astype(np.float32),
                  window=window.astype(np.float32),
                  q=q_norm.astype(np.float32), uplift=uplift.astype(np.float32),
-                 conv=conv.astype(np.float32), eps=eps.astype(np.float32))
+                 conv=conv.astype(np.float32), eps=eps.astype(np.float32),
+                 season_range=season.astype(np.float32), continentality=cont.astype(np.float32))
     # ---- 集雨容量（docs/02 §六）：catch = 可用地率 × 群陆地 × 降水（只用陆地、可用地率与降水，不含高度）----
     catch = (isl["arable_frac"].astype(np.float64) * isl["area_km2"].astype(np.float64)
              * precip_i)
@@ -138,14 +159,20 @@ def run(ctx):
                  precip=precip_i.astype(np.float32), temp=temp_i.astype(np.float32),
                  storm=storm_i.astype(np.float32), stability=stability_i.astype(np.float32),
                  window=window_i.astype(np.float32), catch=catch.astype(np.float32),
-                 has_river=has_river, river_size=river_size.astype(np.float32))
+                 has_river=has_river, river_size=river_size.astype(np.float32),
+                 temp_sea=temp_sea_i.astype(np.float32), season_range_sea=season_sea_i.astype(np.float32),
+                 season_range=season_i.astype(np.float32),
+                 temp_winter=(temp_i - 0.5 * season_i).astype(np.float32),
+                 temp_summer=(temp_i + 0.5 * season_i).astype(np.float32))
     shift_amp = float(np.max(np.abs(edges - np.array([e0[k] for k in EDGE_KEYS])[:, None])))
     return {"precip_range": [round(float(precip.min()), 2), round(float(precip.max()), 2)],
-            "arid_island_share": round(float((precip_i < 0.3).mean()), 3),
+            "arid_island_share": round(float((precip_i < float(ctx.cfg.get("check", {}).get("arid_precip", 0.3))).mean()), 3),
             "storm_max": round(float(storm.max()), 2),
             "band_shift_max_deg": round(shift_amp, 2),
             "obstacle_max": round(float(O.max()), 2),
             "wind_speed_median": round(float(np.median(np.hypot(u, v))), 2),
             "moisture": info,
             "catch_median": round(float(np.median(catch)), 1),
-            "river_share": round(float(has_river.mean()), 3)}
+            "river_share": round(float(has_river.mean()), 3),
+            "year_days": ydays,
+            "season_range_island_median": round(float(np.median(season_i)), 1)}

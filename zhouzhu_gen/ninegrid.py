@@ -215,8 +215,8 @@ class RegionData:
         return f"{band}·{sect}段·{cshort}-{r:03d}"
 
 
-def _moisture(p: float) -> str:
-    return "humid" if p >= 0.55 else ("moderate" if p >= 0.3 else "arid")
+def _moisture(p: float, arid: float = 0.2, humid: float = 0.55) -> str:
+    return "humid" if p >= humid else ("moderate" if p >= arid else "arid")
 
 
 MOIST_ZH = {"humid": "湿润", "moderate": "适中", "arid": "干旱"}
@@ -324,7 +324,8 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
 
     # ---------- ④⑤⑥
     precip_med = float(np.median(rd.clim["precip"][members]))
-    moist = _moisture(precip_med)
+    ck = ctx.cfg.get("check", {})
+    moist = _moisture(precip_med, float(ck.get("arid_precip", 0.2)), float(ck.get("humid_precip", 0.55)))
     prod_t = rd.prod.get("production", {}).get(cls, {}).get(moist, {}).get("text", "【待填】")
     l4 = f"（{MOIST_ZH[moist]}）{prod_t}"
     if lay > 0.15:
@@ -389,9 +390,9 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
         elif any(f["polity"] == x["id"] for f in pol.meta.get("fronts", [])):
             l6 += f" 变法之国{pol.name(rf)}的兵锋已至。"
         elif cls == "medium" and nb_dense:
-            l6 += f" 若{rd.name(nb_dense[0])}方向的密接之国东出，此地挡不住。"
+            l6 += f" 若{rd.name(nb_dense[0])}方向的密接之国来攻，此地挡不住。"
     elif cls == "medium" and nb_dense:
-        l6 += f" 若{rd.name(nb_dense[0])}方向的密接之国东出，此地挡不住。"
+        l6 += f" 若{rd.name(nb_dense[0])}方向的密接之国来攻，此地挡不住。"
 
     # ---------- ⑧
     if neighbors:

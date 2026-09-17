@@ -13,9 +13,9 @@ import numpy as np
 
 from ..noise import fractal_noise
 from ..rng import stage_rng
+from ..skeleton import d_lat_range, lat_density
 from ..sphere import angdist, grid_axes, grid_interp, knn, latlon_to_xyz
 from ..tectonics import plate_fields
-from .s02_wind import band_id_of_lat
 
 CLASS_NAMES = ["dense", "medium", "sparse", "isolated"]
 CLASS_ZH = {"dense": "密接群岛", "medium": "中疏诸岛", "sparse": "稀疏岛链", "isolated": "孤悬散岛"}
@@ -33,18 +33,13 @@ def _density_grid(ctx, rng):
     lats, lons = grid_axes(res)
     LAT, LON = np.meshgrid(lats, lons, indexing="ij")
 
-    bd = s["band_density"]
-    band = band_id_of_lat(LAT, bands)
-    base = np.select(
-        [band == 0,
-         np.isin(band, [1, 5]), np.isin(band, [2, 6]),
-         np.isin(band, [3, 7]), np.isin(band, [4, 8])],
-        [float(bd["equatorial_margin"]), float(bd["trades"]), float(bd["subtropical_calm"]),
-         float(bd["westerlies"]), float(bd["polar"])])
+    # 骨架第二版：按 |纬度| 分段线性（温带核心最密、信风带次之、45° 以北稀疏）；旧版按整条风带给常数
+    base = lat_density(s, planet, LAT)
 
     # 骨架几何先算出来：D 空域与 G 邻域内不做板块修饰（骨架优先于板块，docs/11 定稿与 SK-* 校准不能被板块冲掉）
     lon_w, lon_e = float(sk["d_lon_west"]), float(sk["d_lon_east"])
-    d_lat_mask = (LAT >= float(sk["eq_core_halfwidth_deg"])) & (LAT <= bands["calm_top_deg"])
+    d_lo, d_hi = d_lat_range(ctx.cfg, planet)
+    d_lat_mask = (LAT >= d_lo) & (LAT <= d_hi)
     in_d_lon = ((LON - lon_w) % 360.0) <= ((lon_e - lon_w) % 360.0)
     d_mask = d_lat_mask & in_d_lon
     g_xyz = latlon_to_xyz(np.array(g_info["lat"]), np.array(g_info["lon"]))
@@ -70,8 +65,8 @@ def _density_grid(ctx, rng):
     core = float(sk["eq_core_halfwidth_deg"])
     dens[np.abs(LAT) < core] = 0.0
 
-    # 中央宽空域 D：从赤道无岛核心边缘到无风带顶，经度 [west, east]
-    # （下界必须是核心边缘而非风系带界，否则赤道缘岛条带成为绕过 D 的走廊）
+    # 中央宽空域 D：纬度域 skeleton.d_lat_range（骨架第二版随核心北移），经度 [west, east]
+    # （旧版下界取赤道无岛核心边缘，是为堵住绕过 D 的走廊；新版上下界都落在岛密度已低的带上，由 SK-perm 把关）
     dens[d_mask] *= float(sk["d_density_mult"])
 
     # 绕道岛弧：G 南北两段（仍远低于带基线）→ 中转岛的物理基础

@@ -28,18 +28,25 @@ d_lon_west = -30.0            # 中央宽空域 D 的经度范围（①② 之�
 d_lon_east = 10.0
 d_density_mult = 0.05
 eq_core_halfwidth_deg = 6.0   # 赤道永暴带无岛核心（障碍 A 的几何）
-g_delta_deg = 6.0             # G 纬度 = 信风/无风带剪切纬度 − δ（决策 3：由剪切边界派生）。第三批改 5 → 6（G 22°N）：新降水模型下文明中心落在 14–18°N，δ=5 时主干线从 G 南侧直过、G 不挡路，seed 7 的 P6 挂；δ=6 三 seed 全过（δ=7 时 P4 的共享使节条件翻转，别用）
+g_anchor_edge = "calm_top_deg"  # 骨架第二版（PLAN-SKELETON2）：G 坐在无风带 / 西风带的剪切边界上（旧版为 trades_top_deg，G 22°N）
+g_delta_deg = -1.5             # G 纬度 = 锚定带界 − δ。须压在 ①② 之间的主干线上（验收 6）；旧版 δ 的校准史见 DESIGN-NOTES 四点八
 g_radius_deg = 4.0            # G 绝对阻断半径
 detour_arc_gap_deg = 2.0      # 绕道岛弧半径 = R_G + gap；弧上两侧弦长必须 ≤ 大船航程，
                               # 「若无 G 本可直穿」才成立，G 的改道才是真实的（验收 6 的反事实）
 detour_arc_halfwidth_deg = 1.5
 detour_arc_boost = 4.0        # 弧上密度倍增（仍远低于带基线）。别调到 8：D 对日常往来也通了，P4 在 seed 42/7 上挂
-center_window_deg = 40.0      # 文明中心窗宽（缺省 = D 宽）
+center_window_deg = 50.0      # 文明中心窗宽（旧版 40 = D 宽；骨架第二版核心带只有 15° 宽，板块随机性更大，放宽到 50）
+# 骨架第二版（PLAN-SKELETON2，2026-09-17）：文明核心由低纬信风带移到温带，四季分明。
+# 以下纬度均为 |纬度|，南北对称，随 ① 的 band_scale（Held–Hou 开关）等比缩放。
+core_lat_range = [30.0, 42.0] # 文明中心窗的纬度区间（中原 / 河北：郑州 34.7°、石家庄 38°）
+d_lat_range = [6.0, 62.0]     # 中央宽空域 D 的纬度域（北半球；s03 密度修饰、s05 Φ 域、SK-perm、viz、操作台共用）。
+                              # 下界仍取赤道无岛核心边缘（否则信风带成为绕过 D 的走廊，SK-perm 实测 D 日常往来 1.0）；
+                              # 上界到西风带顶：取 50 时绕北边草原（只部分穿过 F_N）比穿 D 便宜，SK-perm 又报 1.0
 
 # ---------------- ① 行星 ----------------
 [s01.planet]
 rotation_period_hr = 24.0
-axial_tilt_deg = 20.0
+axial_tilt_deg = 34.0         # 骨架第二版：陆地少（核心区区域陆地性仅 ≈0.08）、海洋调节强，倾角要比地球大一截才有中原式四季（PLAN-SKELETON2 §一；30° 时核心岛上全年温差只有 ≈19 °C）
 insolation_rel = 1.0
 radius_km = 6371.0
 held_hou_scaling = false      # true：带界随自转率缩放（快转→窄哈德莱圈）
@@ -48,10 +55,11 @@ held_hou_scaling = false      # true：带界随自转率缩放（快转→窄�
 mode = "calendar_to_orbit"    # calendar_to_orbit：由 季数 × 季长 推公转周期 → 恒星质量 / 光度 / 轨道半径（日照取 insolation_rel）
                               # orbit_to_calendar：由 stellar_mass_msun + semi_major_axis_au 推一年的太阳日数与每季天数（报残差；④ 仍用 insolation_rel）
 seasons = 4                   # 一年四季
-days_per_season = 28.0        # 一季 28 个太阳日（= 1 航行日 = 24 h 自转）；一年 = 112 日
-stellar_mass_msun = 0.58      # 仅 orbit_to_calendar 用（默认值 = calendar_to_orbit 推出的值，两个方向互为逆运算）
-semi_major_axis_au = 0.381    # 同上
-moon = true                   # 卫星：朔望月 = 一季 → 一年 = 4 朔望月（历法的物理锚点）；由此推卫星轨道半径
+months_per_season = 3         # 骨架第二版：一季三个月（朔望月），一年 12 个月
+days_per_season = 84.0        # 一季 84 个太阳日 = 3 × 28（1 航行日 = 1 太阳日 = 24 h 自转）；一年 = 336 日
+stellar_mass_msun = 0.97      # 仅 orbit_to_calendar 用（约等于 calendar_to_orbit 推出的值，两个方向互为逆运算）
+semi_major_axis_au = 0.94     # 同上
+moon = true                   # 卫星：朔望月 = 一月（28 日）→ 一年 = 12 朔望月（历法的物理锚点）；由此推卫星轨道半径
 synodic_month_days = 28.0
 planet_density_rel = 1.0      # 行星平均密度（地球 = 1）：与半径一起给行星质量与重力（只报告）
 tidal_q = 100.0               # 潮汐耗散品质因子 Q（岩质行星常用 100；地球今值因海洋约 12）
@@ -134,12 +142,11 @@ height_convergent_boost = 0.6 # 汇聚带抬升：高度 ×(1 + boost·核)
 height_age_decay = 0.35       # 老岛下沉：高度 ×(1 − decay·age)
 age_scale_deg = 30.0          # 离散边界起算的岛龄尺度（age = 距离/尺度，夹 [0,1]）
 
-[s03.islands.band_density]    # 相对密度基线（按纬度带）
-trades = 1.0
-subtropical_calm = 0.35
-westerlies = 0.05             # 稀疏岛链：这个世界的草原（docs/11 §四）
-polar = 0.012                 # 孤悬散岛
-equatorial_margin = 0.3       # 永暴带核心之外、风系带之内的边缘
+[s03.islands.lat_density]     # 相对密度基线：按 |纬度| 分段线性（骨架第二版；旧版按整条风带给常数）。结点随 band_scale 缩放
+# 温带核心（30–44°）最密 → 中原；信风带次之 → 湿热的南方；45° 以北稀疏岛链 → 草原；极区孤悬散岛
+lat = [0.0, 8.0, 14.0, 24.0, 27.0, 29.0, 44.0, 48.0, 53.0, 62.0, 68.0, 90.0]
+density = [0.2, 0.2, 0.25, 0.25, 0.35, 1.0, 1.0, 0.25, 0.05, 0.04, 0.012, 0.012]
+# 信风带 0.4 时南方与核心岛群数相当（各 ≈3,000），密接群岛全球只剩 140–360 个（旧版 653），NE 圈找不出密接之都的变法之国（P8）
 
 # ---------------- ④ 气候 ----------------
 [s04.climate]
@@ -149,10 +156,10 @@ equatorial_margin = 0.3       # 永暴带核心之外、风系带之内的边缘
 # catch × (1 + river_capacity_bonus × river_size/中位河)，bonus = 0 即不影响任何推导
 river_main_area_km2 = 300.0
 river_height_m = 400.0
-river_precip_min = 0.35
+river_precip_min = 0.22       # 骨架第二版由 0.35 改：核心是谷物农业的半湿润带（相对降水 0.25–0.30 ≈ 700–900 mm），0.35 时核心区几乎无河（黄河流域年降水 400–800 mm）
 river_capacity_bonus = 0.0
 temp_eq_c = 28.0
-temp_pole_c = -18.0
+temp_pole_c = -10.0           # 骨架第二版：倾角 34° 下极地年均日照比 20° 时高约七成，极地年均温相应上调（33° 海面年均 ≈ 16.7 °C，地球纬向平均约 17）
 lapse_c_per_km = 6.0
 # 降水 = 上风水汽追踪（第三批第 4 步，moisture.py；决定 2、4）：∂q/∂t + ∇·(q u) = E − P，P = q·ε/τ。
 # 雨影与赤道湿 / 副热带干 / 中纬湿 / 极地干都从扰动后的风场算出，原来手画的四个高斯项已退役。
@@ -168,10 +175,18 @@ precip_storm_k = 0.5          # ε ×(1 + k × 风暴)：锋面 / 风暴带多�
 precip_norm_pct = 98.0        # 归一：P 的此分位 = 1
 precip_noise_amp = 0.0        # 残余纹理（0 = 全部由模型算出）
 storm_eq_amp = 1.0
-storm_shear_amp = 0.35
+storm_shear_amp = [0.35, 0.3, 0.12, 0.35]   # 带界剪切风暴，按带界 [赤道永暴顶, 信风顶, 无风带顶, 西风顶] 分别给幅度。
+                              # 骨架第二版：无风带顶（36°，副热带急流）穿过文明核心，地球上的风暴路径不在这里而在极锋 → 0.35 降到 0.12
 storm_shear_width_deg = 2.5
 storm_midlat_amp = 0.55
-storm_midlat_width_deg = 8.0
+storm_midlat_lat_deg = 52.0   # 中纬风暴带中心（旧版 = 无风带顶与西风顶的中点 49°）：西风急流 / 极锋所在，北移让出核心区
+storm_midlat_width_deg = 7.0
+# 季节强度（骨架第二版，PLAN-SKELETON2 §4.2 / PLAN-ISLAND 5.4）：日照年变化的一阶谐波 / λ × 热惯性振幅保留 A
+# A = 1/√(1+(ωτ)²)，ω = 2π/一年；τ = 陆地性 × τ_land + (1 − 陆地性) × τ_ocean；陆地性 = 陆地覆盖（L / obstacle_gain）
+season_lambda_w_m2_k = 10.0   # 有效反馈 + 输送（按地球中纬大陆与洋面定标：郑州、石家庄、香港误差 ≤ 2 °C）
+season_tau_land_days = 8.0
+season_tau_ocean_days = 110.0 # 海洋混合层
+season_alt_continentality = 0.5  # 岛在云带之上、隔着云海与洋面脱耦（类比高原）：陆地性 +k × (峰高 − 岛底间隙)/2000 m（只进岛群产物与 C5，不进 ⑦）
 storm_g_amp = 1.0
 
 [s04.localwind]               # ②b 岛对风的扰动（第三批第 3 步，localwind.py；决定 3：岛是从云带顶立到山顶的浮山）
@@ -202,15 +217,15 @@ type = "absorbing"
 seasonal = true
 permeability = { daily = 0.0, trade = 0.0, envoy = 0.03, migrate = 0.0 }
 
-[s05.barriers.B]              # 副热带无风带（北）：农耕带 ↔ 西风带的过渡
-kind = "band"
-band = "subtropical_calm_n"
+[s05.barriers.B]              # 副热带无风带（北）：骨架第二版改为「温带核心 ↔ 湿热南方」的过渡（无风、难行）
+kind = "lat_band"             # 固定纬度区间（|纬度|，随 band_scale 缩放）；旧版 kind = "band" 覆盖整条无风带 28–36°，会把核心内部往来计成跨障碍
+lat_range = [22.0, 30.0]
 type = "selective"
 permeability = { daily = 0.1, trade = 0.5, envoy = 0.8, migrate = 0.1 }
 
 [s05.barriers.C]              # 镜像（南）
-kind = "band"
-band = "subtropical_calm_s"
+kind = "lat_band"
+lat_range = [-30.0, -22.0]
 type = "selective"
 permeability = { daily = 0.1, trade = 0.5, envoy = 0.8, migrate = 0.1 }
 
@@ -219,16 +234,16 @@ kind = "void"
 type = "selective"
 permeability = { daily = 0.05, trade = 0.6, envoy = 0.95, migrate = 0.05 }
 
-[s05.barriers.F_N]            # 中纬风暴带（北）：季节窗口
-kind = "band"
-band = "westerlies_n"
+[s05.barriers.F_N]            # 中纬风暴带（北）：季节窗口。骨架第二版只覆盖 45–62°（草原），核心 ↔ 草原主要靠岛密度骤降
+kind = "lat_band"
+lat_range = [45.0, 62.0]
 type = "selective"
 seasonal = true
 permeability = { daily = 0.2, trade = 0.4, envoy = 0.7, migrate = 0.1 }
 
 [s05.barriers.F_S]
-kind = "band"
-band = "westerlies_s"
+kind = "lat_band"
+lat_range = [-62.0, -45.0]
 type = "selective"
 seasonal = true
 permeability = { daily = 0.2, trade = 0.4, envoy = 0.7, migrate = 0.1 }
@@ -282,7 +297,14 @@ smooth_hops = 2
 # γ=1 会让「面积」这个随机量与「岛密度」这个地理量等权且互相抵消，稀释中心涌现的地理结构
 # （实测 seed 2026 的 P7 从 238 个拒绝点掉到 31 个、地区覆盖不达标）。见 docs/DESIGN-NOTES §四点五。
 area_exponent = 0.5
-origin = "north_east"         # 人类起源地：中心 id 或 "auto"
+# 谷物农业的季节门槛（骨架第二版 §4.2）：看冬季均温（海面口径 = 年均 − 全年温差/2，不含岛高，原则乙）
+# 冬天不冷的地方选不出一年生、耐储的谷物（常夏之地是块根与园艺）；冬天太冷则生长季不够。
+# 适宜度 × (1 − smoothstep(冬温; warm_lo, warm_hi)) × smoothstep(冬温; cold_lo, cold_hi)
+# seed 7 海面冬温：20° 16.5 / 29° 8.9 / 32° 6.3 / 35° 3.5 / 38° 0.6 / 41° −1.8 / 44° −3.8 / 47° −6.2
+season_winter_warm_c = [6.0, 12.0]
+season_winter_cold_c = [-2.0, 4.0]   # 峰值落在海面冬温 4–6 °C（≈ 31–35°）；岛平均高 ≈900 m，岛上冬温再低 5 °C，落到郑州的 0 °C 上下
+origin = "auto"               # 人类起源地：中心 id 或 "auto"（= 北信风带、D 以东 90° 内适宜度最高处）。
+                              # 骨架第二版：文明中心在温带，人类起源仍在低纬信风带（智人起源地 ≠ 农业起源地）
 prehist_wind_exponent = 2.0   # 史前抱石而渡：风因子指数（强单向）
 yr_per_day = 50.0             # 史前扩散 1 天航程 ≈ 多少年（叙事换算）
 n_secondary = 12              # 无约束次级极大（供次级起源）
@@ -328,7 +350,8 @@ high = [0.7, 0.95]
 # 与 docs/02 §八「兼并极难」和铁律三「春秋战国之交」的调和：正因兼并极难，只有先完成编户齐民、榨出组织能力的那个邦才兼并得动
 # —— 所以只有变法之国能兼并，其余诸邦五百年割据不动（docs/04 §一）。
 [s09.polity]
-precip_full = 0.5             # 人口 = P1 × 可耕地 × clip(降水 / precip_full, precip_floor, 1)：雨够（≥ 0.5）即满载；干旱处按比例折减
+precip_full = 0.25            # 人口 = P1 × 可耕地 × clip(降水 / precip_full, precip_floor, 1)：雨够即满载；干旱处按比例折减。
+                              # 骨架第二版由 0.5 改 0.25：核心是谷物（粟麦）农业，0.25 ≈ 700 mm/年已足（郑州 640 mm）；0.5 ≈ 1,900 mm 是稻作口径
 precip_floor = 0.25           #   折减下限（再干也不至于空）
 control_radius_days = 2.2     # R0：控制力 exp(−w / R) 的基准尺度（w = 商旅成本 × 后勤倍率 + R0 × L_trade）
 ship_logistics_mult = 3.0     # 群间需飞行（间距 > 索桥 bridge_days）的边，大宗后勤成本倍率：能架桥短渡的才便宜（docs/02 §三「帝国只能长在密接群岛」）
@@ -403,6 +426,7 @@ p4_share_min = 0.10              # 第三批：每圈 3 个次级起源后使节
 p4_pass_frac = 0.8
 # 5 单向传播
 p5_centroid_frac = 0.75       # 部分次级起源的顺风向被障碍挡住（地理压过风向），0.9 过严
+p5_min_wind_ms = 2.0          # 起源处 |u| 低于此不判上下风（旧版写死 1.0）。骨架第二版：核心在弱风过渡带，1 m/s 时 seed 7 只有 0.62，2 m/s 时 0.75–0.88
 p5_cost_ratio = 0.6
 p5_min_days = 3.0
 p5_strength_ratio = 2.0       # 全体上下风对的中位数达 2 倍不对称已是强证据（跨 seed 稳定于 2.6–3.2）
@@ -426,12 +450,19 @@ c_shadow_ratio_min = 1.15     # 迎风 / 背风降水比的中位数
 c_shadow_frac_min = 0.6       # 迎风侧更湿的群占比
 c_band_amp_min = 1.0          # C2 带界最大位移（°）区间
 c_band_amp_max = 6.0
-c_arid_min = 0.12             # C3 干旱岛（降水 < 0.3）比例区间（改前 19.3%）
+arid_precip = 0.2             # 「干旱」口径（九格表 ② 与 C3 共用）：相对降水 0.2 ≈ 560 mm/年（半干旱上缘）。骨架第二版由 0.3 改：0.3 ≈ 900 mm 是半湿润，核心区不算干旱
+humid_precip = 0.55
+c_arid_min = 0.12             # C3 干旱岛（降水 < arid_precip）比例区间
 c_arid_max = 0.30
 c_river_min = 0.4             # C4 有河的群比例（只报告）
 c_river_max = 0.85
-# SK-cal 历法（R1）：潮汐锁定时标 0.92 Gyr < 4.6 Gyr 已作为设定接受（2026-09-11 拍板：保留 4 季 × 28 日；行星年轻 / 大卫星搅动），不再报警
-cal_accept_tidal_tension = true
+# SK-cal 历法（R1）：旧版 4 季 × 28 日的潮汐锁定张力（0.92 Gyr）已随骨架第二版的 336 日消失；开关保留，默认关
+cal_accept_tidal_tension = false
+# C5 四季分明（骨架第二版决定 1：中原、河北式）。海面口径（不含岛高）；郑州 26 °C / 冬 0 / 夏 27，石家庄 29 / −2 / 27
+c5_radius_km = 400.0          # 取中心周边此半径内岛群的中位数
+c5_range_min_c = 20.0          # 岛上口径（含岛高的温度与陆地性），中心周边中位数。下限按「上海—郑州」区间放在种子尾部：
+c5_winter_max_c = 5.0          #   上海 24 / 冬 5，郑州 26 / 冬 0，延安（1,000 m）28 / 冬 −5；三 seed 的中心实测 21–28 / −6…4
+c5_summer_min_c = 20.0
 # P8 政治层（第四批 R7）
 p8_dense_ratio_min = 1.5      # 密接之都的邦 / 中疏之都的邦 的邑数中位比（三 seed 实测 2.5–3.6）
 p8_n_states_min = 100         # 全世界邦数区间（「诸侯数百」；三 seed 实测 319–426）
