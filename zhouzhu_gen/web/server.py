@@ -10,12 +10,14 @@ GET  /api/config?run=         生效配置
 GET  /api/check?run=          验收报告
 GET  /api/ninegrid?run=&region=   九格表 markdown
 GET  /api/path?run=&a=&b=&mode=   最优路径逐跳
+GET  /api/island?run=&node=[&year=0][&force=1]   岛群生成器（第三层）：按需生成并返回摘要；/api/island/preview 取 preview.png
 POST /api/run  {seed, sets:[...], base_run}   后台重跑管线
 GET  /api/run/status          进度
 """
 from __future__ import annotations
 
 import json
+import time
 import threading
 import traceback
 import urllib.parse
@@ -34,6 +36,7 @@ class App:
         self.out_root = Path(out_root)
         self.cache: dict[tuple, object] = {}
         self.lock = threading.Lock()
+        self.island_lock = threading.Lock()   # 岛群生成器：一次只生成一个群，不挡住其它接口
         self.job = {"running": False, "log": [], "run_id": None, "error": None, "done_run": None}
 
     # ---- runs ----
@@ -158,6 +161,11 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/api/path":
                 rid = q["run"]
                 self._json(self._path(rid, int(q["a"]), int(q["b"]), q.get("mode", "trade")))
+            elif p == "/api/island":
+                self._json(self._island(q["run"], int(q["node"]), int(q.get("year", 0)), q.get("force") == "1"))
+            elif p == "/api/island/preview":
+                f = self.app.out_root / q["run"] / "islands" / str(int(q["node"])) / "preview.png"
+                self._send(f.read_bytes(), "image/png") if f.exists() else self._send(b"not found", "text/plain", 404)
             else:
                 self._send(b"not found", "text/plain", 404)
         except Exception as e:  # noqa: BLE001
@@ -195,6 +203,23 @@ class Handler(BaseHTTPRequestHandler):
             h["reach"] = round(float(np.exp(-acc)), 4)
         return {"reachable": True, "path": path, "hops": hops, "reach": round(float(np.exp(-dist[b])), 4),
                 "lambda_ref": lam}
+
+    def _island(self, rid, node, year, force):
+        """岛群生成器：产物已存在（同年份）就直接读，否则生成（约 5–15 s）。只读管线产物，不回灌。"""
+        ctx = self.app.ctx(rid)
+        out = ctx.out_dir / "islands" / str(node)
+        if force or not (out / "island.json").exists() or not (out / f"weather_y{year}.csv").exists():
+            from ..island import generate
+            with self.app.island_lock:
+                generate(ctx, node, year=year, log=lambda *a: None)
+        J = json.loads((out / "island.json").read_text(encoding="utf-8"))
+        C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
+        return {"node": node, "meta": J["meta"], "constraints": J["constraints"], "layout": J["layout"], "n_islands": len(J["islands"]),
+                "islands": [{k: i[k] for k in ("id", "area_km2", "peak_m", "cliff_m", "age_zh", "n_lakes", "has_perennial_river")} for i in J["islands"][:8]],
+                "hydro": {k: J["hydro"][k] for k in ("precip_mm", "n_lakes", "lake_km2", "main_basins")}, "landcover": J["landcover"]["share"],
+                "climate": {"season_type_zh": C["season_type_zh"], "annual": C["annual"], "thermal": C["thermal"],
+                            "seasons": [{k: s[k] for k in ("index", "name", "days", "temp_c", "temp_sea_c", "precip_mm", "storm", "window", "wind", "band_shift_deg")} for s in C["seasons"]]},
+                "weather": C.get("weather", {}), "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}", "dir": str(out)}
 
     def do_POST(self):
         try:

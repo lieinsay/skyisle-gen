@@ -868,11 +868,15 @@ function selectIsland(i){
     ${fold('more','更多属性',`<table class="kv">${more.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>`)}
     ${fold('slots','各槽位（比例分布）',slotHtml)}
     ${fold('edges',`出边（${es.length}）`,`<table class="kv"><tr><td>对端</td><td>成本</td><td>去程风（${MODE_ZH[wmode]}）</td><td>日常/商旅/使节/迁徙</td><td>障碍</td></tr>${edgeHtml}</table>
-    <div class="small">去程风 = 从本岛出发的风因子 dir(c)^α（顺 &lt;1、逆 &gt;1；模式随左侧「模式」）</div>`)}`;
+    <div class="small">去程风 = 从本岛出发的风因子 dir(c)^α（顺 &lt;1、逆 &gt;1；模式随左侧「模式」）</div>`)}
+    ${fold('island','岛群生成器（第三层）',`<div class="btnrow"><button id="btnIsland">生成此岛群</button><button id="btnIslandRe" class="mini" title="忽略已有产物重新生成">重新生成</button></div>
+    <div id="islandBox" class="small">按需生成群内布局、岛内地形、水系、四季气候与逐日天气（约 5–15 s；只读管线产物，不回灌）。</div>`)}`;
   box.querySelectorAll('details[data-fold]').forEach(d=>d.addEventListener('toggle',()=>{ probeOpen[d.dataset.fold]=d.open; }));
   $('btnHome').onclick=()=>{ home=i; distCache=null; if(!lensShows('culture')) setLens('culture'); $('colorBy').value='dist'; $('modeSel').value='all'; updateRowVisibility(); repaintIslands(); repaintLabels(); };
   $('btnFly').onclick=()=>globe.pointOfView({lat:A.lat[i],lng:A.lon[i],altitude:0.6},800);
   const bp=$('btnPath'); if(bp) bp.onclick=()=>drawPath(home,i,$('pathMode').value);
+  const bi=$('btnIsland'); if(bi) bi.onclick=()=>loadIsland(i,false);
+  const br=$('btnIslandRe'); if(br) br.onclick=()=>loadIsland(i,true);
   box.querySelectorAll('button[data-node]').forEach(b=>b.onclick=()=>selectIsland(+b.dataset.node));
   box.querySelectorAll('button[data-region]').forEach(b=>b.onclick=()=>{ $('regionSel').value=b.dataset.region; loadGrid(+b.dataset.region); showTab('grid'); });
 }
@@ -883,6 +887,29 @@ async function drawPath(a,b,mode){
   if(!j.reachable){ $('pathBox').textContent='该模式下不可达（沿途有通过率为 0 的障碍）'; pathData=null; repaintEdges(); return; }
   pathData=j; repaintEdges();
   $('pathBox').innerHTML=`reach = ${j.reach}（λ_ref ${fmt(j.lambda_ref,4)}）<table class="kv"><tr><td>跳</td><td>节点</td><td>成本</td><td>风</td><td>perm</td><td>累计 reach</td></tr>`+j.hops.map((h,k)=>`<tr><td>${k+1}</td><td>#${h.node}</td><td>${fmt(h.cost)}</td><td>${GR?windFacText(windFactor(j.path[k],h.node,mode,findEdge(j.path[k],h.node))):'—'}</td><td>${fmt(h.perm)}</td><td>${fmt(h.reach,3)}</td></tr>`).join('')+'</table>';
+  setStatus('就绪');
+}
+
+// ------------------------------------------------------------ 岛群生成器（第三层，PLAN-ISLAND 5.7）
+async function loadIsland(i,force){
+  const box=$('islandBox'); if(!box) return;
+  if (INLINE){ box.textContent='单文件模式不支持岛群生成（需 zhouzhu serve）'; return; }
+  box.innerHTML='<span class="small">生成中…（约 5–15 s）</span>'; setStatus('生成岛群…');
+  try{
+    const j=await (await api(`/api/island?run=${currentRun}&node=${i}${force?'&force=1':''}`)).json();
+    if(j.error){ box.textContent='出错：'+j.error; setStatus('就绪'); return; }
+    const c=j.constraints, C=j.climate;
+    const S=C.seasons.map(s=>`<tr><td>${s.name}</td><td>${s.days[0]}–${s.days[1]}</td><td>${fmt(s.temp_c,1)}</td><td>${fmt(s.precip_mm,0)}</td><td>${fmt(s.storm,2)}</td><td>${fmt(s.window,2)}</td><td>${fmt(s.wind.speed_ms,0)} m/s 自 ${fmt(s.wind.from_deg,0)}°</td></tr>`).join('');
+    const lc=Object.entries(j.landcover).filter(([k,v])=>v>0.005).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k} ${fmt(v*100,0)}%`).join(' · ');
+    const wt=j.weather&&j.weather.types?Object.entries(j.weather.types).map(([k,v])=>`${k} ${v}`).join(' · '):'';
+    box.innerHTML=`<div>${j.n_islands} 岛（索桥 ${j.layout.n_bridges} / 短渡 ${j.layout.n_ferries}）· ${j.meta.res_m} m/格 · 陆地 ${fmt(c.area_km2.actual,0)} / ${fmt(c.area_km2.target,0)} km² · 主岛峰 ${fmt(c.height_m.actual,0)} m · 可耕 ${fmt(c.arable_frac.actual,3)} · 河 ${c.has_river.actual?'有':'无'} · 湖 ${j.hydro.n_lakes} · 降水 ${fmt(j.hydro.precip_mm,0)} mm</div>
+      <div>地表：${lc}</div>
+      <div><b>${C.season_type_zh}</b>（全年温差 ${fmt(C.annual.season_range_c,1)} °C，滞后 ${fmt(C.thermal.lag_island_days,0)} 日，带界摆幅 ±${fmt(C.thermal.band_shift_amp_deg,1)}°）</div>
+      <table class="kv"><tr><td>季</td><td>日</td><td>°C</td><td>mm</td><td>风暴</td><td>窗口</td><td>风</td></tr>${S}</table>
+      ${wt?`<div>天气 y${j.weather.year}：${wt}；雨 ${fmt(j.weather.precip_mm,0)} mm；风暴 ${j.weather.storm_events} 场；可出航 ${j.weather.sailable_days} 天</div>`:''}
+      <img src="${j.preview}" style="width:100%;margin-top:6px;border:1px solid var(--line)" alt="preview">
+      <div class="small">${j.dir}</div>`;
+  }catch(e){ box.textContent='出错：'+e; }
   setStatus('就绪');
 }
 
