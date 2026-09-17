@@ -32,14 +32,14 @@ STAGES = [
 # 改动会使缓存失效的实现版本号（每阶段独立）
 STAGE_VERSIONS = {i: "1" for i, _ in STAGES}
 STAGE_VERSIONS[1] = "2"  # 骨架第二版：months_per_season 写进 calendar
-STAGE_VERSIONS[3] = "11"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率（R9）；主岛/墙高（第三批 1）；板块密度与岛龄（第三批 2）
-STAGE_VERSIONS[2] = "3"  # 费雷尔 / 极地环流的经向分量；wind_profile / g_vortex 拆成函数供 ④ 复用（第三批 3）
-STAGE_VERSIONS[4] = "7"  # ②b 岛对风的扰动与局部带界（第三批 3）；上风水汽追踪降水（第三批 4）；河流（第三批 1）
-STAGE_VERSIONS[5] = "5"  # perm_no_g；D 的 Φ 域与 s03 对齐；Φ 改读局部带界（第三批 3）
+STAGE_VERSIONS[3] = "11"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率（R9）；主岛/墙高（第三批 1）；板块密度与岛龄（第三批 2）；纬度密度剖面 + D 纬度域（骨架第二版）
+STAGE_VERSIONS[2] = "3"  # 费雷尔 / 极地环流的经向分量；wind_profile / g_vortex 拆成函数供 ④ 复用（第三批 3）；G 锚定带界可配（骨架第二版）
+STAGE_VERSIONS[4] = "7"  # ②b 岛对风的扰动与局部带界（第三批 3）；上风水汽追踪降水（第三批 4）；河流（第三批 1）；风暴按带界分幅度 + 季节强度场（骨架第二版）
+STAGE_VERSIONS[5] = "5"  # perm_no_g；D 的 Φ 域与 s03 对齐；Φ 改读局部带界（第三批 3）；lat_band 障碍 + D 纬度域可配（骨架第二版）
 STAGE_VERSIONS[6] = "5"  # betweenness_sources；cost_no_g；源权重改用集雨容量；读 ④ 扰动风 + 可靠局地风（第三批 3）
-STAGE_VERSIONS[7] = "5"  # 适宜度含岛群陆地规模项；中心窗读局部带界（第三批 3）；次级极大每圈保底 secondary_per_circle
+STAGE_VERSIONS[7] = "5"  # 适宜度含岛群陆地规模项；中心窗读局部带界（第三批 3）；次级极大每圈保底 secondary_per_circle；中心窗按纬度区间 + 谷物冬温门槛（骨架第二版）
 STAGE_VERSIONS[9] = "1"  # ⑨ 政治层（第四批 R7）：人口、诸邦、采邑、名分/附庸、变法与兼并史
-STAGE_VERSIONS[10] = "5"  # ⑩ 输出（原 ⑨）：九格表 ⑤⑥⑧ 改写为邦级（第四批 R7）
+STAGE_VERSIONS[10] = "5"  # ⑩ 输出（原 ⑨）：九格表 ⑤⑥⑧ 改写为邦级（第四批 R7）；九格表干旱口径可配（骨架第二版）
 
 
 class Context:
