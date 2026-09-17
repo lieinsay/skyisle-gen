@@ -562,3 +562,31 @@ wet_dry_ratio = 2.5           # 最湿季 ≥ 最干季 × 此值 → 雨旱季
 storm_season_diff = 0.25      # 风暴强度的季差 ≥ 此值（或窗口季差 ≥ window_season_diff）→ 风暴季
 window_season_diff = 0.25
 cold_mean_temp_c = 5.0        # 不分季时：年均温低于此值叫「常寒」，否则「常夏」
+
+[island.weather]              # 5.5 逐日天气（按年份种子可复现）
+wet_frac_base = 0.12          # 雨日比例 = clip(base + k × (季雨量/1000 mm)^0.7, min, max)：湿季雨日多
+wet_frac_k = 0.30
+wet_frac_min = 0.06
+wet_frac_max = 0.70
+wet_persistence = 0.45        # 湿→湿 = f_wet + persistence × (1 − f_wet)；干→湿由平稳分布 = f_wet 反解
+rain_gamma_shape = 0.8        # 日雨量伽马分布形状（< 1：多小雨、偶有大雨）
+heavy_rain_mm = 15.0          # ≥ 此值叫大雨
+storm_day_k = 0.35            # 风暴日比例 = k × 风暴强度^exp（强度 1 → 35% 的日子在风暴里）
+storm_day_exp = 1.2
+storm_days_min = 1            # 一场风暴持续 1–4 天
+storm_days_max = 4
+storm_rain_mult = 3.0         # 风暴日雨量 ≥ 湿日均值 × 此倍数的伽马抽样
+storm_wind_mult = 1.8         # 风暴日风速 = mult × 当日风速 + add
+storm_wind_add = 12.0
+wind_ar1 = 0.6                # 风的 AR(1) 系数与扰动幅度（相对季均风速 + 最小值 m/s）
+wind_sigma_rel = 0.5
+wind_sigma_min = 1.0
+temp_ar1 = 0.7                # 温度的 AR(1) 与日际标准差
+temp_sigma_c = 1.5
+rain_cool_c = 1.5             # 雨日 / 风暴日偏凉
+storm_cool_c = 2.5
+cloudy_k = 1.2                # 无雨日转多云的概率 = f_wet × k
+fog_peak_max_m = 800.0        # 云海漫顶：主岛峰高低于此值的群才有；越低越易
+fog_p0 = 0.45                 # 基础概率（× 低度 × 静风 × 潮湿）
+fog_calm_ms = 6.0             # 风速达此值即不成雾
+sail_wind_max_ms = 14.0       # 出航：非风暴、风速低于此值、按季窗口的平静概率

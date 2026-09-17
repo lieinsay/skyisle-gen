@@ -15,7 +15,7 @@ from zhouzhu_gen.pipeline import Context, run
 
 PKG = Path(__file__).resolve().parent.parent / "zhouzhu_gen"
 SMALL = ["s03.islands.n_islands=1600"]
-STEPS = 3   # 开发中：已实现到第几步
+STEPS = 4   # 开发中：已实现到第几步
 
 
 # ---------------- IS-iso：管线不得读岛群生成器（第三层不回灌） ----------------
@@ -81,6 +81,16 @@ def test_island_deterministic_and_consistent(small_ctx):
         assert abs(m["temp_c"] - a["temp_c"]) <= 0.05
         assert C["season_type"] in ("four", "two", "rain", "storm", "none")
         assert len(C["seasons"]) == C["calendar"]["seasons"] and C["calendar"]["year_days"] == 336.0
+        assert abs(sum(s["precip_mm"] for s in C["seasons"]) - a["precip_mm"]) <= 0.01 * a["precip_mm"] + 2
+    if STEPS >= 4:
+        W = C["weather"]
+        assert W["days"] == 336 and sum(W["types"].values()) == 336
+        assert (out / "weather_y0.csv").exists()
+        # 改年份不动地形与气候：只有天气产物变
+        out3 = isl.generate(small_ctx, node, res_m=300.0, steps=STEPS, year=1, log=lambda *a: None)
+        h3 = _hash_dir(out3)
+        assert h3["terrain.npz"] == h1["terrain.npz"] and h3["height.png"] == h1["height.png"]
+        assert (out3 / "weather_y1.csv").read_bytes() != (out / "weather_y0.csv").read_bytes()
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)
@@ -130,3 +140,19 @@ def test_season_type_table():
     assert n == ["旱季", "雨季", "转季", "转季"]
     n = _season_names("storm", [20] * 4, [1] * 4, [0.9, 0.2, 0.1, 0.3], [0.2, 0.8, 0.9, 0.7], 4)
     assert n[0] == "风暴季" and n[2] == "平静季"
+
+
+def test_daily_weather_returns_to_climate(small_ctx):
+    """IS-daily：60 年逐日降水的平均回到气候值（< 5%），雨日比例落在设定 ±0.05（30 年时单季标准误约 5%，见 DESIGN-NOTES）。"""
+    from zhouzhu_gen import island as isl
+    from zhouzhu_gen.island.weather import multi_year_stats
+    node = _pick_node(small_ctx)
+    c = isl.island_config(small_ctx)
+    inp = isl._node_inputs(small_ctx, node)
+    g = isl.build_terrain(small_ctx, node, c, inp, res_m=400.0, log=lambda *a: None)
+    from zhouzhu_gen.island.climate import build_climate, daily_curves
+    build_climate(small_ctx, node, c, g, log=lambda *a: None)
+    g["daily"] = daily_curves(g["climate"], inp, small_ctx.cfg["s04"]["climate"])
+    st = multi_year_stats(small_ctx, node, c, g, years=60)
+    assert st["annual_rel_err"] < 0.05, st
+    assert max(st["wet_frac_err"]) <= 0.05, st

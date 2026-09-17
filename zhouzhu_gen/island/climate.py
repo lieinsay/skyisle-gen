@@ -125,7 +125,8 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print) -> None:
     t_isl = inp["temp"] + sgn * amp_isl * np.cos(ph - lag_isl)
     t_sea = inp["temp_sea"] + sgn * amp_sea * np.cos(ph - lag_sea)
     from .hydro import precip_mm
-    p_mm = np.array([precip_mm(p, cc) for p in precip])
+    p_rate = np.array([precip_mm(p, cc) for p in precip])     # 该季强度折成的年当量 mm/年
+    p_mm = p_rate * dps / ydays                                # 该季实际降水 mm/季（四季之和 = 年降水）
     # 季型判定
     r_t = float(inp["season_range"])
     pr_ratio = float(precip.max() / max(1e-9, precip.min()))
@@ -153,7 +154,7 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print) -> None:
             "index": s, "name": names[s], "days": [int(round(s * dps)), int(round((s + 1) * dps)) - 1], "mid_day": float(mids[s]),
             "months": [int(s * cal["months_per_season"]) + m for m in range(cal["months_per_season"])],
             "temp_c": round(float(t_isl[s]), 2), "temp_sea_c": round(float(t_sea[s]), 2),
-            "precip_rel": round(float(precip[s]), 4), "precip_mm": round(float(p_mm[s]), 0),
+            "precip_rel": round(float(precip[s]), 4), "precip_mm": round(float(p_mm[s]), 0), "precip_mm_annual_rate": round(float(p_rate[s]), 0),
             "storm": round(float(storm[s]), 4), "window": round(float(window[s]), 4),
             "wind": {"u": round(float(raw["u"][s]), 2), "v": round(float(raw["v"][s]), 2), "speed_ms": round(sp, 2),
                      "from_deg": round((math.degrees(math.atan2(-raw["u"][s], -raw["v"][s])) + 360.0) % 360.0, 0)},
@@ -175,7 +176,7 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print) -> None:
         "seasons": seasons,
         "means_check": {"precip_rel": round(float(precip.mean()), 5), "storm": round(float(storm.mean()), 5),
                         "window": round(float(window.mean()), 5), "temp_c": round(float(t_isl.mean()), 4)},
-        "note": "季名是软的（决定 5）；南北半球反相；每季数值为季中那一天的摆动取样再缩放到年均",
+        "note": "季名是软的（决定 5）；南北半球反相；每季数值为季中那一天的摆动取样再缩放到年均；precip_mm 是该季总量（四季之和 = 年降水），precip_mm_annual_rate 是折成年当量的强度",
     }
     g["climate"] = clim
     g["json"]["climate"] = {"season_type": stype, "season_type_zh": type_zh, "season_names": names,
