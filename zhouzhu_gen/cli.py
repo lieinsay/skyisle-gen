@@ -6,6 +6,8 @@ zhouzhu viz   <layer> --run out/seed42 [...]
 zhouzhu probe <node|path|edge|trait> ...
 zhouzhu check --run out/seed42 [--calibrate]
 zhouzhu ninegrid --run out/seed42 [--region K]
+zhouzhu island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
+zhouzhu island check <节点> | batch --sample 30
 """
 from __future__ import annotations
 
@@ -76,6 +78,17 @@ def main(argv=None):
     p_pol.add_argument("--run", default="out/seed42")
     p_pol.add_argument("--top", type=int, default=15)
 
+    p_isl = sub.add_parser("island", help="岛群生成器（第三层）：生成 / check / batch")
+    p_isl.add_argument("what", help="节点号，或 check / batch")
+    p_isl.add_argument("node", nargs="?", type=int, default=None, help="check 时的节点号")
+    p_isl.add_argument("--run", default="out/seed42")
+    p_isl.add_argument("--year", type=int, default=0)
+    p_isl.add_argument("--res", type=float, default=None, help="栅格分辨率 m（默认 island.res_m）")
+    p_isl.add_argument("--export", default=None, help="复制一份产物到该目录（给 Godot 工程）")
+    p_isl.add_argument("--set", action="append", default=[], dest="sets", help="island.a.b=value 覆盖")
+    p_isl.add_argument("--sample", type=int, default=30, help="batch：抽样岛群数")
+    p_isl.add_argument("--steps", type=int, default=9, help="只做到第几步（开发用）")
+
     p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
     p_serve.add_argument("--out", default="out")
     p_serve.add_argument("--port", type=int, default=8642)
@@ -120,6 +133,16 @@ def main(argv=None):
     if a.cmd == "polity":
         from .polity import print_summary
         print_summary(ctx, top=a.top)
+        return 0
+    if a.cmd == "island":
+        from . import island as isl
+        if a.what == "check":
+            from .island.check import run_island_check
+            return run_island_check(ctx, a.node, year=a.year, sets=a.sets)
+        if a.what == "batch":
+            from .island.batch import run_batch
+            return run_batch(ctx, sample=a.sample, year=a.year, sets=a.sets)
+        isl.generate(ctx, int(a.what), year=a.year, res_m=a.res, export=a.export, sets=a.sets, steps=a.steps)
         return 0
     return 1
 

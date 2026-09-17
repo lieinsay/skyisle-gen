@@ -467,3 +467,55 @@ c5_summer_min_c = 20.0
 p8_dense_ratio_min = 1.5      # 密接之都的邦 / 中疏之都的邦 的邑数中位比（三 seed 实测 2.5–3.6）
 p8_n_states_min = 100         # 全世界邦数区间（「诸侯数百」；三 seed 实测 319–426）
 p8_n_states_max = 1500
+
+# ---------------- 岛群生成器（第三层，docs/PLAN-ISLAND.md；按需生成、不进管线、不回灌） ----------------
+# 不进任何阶段的缓存 key；`zhouzhu island <节点> --set island.x.y=v` 可临时改。旧 run 的 config.resolved.toml 没有本段时用这里的默认值。
+[island]
+res_m = 100.0                 # 栅格分辨率（第八节 c 默认 100 m；50 m 文件 ×4、耗时 ×4）
+grid_max = 2048               # 群外框上限（格）；超出自动把分辨率加倍重做
+margin_km = 1.0               # 群栅格在陆地外框外留的边距
+
+[island.layout]               # 5.1 群内布局
+n0 = 30                       # 岛数 = clip(round(n0 × (陆地/中位陆地)^n_exp × lognormal(n_sigma)), n_min, n_max)
+n_exp = 0.35
+n_sigma = 0.25
+n_min = 12
+n_max = 80
+zipf_exp = 1.1                # 其余岛按 Zipf 分 area − main（主岛必须最大：分不下去就自动降指数 / 加岛数）
+min_islet_km2 = 0.3           # 最小一座「只够一户人家的孤石」；做不到就减岛数
+gap_min_km = 1.0              # 相邻岸线间距范围（beta(1.3, 2.2) 抽样，偏短）
+gap_max_km = 15.0
+main_gravity = 3.0            # 放岛时以主岛为锚的权重倍数（其余按 √面积）
+arc_elongation = 2.5          # 汇聚带上的群沿板块边界走向拉长（各向异性上限，随边界核强度插值）
+divergent_spread = 1.6        # 离散带上的群更散（间距放大倍数上限）
+place_attempts = 240          # 每座岛的放置尝试次数（放不下就逐步拉开间距）
+height_lo = 0.35              # 其余岛峰高 = 主岛峰高 × U(lo, hi)
+height_hi = 0.95
+layered_spread_m = 400.0      # 叠层群：其余岛再 ± U(0.5, 1) × 此值，出现上下错开的岛
+age_jitter = 0.08             # 群内各岛岛龄围绕节点岛龄的抖动（主岛不抖）
+bridge_max_km = 2.0           # 索桥：岸距 ≤ 此值且岸缘高差 ≤ bridge_max_dh_m；否则短渡
+bridge_max_dh_m = 250.0
+ferry_max_km = 20.0           # 只给岸距 ≤ 此值的岛对连短渡（连通性回退另补）
+
+[island.terrain]              # 5.2 岛内地形
+age_young = 0.3               # 岛龄 < young 火山锥；< old 山脊谷地；≥ old 台地宽谷（与 geology.py 同口径）
+age_old = 0.65
+elongation_max = 2.2          # 岛形椭圆长短轴比上限（长轴沿板块走向）
+shape_pad = 1.35              # 局部栅格半宽 = pad × 半长轴（轮廓噪声 0.45 时零等值线最远到 1.2 倍）
+warp_amp = 0.18               # 域扭曲幅度（× 等效半径）
+shape_noise_amp = 0.45        # 轮廓噪声幅度（相对椭圆穹顶 1）
+shape_octaves = 5
+cone_radius_rel = 1.25        # 火山锥半径（× 等效半径）：锥脚落在岸线之外，岸缘才有高度
+cone_profile_pow = 1.5        # 锥剖面 (1 − d)^p：p > 1 上陡下缓
+gully_amp = 0.35              # 放射状沟谷深度（相对）
+plateau_rise = 0.3            # 老岛：向内程度到此值即登上台地
+plateau_valley_depth = 0.35   # 老岛宽谷深度（相对）
+mound_amp = 0.15              # 老岛边缘残丘
+erosion_rounds_main = 30      # 侵蚀轮数（主岛 / 小岛；新岛 ×0.7、老岛 ×1.3）
+erosion_rounds_small = 8
+erosion_max_cells = 320       # 侵蚀在 ≤ 此边长的粗网格上做，差值回贴
+fluvial_k = 0.02              # 河道冲刷（无量纲）：Δh = k × 起伏 × (汇流面积 / 岛面积的 1/10)^m × (坡度 / 岛平均坡度)，每轮
+fluvial_m = 0.5
+talus_deg = 38.0              # 热力坍塌休止角
+diffusion_k = 0.04            # 坡面扩散
+cliff_cells = 2               # 岸线向内几格标为崖缘
