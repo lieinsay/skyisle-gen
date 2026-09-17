@@ -15,7 +15,7 @@ from zhouzhu_gen.pipeline import Context, run
 
 PKG = Path(__file__).resolve().parent.parent / "zhouzhu_gen"
 SMALL = ["s03.islands.n_islands=1600"]
-STEPS = 2   # 开发中：已实现到第几步
+STEPS = 3   # 开发中：已实现到第几步
 
 
 # ---------------- IS-iso：管线不得读岛群生成器（第三层不回灌） ----------------
@@ -72,6 +72,15 @@ def test_island_deterministic_and_consistent(small_ctx):
         land = z["island_id"] >= 0
         assert np.isnan(z["height"][~land]).all() and not np.isnan(z["height"][land]).any()
         assert (z["landcover"][land] > 0).all() and (z["landcover"][~land] == 0).all()
+    if STEPS >= 3:
+        C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
+        a, m = C["annual"], C["means_check"]                                                 # IS-season
+        assert abs(m["precip_rel"] - a["precip_rel"]) <= 0.01 * a["precip_rel"] + 1e-6
+        assert abs(m["storm"] - a["storm"]) <= 0.01 * max(a["storm"], 0.05) + 1e-6
+        assert abs(m["window"] - a["window"]) <= 0.01 * a["window"] + 1e-6
+        assert abs(m["temp_c"] - a["temp_c"]) <= 0.05
+        assert C["season_type"] in ("four", "two", "rain", "storm", "none")
+        assert len(C["seasons"]) == C["calendar"]["seasons"] and C["calendar"]["year_days"] == 336.0
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)
@@ -110,3 +119,14 @@ def test_label_components_runs():
     assert n4 == 3 and n8 == 2
     assert lab4[0, 0] == lab4[1, 2]
     assert lab8[3, 4] == lab8[4, 5] and lab4[3, 4] != lab4[4, 5]
+
+
+def test_season_type_table():
+    """5.4 的季型表：温差 ≥ 20 → 四季分明；雨季 ≥ 旱季 × 2.5 → 雨旱季；都不达标 → 常夏。"""
+    from zhouzhu_gen.island.climate import _season_names
+    n = _season_names("four", [5, 20, 25, 10], [1, 1, 1, 1], [0] * 4, [1] * 4, 4)
+    assert n == ["冷季", "暖季", "热季", "凉季"]
+    n = _season_names("rain", [20] * 4, [0.1, 0.5, 0.2, 0.15], [0] * 4, [1] * 4, 4)
+    assert n == ["旱季", "雨季", "转季", "转季"]
+    n = _season_names("storm", [20] * 4, [1] * 4, [0.9, 0.2, 0.1, 0.3], [0.2, 0.8, 0.9, 0.7], 4)
+    assert n[0] == "风暴季" and n[2] == "平静季"

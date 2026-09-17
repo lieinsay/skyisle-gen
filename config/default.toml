@@ -555,3 +555,10 @@ terrace_slope_deg = 8.0       # 可耕且坡度 ≥ 此值 → 梯田
 precip_mm_min = 150.0         # 第八节 a：相对降水 0 → 150 mm，1 → 4,000 mm，中间按 p^1.3
 precip_mm_max = 4000.0
 precip_mm_exp = 1.3
+k_shift = 0.35                # 带界随太阳摆动：Δφ = k_shift × 倾角 × A_sea × cos(相位 − 滞后)（地球 ITCZ 随 23.4° 倾角摆约 ±8°）
+four_season_range_c = 20.0    # 季型判据（5.4 表）：全年温差 ≥ 此值 → 四季分明（上海、郑州一级）
+two_season_range_c = 8.0      # 温差 ≥ 此值（半振幅 4 °C）且温度是最大差异 → 冷暖两季
+wet_dry_ratio = 2.5           # 最湿季 ≥ 最干季 × 此值 → 雨旱季
+storm_season_diff = 0.25      # 风暴强度的季差 ≥ 此值（或窗口季差 ≥ window_season_diff）→ 风暴季
+window_season_diff = 0.25
+cold_mean_temp_c = 5.0        # 不分季时：年均温低于此值叫「常寒」，否则「常夏」

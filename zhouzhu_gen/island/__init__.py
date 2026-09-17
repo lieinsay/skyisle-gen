@@ -216,8 +216,9 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
         from .hydro import build_hydro
         build_hydro(ctx, node, c, g, log=log)
     if steps >= 3:
-        from .climate import build_climate
+        from .climate import build_climate, daily_curves
         build_climate(ctx, node, c, g, log=log)
+        g["daily"] = daily_curves(g["climate"], inp, ctx.cfg["s04"]["climate"])
     if steps >= 4:
         from .weather import build_weather
         build_weather(ctx, node, c, g, year=year, log=log)
