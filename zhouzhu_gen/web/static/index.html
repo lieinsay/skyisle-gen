@@ -64,6 +64,22 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
 .btnrow button{background:#1f2937;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:4px 9px;font:inherit}
 #tip{position:absolute;pointer-events:none;background:rgba(10,13,20,.92);border:1px solid var(--line);padding:5px 8px;border-radius:4px;font-size:12px;display:none;z-index:5;max-width:280px}
 #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:14px;background:#05070d;z-index:6}
+/* 视角切换 */
+.lens{display:flex;gap:2px;background:#0f131a;border:1px solid var(--line);border-radius:6px;padding:2px;margin-bottom:6px}
+.lens button{flex:1;background:none;border:0;border-radius:4px;color:var(--dim);padding:5px 0;font:inherit}
+.lens button.on{background:var(--acc);color:#1b1408;font-weight:600}
+#lensDesc{margin:0 0 10px;min-height:16px}
+.hidden{display:none!important}
+#legend{flex-wrap:wrap;margin:4px 0 6px}
+.pill{white-space:nowrap}
+button.mini{background:#1f2937;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:0 5px;font:inherit;font-size:11px}
+details.adv,details.fold{border-top:1px solid var(--line);padding-top:6px;margin:8px 0}
+details>summary{cursor:pointer;color:var(--dim);font-size:12px;letter-spacing:.8px;font-weight:600;list-style:none;user-select:none}
+details>summary::before{content:'▸ ';display:inline-block;width:12px}
+details[open]>summary::before{content:'▾ '}
+details.fold>summary{margin-bottom:4px}
+#checkBadge{cursor:pointer}
+#tab-check .small{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -79,94 +95,117 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
 </header>
 
 <aside class="left">
-  <div class="sec"><h3>图层</h3>
-    <label class="chk"><input type="checkbox" id="lyIslands" checked> 岛屿</label>
-    <label class="chk"><input type="checkbox" id="lyScale" checked> 点大小按岛群陆地</label>
-    <label class="chk"><input type="checkbox" id="lyEdges" checked> 航线（边）</label>
-    <label class="chk"><input type="checkbox" id="lyHubs" checked> 枢纽与文明中心</label>
-    <label class="chk"><input type="checkbox" id="lyTrunks" checked> 中心间干线</label>
-    <label class="chk"><input type="checkbox" id="lyGeo" checked> 障碍几何（A / D / G）</label>
-    <label class="chk"><input type="checkbox" id="lyBands" checked> 局部带界（波状线）</label>
-    <label class="chk"><input type="checkbox" id="lyIso"> 同言线（跨 θ 的边）</label>
-    <label class="chk"><input type="checkbox" id="lyBorders"> 邦界（⑨ 政治层：跨邦的边）</label>
+  <!-- 视角：每个视角是一组预设（底图 / 岛屿着色 / 叠加层），并只显示与之相关的控件（带 data-lens 的元素） -->
+  <div class="lens" id="lensBar">
+    <button data-l="geo" class="on">地理</button>
+    <button data-l="climate">气候</button>
+    <button data-l="routes">航运</button>
+    <button data-l="culture">文化</button>
+    <button data-l="polity">政治</button>
   </div>
-  <div class="sec"><h3>气象层（② 风场 · ④ 气候网格）</h3>
-    <div class="row"><label>贴图</label>
+  <div class="small" id="lensDesc"></div>
+
+  <div class="row" id="rowMode" data-lens="routes culture"><label title="传播 / 通行的四种模式；航线着色、顺逆风、探针出边、路径、文化距离、隔离度共用">模式</label>
+    <select id="modeSel"><option value="all" data-lens="culture">全部</option><option value="daily">日常往来</option><option value="trade">商旅</option><option value="envoy">使节学问</option><option value="migrate">人口迁徙</option></select></div>
+
+  <div class="sec"><h3>岛屿</h3>
+    <div class="row"><label>着色</label>
+      <select id="colorBy">
+        <option value="cls" data-lens="geo routes">地形类</option>
+        <option value="area" data-lens="geo">岛群陆地</option>
+        <option value="catch" data-lens="geo climate">集雨容量</option>
+        <option value="region" data-lens="geo culture">地区（展示分区）</option>
+        <option value="arrival" data-lens="geo culture">史前到达</option>
+        <option value="precip" data-lens="climate">降水</option>
+        <option value="stab" data-lens="climate">稳定度</option>
+        <option value="flow" data-lens="routes">流量</option>
+        <option value="trait" data-lens="culture">特征场</option>
+        <option value="share" data-lens="culture">槽位份额</option>
+        <option value="dist" data-lens="culture">文化距离（以家为基准）</option>
+        <option value="iso" data-lens="culture routes">隔离度</option>
+        <option value="suit" data-lens="culture">适宜度</option>
+        <option value="polity" data-lens="polity">邦</option>
+        <option value="realm" data-lens="polity">兼并：变法之国的本朝</option>
+        <option value="pop" data-lens="polity">人口</option>
+        <option value="control" data-lens="polity">都城控制力</option>
+      </select></div>
+    <div class="row" id="rowSlot"><label title="一类习俗（如葬俗、历法），其中各做法的份额和为 1">槽位</label><select id="slotSel"></select></div>
+    <div class="row" id="rowValue"><label>做法</label><select id="valueSel"></select></div>
+    <div class="row" id="rowTrait"><label>特征</label><select id="traitSel"></select></div>
+    <div class="row" id="rowField"><label>量</label>
+      <select id="fieldSel"><option value="strength" title="strength">强度</option><option value="reach" title="reach：传到的程度">传到</option><option value="adopt" title="adopt：传到后被接受的程度">采纳</option><option value="share" title="share：槽位内份额">份额</option></select></div>
+    <div class="legend" id="legend"></div>
+    <label class="chk"><input type="checkbox" id="lyIslands" checked> 显示岛屿</label>
+    <label class="chk"><input type="checkbox" id="lyScale" checked> 点大小按陆地</label>
+  </div>
+
+  <div class="sec" data-lens="geo climate"><h3>底图</h3>
+    <div class="row">
       <select id="surfSel">
-        <option value="base">地貌（默认贴图）</option>
-        <option value="speed">风速 m/s</option>
-        <option value="temp">海面温度 °C</option>
-        <option value="precip">降水（相对）</option>
-        <option value="storm">风暴强度</option>
-        <option value="q">水汽（相对）</option>
-        <option value="uplift">撞墙抬升（雨影的来源）</option>
-        <option value="obstacle">岛体障碍场</option>
-        <option value="wake">尾流亏损</option>
-        <option value="band">风带（局部带界）</option>
-        <option value="plate">浮石板块</option>
-        <option value="age">岛龄</option>
+        <option value="base" data-lens="geo climate">地貌</option>
+        <option value="plate" data-lens="geo">浮石板块</option>
+        <option value="age" data-lens="geo">岛龄</option>
+        <option value="precip" data-lens="climate">降水</option>
+        <option value="temp" data-lens="climate">海面温度 °C</option>
+        <option value="speed" data-lens="climate">风速 m/s</option>
+        <option value="storm" data-lens="climate">风暴强度</option>
+        <option value="band" data-lens="climate">风带</option>
+        <option value="q" data-lens="climate">水汽</option>
+        <option value="uplift" data-lens="climate">撞墙抬升（雨影的来源）</option>
+        <option value="obstacle" data-lens="climate">岛体障碍场</option>
+        <option value="wake" data-lens="climate">尾流亏损</option>
       </select></div>
     <div class="row" id="rowSurfAlpha"><label>不透明度</label><input type="range" id="surfAlpha" min="0.3" max="1" step="0.05" value="0.85"><span id="surfAlphav">0.85</span></div>
     <label class="chk" id="rowContour"><input type="checkbox" id="surfContour" checked> 等值线</label>
     <div id="surfLegend"></div>
-    <label class="chk"><input type="checkbox" id="lyWind" checked> 风向流线（虚线沿风向流动）</label>
+  </div>
+
+  <div class="sec" data-lens="climate"><h3>风</h3>
+    <label class="chk"><input type="checkbox" id="lyWind"> 风向流线</label>
     <div class="row" id="rowWindDens"><label>密度</label><input type="range" id="windDens" min="0.5" max="2.5" step="0.1" value="1"><span id="windDensv">1.0</span></div>
     <div class="small" id="windInfo"></div>
   </div>
-  <div class="sec"><h3>岛屿着色</h3>
-    <div class="row"><label>依据</label>
-      <select id="colorBy">
-        <option value="cls">地形类</option>
-        <option value="area">岛群陆地</option>
-        <option value="catch">集雨容量（可用地率×陆地×降水）</option>
-        <option value="region">地区</option>
-        <option value="polity">邦（⑨ 政治层）</option>
-        <option value="realm">兼并：变法之国的本朝</option>
-        <option value="pop">人口</option>
-        <option value="control">都城控制力（采邑空心化）</option>
-        <option value="share">槽位份额</option>
-        <option value="trait">特征场</option>
-        <option value="dist">文化距离（以家为基准）</option>
-        <option value="iso">隔离度</option>
-        <option value="suit">适宜度</option>
-        <option value="precip">降水</option>
-        <option value="stab">稳定度</option>
-        <option value="arrival">史前到达</option>
-        <option value="flow">流量</option>
-      </select></div>
-    <div class="row" id="rowSlot"><label>槽位</label><select id="slotSel"></select></div>
-    <div class="row" id="rowValue"><label>值</label><select id="valueSel"></select></div>
-    <div class="row" id="rowTrait"><label>特征</label><select id="traitSel"></select></div>
-    <div class="row" id="rowField"><label>量</label>
-      <select id="fieldSel"><option value="strength">strength</option><option value="reach">reach</option><option value="adopt">adopt</option><option value="share">share</option></select></div>
-    <div class="row" id="rowMode"><label>模式</label>
-      <select id="modeSel"><option value="all">全部</option><option value="daily">日常往来</option><option value="trade">商旅</option><option value="envoy">使节学问</option><option value="migrate">人口迁徙</option></select></div>
-    <div class="legend" id="legend"></div>
-  </div>
-  <div class="sec"><h3>边着色与筛选</h3>
-    <div class="row"><label>着色</label>
+
+  <div class="sec" data-lens="routes"><h3>航线</h3>
+    <label class="chk"><input type="checkbox" id="lyEdges"> 显示航线</label>
+    <div class="row" id="rowEdgeColor"><label>着色</label>
       <select id="edgeColor">
-        <option value="perm">通过率（按模式）</option>
         <option value="flow">流量</option>
+        <option value="perm">通过率（按模式）</option>
+        <option value="wind">顺逆风（按模式）</option>
         <option value="barrier">所属障碍</option>
-        <option value="wind">顺逆风（虚线流向顺风侧，按模式）</option>
         <option value="plain">单色</option>
       </select></div>
-    <div class="row"><label>模式</label>
-      <select id="edgeMode"><option value="daily">日常往来</option><option value="trade">商旅</option><option value="envoy">使节学问</option><option value="migrate">人口迁徙</option></select></div>
-    <div class="row"><label>筛选</label>
+    <div class="row" id="rowEdgeFilter"><label>筛选</label>
       <select id="edgeFilter">
-        <option value="top">流量前 N</option>
-        <option value="barrier">跨障碍边</option>
+        <option value="top">流量最大的 N 条</option>
+        <option value="barrier">跨障碍</option>
         <option value="blocked">该模式不可通</option>
-        <option value="gblock">G 阻断边</option>
+        <option value="gblock">被永暴 G 阻断</option>
         <option value="all">全部（慢）</option>
       </select></div>
-    <div class="row"><label>N</label><input type="range" id="edgeN" min="500" max="12000" step="500" value="4000"><span id="edgeNv">4000</span></div>
-    <div class="row" id="rowTheta"><label>θ</label><input type="range" id="theta" min="0.2" max="0.8" step="0.05" value="0.5"><span id="thetav">0.5</span></div>
+    <div class="row" id="rowEdgeN"><label>N</label><input type="range" id="edgeN" min="500" max="12000" step="500" value="2000"><span id="edgeNv">2000</span></div>
     <div id="edgeLegend"></div>
   </div>
-  <div class="sec small" id="hint">点击岛屿 → 探针。悬停任意海面读风/温/雨。右侧「参数」改数值后重新生成。</div>
+
+  <div class="sec" data-lens="culture polity"><h3>界线</h3>
+    <label class="chk" data-lens="culture" title="份额跨过阈值的边：同一特征「有 / 无」的分界"><input type="checkbox" id="lyIso"> 同言线</label>
+    <div class="row" id="rowTheta" data-lens="culture"><label>阈值</label><input type="range" id="theta" min="0.2" max="0.8" step="0.05" value="0.5"><span id="thetav">0.5</span></div>
+    <label class="chk" data-lens="polity" title="两端属于不同政体的边；白 = 跨本朝，橙 = 本朝内旧邦界"><input type="checkbox" id="lyBorders"> 邦界</label>
+  </div>
+
+  <div class="sec"><h3>标注</h3>
+    <label class="chk"><input type="checkbox" id="lyHubs"> 文明中心与枢纽</label>
+    <label class="chk" data-lens="routes"><input type="checkbox" id="lyTrunks"> 中心间干线</label>
+    <label class="chk" data-lens="geo routes" title="定点永暴 G（红圈）、赤道永暴带边缘、D 区（紫框）"><input type="checkbox" id="lyGeo"> 大障碍轮廓</label>
+    <label class="chk" data-lens="climate" title="八条局部风带边界，随经度起伏"><input type="checkbox" id="lyBands"> 风带边界</label>
+  </div>
+
+  <details class="adv"><summary>高级</summary>
+    <label class="chk"><input type="checkbox" id="showAll"> 显示所有视角的控件</label>
+    <div class="small">切换视角会重置底图、着色与叠加层；勾上后可在一个视角里自由组合。</div>
+  </details>
+  <div class="sec small" id="hint">点岛屿看探针 · 悬停海面读风、温、雨</div>
 </aside>
 
 <div id="globeWrap"><div id="globe"></div><div id="tip"></div><div id="loading">加载中…</div></div>
@@ -176,16 +215,17 @@ table.kv td:first-child{color:var(--dim);white-space:nowrap}
     <button data-tab="probe" class="on">探针</button>
     <button data-tab="polity">政体</button>
     <button data-tab="grid">九格表</button>
-    <button data-tab="params">参数</button>
-    <button data-tab="check">验收</button>
+    <button data-tab="dev" title="验收报告与参数重跑（改生成器时用）">开发</button>
   </div>
   <div class="tab on" id="tab-probe"><div class="small">点击岛屿查看。</div></div>
   <div class="tab" id="tab-grid"><div class="small">在探针里点「九格表」，或在下方选地区。</div>
     <div class="row"><label>地区</label><select id="regionSel"></select></div>
     <div class="md" id="gridBody"></div></div>
   <div class="tab" id="tab-polity"></div>
-  <div class="tab" id="tab-params"></div>
-  <div class="tab" id="tab-check"></div>
+  <div class="tab" id="tab-dev">
+    <details class="fold" id="foldCheck"><summary>验收报告</summary><div id="tab-check"></div></details>
+    <details class="fold" id="foldParams" open><summary>参数与重新生成</summary><div id="tab-params"></div></details>
+  </div>
 </aside>
 
 <footer><span id="status">就绪</span><span class="sp"></span><span id="coords"></span></footer>
@@ -302,6 +342,7 @@ let W=null, F=null, A=null, FA=null, cfg=null, checkData=null, globe=null, curre
 let home=null, selected=null, pathData=null;
 let distCache=null; // Float32Array 文化距离（以 home 为基准）
 let rotating=false;
+const probeOpen={};  // 探针折叠区的展开状态，跨岛保持
 
 // ------------------------------------------------------------ 数据加载
 async function loadRunList(){
@@ -310,6 +351,7 @@ async function loadRunList(){
   const sel = $('runsel'); const prev = sel.value;
   sel.innerHTML = j.runs.map(r=>`<option value="${r.run_id}">${r.run_id}（seed ${r.seed}）</option>`).join('');
   if (prev && j.runs.some(r=>r.run_id===prev)) sel.value = prev;
+  else if (j.runs.some(r=>r.run_id==='seed42')) sel.value = 'seed42';   // 验收基线种子优先
   currentRun = sel.value;
 }
 async function loadRun(rid){
@@ -335,8 +377,9 @@ async function loadRun(rid){
   home=null; selected=null; distCache=null; pathData=null;
   const pl=W.planet;
   const cal=pl.calendar&&pl.calendar.year_days_solar?` · 年 ${pl.calendar.year_days_solar.toFixed(0)} 日（${pl.calendar.seasons} 季 × ${pl.calendar.days_per_season.toFixed(0)}）· 恒星 ${pl.calendar.star.mass_msun.toFixed(2)} M☉ ${pl.calendar.star.spectral_class} 型 · ${pl.calendar.semi_major_axis_au.toFixed(2)} AU`:'';
-  $('runinfo').textContent = `半径 ${pl.radius_km} km（地球 6371）· 绕行 ${pl.circumference_days.toFixed(0)} 日`+cal
-    + ` · ${W.n_islands} 岛 · ${W.n_edges} 边 · ${W.traits.length} 特征 · ${W.slots.length} 槽位` + (W.polity?` · ${W.polity.n_states} 邦`:'');
+  $('runinfo').textContent = `seed ${W.seed} · ${W.n_islands} 岛群` + (W.polity?` · ${W.polity.n_states} 邦`:'');
+  $('runinfo').title = `半径 ${pl.radius_km} km（地球 6371）· 绕行 ${pl.circumference_days.toFixed(0)} 日`+cal
+    + ` · ${W.n_islands} 岛群 · ${W.n_edges} 边 · ${W.traits.length} 特征 · ${W.slots.length} 槽位` + (W.polity?` · ${W.polity.n_states} 邦`:'');
   buildSelectors(); buildParams(); buildCheck(); buildPolity();
   const tex = INLINE ? INLINE.texture : '/api/texture?run='+rid;
   initGlobe(tex);
@@ -382,13 +425,63 @@ function updateRowVisibility(){
   $('rowValue').style.display = by==='share'?'':'none';
   $('rowTrait').style.display = by==='trait'?'':'none';
   $('rowField').style.display = by==='trait'?'':'none';
-  $('rowMode').style.display = (by==='dist'||by==='iso')?'':'none';
+  // 模式：航运视角常驻；其他视角只在着色依赖模式时出现
+  $('rowMode').style.display = (lensShows('routes')||by==='dist'||by==='iso'||$('edgeColor').value==='wind'&&$('lyEdges').checked)?'':'none';
   $('rowTheta').style.display = $('lyIso').checked?'':'none';
   $('rowWindDens').style.display = $('lyWind').checked?'':'none';
+  const edges=$('lyEdges').checked;
+  for (const id of ['rowEdgeColor','rowEdgeFilter','rowEdgeN']) $(id).style.display = edges?'':'none';
+  $('rowEdgeN').style.display = edges&&$('edgeFilter').value!=='all'?'':'none';
+}
+// 边相关的模式没有「全部」：全部时按商旅
+function edgeModeVal(){ const m=$('modeSel').value; return m==='all'?'trade':m; }
+
+// ------------------------------------------------------------ 视角（lens）：一组预设 + 只显示相关控件
+const LENS = {
+  geo:     {desc:'岛群分布、地形类、板块与岛龄', surf:'base', colorBy:'cls',
+            on:['lyIslands','lyScale','lyHubs','lyGeo']},
+  climate: {desc:'风、温度、降水；悬停海面读数', surf:'precip', colorBy:'stab',
+            on:['lyIslands','lyWind','lyBands']},
+  routes:  {desc:'航线流量、通过率、顺逆风；模式影响全部着色', surf:'base', colorBy:'cls', edgeColor:'flow',
+            on:['lyIslands','lyEdges','lyTrunks','lyHubs','lyGeo']},
+  culture: {desc:'特征场与同言线；探针里「以此为家」看文化距离', surf:'base', colorBy:'trait',
+            on:['lyIslands','lyScale','lyHubs']},
+  polity:  {desc:'诸邦、兼并与控制力；详情见右侧「政体」', surf:'base', colorBy:'polity',
+            on:['lyIslands','lyScale','lyBorders']},
+};
+const LAYER_IDS=['lyIslands','lyScale','lyEdges','lyHubs','lyTrunks','lyGeo','lyBands','lyIso','lyBorders','lyWind'];
+let lens='geo';
+function lensShows(tag){ return $('showAll').checked || tag.split(' ').includes(lens); }
+function applyLensVisibility(){
+  const all=$('showAll').checked;
+  document.querySelectorAll('aside.left [data-lens]').forEach(el=>{
+    const ok = all || el.dataset.lens.split(' ').includes(lens);
+    if (el.tagName==='OPTION'){ el.hidden=!ok; el.disabled=!ok||el.dataset.off==='1'; }
+    else el.classList.toggle('hidden',!ok);
+  });
+  for (const id of ['colorBy','surfSel','modeSel']){ const s=$(id); if(s.selectedOptions[0]&&s.selectedOptions[0].hidden){ const first=[...s.options].find(o=>!o.hidden&&!o.disabled); if(first) s.value=first.value; } }
+  $('lensDesc').textContent = all ? '已显示所有控件' : LENS[lens].desc;
+  document.querySelectorAll('#lensBar button').forEach(b=>b.classList.toggle("on",b.dataset.l===lens));
+}
+// preset=false：只切换可见控件，不动当前的着色与图层（用于「以此为家」「九格表」这类跳转）
+function setLens(name, preset=true){
+  lens=name; try{ localStorage.setItem('zhouzhu.lens',name); }catch(e){}
+  if (preset){
+    const L=LENS[name];
+    for (const id of LAYER_IDS){ if(!$(id).disabled) $(id).checked=L.on.includes(id); }
+    $('surfSel').value=L.surf; if($('surfSel').selectedOptions[0].dataset.off==='1') $('surfSel').value='base';   // 只看本 run 有没有该网格场；视角可见性随后由 applyLensVisibility 重算
+    $('colorBy').value=L.colorBy;
+    if (L.edgeColor) $('edgeColor').value=L.edgeColor;
+    if (name!=='culture'&&$('modeSel').value==='all') $('modeSel').value='trade';
+  }
+  applyLensVisibility(); updateRowVisibility();
+  if (!globe) return;
+  distCache=null; applySurface(); repaintIslands(); rebuildStreams();   // rebuildStreams 内部会 repaintEdges
 }
 function setupWeatherUI(){ // 按本 run 实际传了哪些网格场启用/禁用控件；滑块初值来自 [web]
   const has=k=>!!(GR&&GR.f[k]);
-  for (const opt of $('surfSel').options){ if(opt.value==='base') continue; opt.disabled=!has(SURF[opt.value].field); }
+  for (const opt of $('surfSel').options){ if(opt.value==='base') continue; opt.dataset.off=has(SURF[opt.value].field)?'0':'1'; }
+  applyLensVisibility();
   if ($('surfSel').selectedOptions[0].disabled) $('surfSel').value='base';
   $('surfAlpha').value=WEB.overlay_alpha; $('surfAlphav').textContent=(+WEB.overlay_alpha).toFixed(2);
   $('surfContour').checked=!!WEB.overlay_contours;
@@ -435,7 +528,7 @@ function islandColorFn(){
   else if (by==='pop'){ if(!A.pop){ fn=()=>'#556'; legend='该 run 没有 ⑨ 政治层'; } else { const g=logNorm('pop',A.pop); fn=i=>viridis(g[i]); legend=grad('少','多','邑的人口（log）'); } }
   else if (by==='control'){ if(!A.control){ fn=()=>'#556'; legend='该 run 没有 ⑨ 政治层'; } else { fn=i=>A.state[i]<0?'#333':viridis(A.control[i]/255); legend=grad('远邑（空心）','都城','都城对此邑的控制力 exp(−w/R)'); } }
   else if (by==='share'){ const v=$('valueSel').value; const row = v==='local'?localShareRow(W.slots.indexOf($('slotSel').value)):fieldRow('share',+v); fn=i=>viridis(row[i]/255); legend=grad('0','1','share'); }
-  else if (by==='trait'){ const ti=+$('traitSel').value; const k=$('fieldSel').value; const row=fieldRow(k,ti); fn=i=>viridis(row[i]/255); legend=grad('0','1',k); }
+  else if (by==='trait'){ const ti=+$('traitSel').value; const k=$('fieldSel').value; const row=fieldRow(k,ti); fn=i=>viridis(row[i]/255); legend=grad('0','1',$('fieldSel').selectedOptions[0].textContent+'（'+k+'）'); }
   else if (by==='dist'){ if(home===null){ fn=()=> '#556'; legend='先在探针里「以此为家」'; } else { if(!distCache||distCache.mode!==$('modeSel').value){ distCache=cultureDistance(home,$('modeSel').value); distCache.mode=$('modeSel').value; } const d=distCache; fn=i=>i===home?'#ffffff':viridis(d[i]); legend=grad('相同','完全不同','文化距离 TV'); } }
   else if (by==='iso'){ const m=$('modeSel').value; const mi = m==='all'?0:MODES.indexOf(m); fn=i=>viridis(A.iso[mi*n+i]/255); legend=grad('0','1','隔离度 '+(m==='all'?'daily':MODE_ZH[m])); }
   else if (by==='suit'){ fn=i=>viridis(A.suitability[i]/255); legend=grad('低','高','适宜度'); }
@@ -462,7 +555,7 @@ function repaintIslands(){
 
 // ------------------------------------------------------------ 边
 function edgeSet(){
-  const E=W.n_edges; const mode=$('edgeMode').value; const mi=MODES.indexOf(mode); const filt=$('edgeFilter').value; const nMax=+$('edgeN').value;
+  const E=W.n_edges; const mode=edgeModeVal(); const mi=MODES.indexOf(mode); const filt=$('edgeFilter').value; const nMax=+$('edgeN').value;
   let idx=[];
   if (filt==='all'){ for(let e=0;e<E;e++) idx.push(e); }
   else if (filt==='barrier'){ for(let e=0;e<E;e++) if(A.e_barrier[e]>=0) idx.push(e); }
@@ -473,7 +566,7 @@ function edgeSet(){
   return idx;
 }
 function edgeColorFn(){
-  const by=$('edgeColor').value; const mi=MODES.indexOf($('edgeMode').value);
+  const by=$('edgeColor').value; const mi=MODES.indexOf(edgeModeVal());
   if (by==='perm') return e=>{ const p=A.e_perm[e*4+mi]/255; return p===0?'rgba(20,20,20,.9)':rdylgn(p); };
   if (by==='flow'){ let mx=0; for(let e=0;e<W.n_edges;e++) mx=Math.max(mx,A.e_flow[e]); return e=>plasma(Math.log10(1+A.e_flow[e])/Math.log10(1+mx)); }
   if (by==='barrier') return e=>{ const b=A.e_barrier[e]; return b<0?'rgba(120,130,150,.35)':BARRIER_COLOR[b]; };
@@ -488,7 +581,7 @@ function repaintEdges(){
     const cf=edgeColorFn();
     if (windMode){
       // 顺逆风：点序 = 上风 → 下风（虚线沿此流动）；颜色 = 逆向/顺向成本比 dir(−|c|)^α / dir(|c|)^α（复现 s06）
-      const mode=$('edgeMode').value; const alpha=+cfg.s06.routes.alpha[mode];
+      const mode=edgeModeVal(); const alpha=+cfg.s06.routes.alpha[mode];
       const ratioMax=Math.pow(+cfg.s06.routes.headwind_factor/+cfg.s06.routes.tailwind_factor, alpha);
       for (const e of edgeSet()){ let s=A.e_src[e], d=A.e_dst[e]; const w=edgeWindCos(s,d,e); if(w.c<0){ const t=s; s=d; d=t; }
         const ac=Math.abs(w.c); const ratio=Math.pow(dirFactor(-ac)/dirFactor(ac), alpha);
@@ -735,25 +828,26 @@ function onHover(ev){
 function selectIsland(i){
   selected=i; repaintIslands(); showTab('probe');
   const n=N(); const box=$('tab-probe');
-  const rows=[];
+  const rows=[], more=[];   // rows = 概况（常显）；more = 折叠在「更多属性」里
   rows.push(['节点',`#${i}（${fmt(A.lat[i],2)}°, ${fmt(A.lon[i],2)}°）`]);
   const qOf=(arr,v)=>{ let c=0; for(let k=0;k<arr.length;k++) if(arr[k]<=v) c++; return c/arr.length; };
   rows.push(['地形',`${W.class_zh[W.class_names[A.cls[i]]]}${A.layered[i]?'（叠层）':''}`]);
-  if (A.age){ const BT=['汇聚','离散','走滑']; const k=A.bkern?A.bkern[i]/255:0; const where=A.btype?(k>=0.5?`处于板块${BT[A.btype[i]]}带上`:(k>=0.2?`靠近板块${BT[A.btype[i]]}带`:'板块内部')):''; const a=A.age[i]; rows.push(['地质',`板块 #${A.plate?A.plate[i]:'-'} · ${where} · 岛龄 ${fmt(a)}（${a<0.3?'新岛':(a<0.65?'中年':'老岛')}）${A.layered[i]?' · 叠层':''}<div class="small">背景，不涉玩法（原则甲）</div>`]); }
-  rows.push(['规模',`群陆地 ${fmt(A.area[i],0)} km²（分位 ${fmt(qOf(A.area,A.area[i]),2)}）· 陆地占比 ${A.land_frac?fmt(A.land_frac[i],3):'-'} · 可用地率 ${A.arable_frac?fmt(A.arable_frac[i],2):'-'} · 集雨容量 ${fmt(A.catch[i],1)}（分位 ${fmt(qOf(A.catch,A.catch[i]),2)}）`
+  if (A.age){ const BT=['汇聚','离散','走滑']; const k=A.bkern?A.bkern[i]/255:0; const where=A.btype?(k>=0.5?`处于板块${BT[A.btype[i]]}带上`:(k>=0.2?`靠近板块${BT[A.btype[i]]}带`:'板块内部')):''; const a=A.age[i]; more.push(['地质',`板块 #${A.plate?A.plate[i]:'-'} · ${where} · 岛龄 ${fmt(a)}（${a<0.3?'新岛':(a<0.65?'中年':'老岛')}）${A.layered[i]?' · 叠层':''}<div class="small">背景，不涉玩法（原则甲）</div>`]); }
+  rows.push(['规模',`群陆地 ${fmt(A.area[i],0)} km²（分位 ${fmt(qOf(A.area,A.area[i]),2)}）· 集雨容量 ${fmt(A.catch[i],1)}（分位 ${fmt(qOf(A.catch,A.catch[i]),2)}）`]);
+  more.push(['陆地',`陆地占比 ${A.land_frac?fmt(A.land_frac[i],3):'-'} · 可用地率 ${A.arable_frac?fmt(A.arable_frac[i],2):'-'}`
     + `<div class="small">节点 = 岛群 = 一水共同体 = 一个基本政治单位（docs/02 §六；群内数十岛半小时可达，属第三层）</div>`]);
-  if (A.main_area) rows.push(['主岛',`${fmt(A.main_area[i],0)} km²（占群 ${fmt(A.main_area[i]/Math.max(1e-9,A.area[i])*100,0)}%）· 岛体墙高 ${fmt(A.wall_m[i],0)} m · `
+  if (A.main_area) more.push(['主岛',`${fmt(A.main_area[i],0)} km²（占群 ${fmt(A.main_area[i]/Math.max(1e-9,A.area[i])*100,0)}%）· 岛体墙高 ${fmt(A.wall_m[i],0)} m · `
     + (A.has_river&&A.has_river[i]?`<span class="mode-daily">有常年河流</span>（集水 ${fmt(A.river_size[i],0)}）`:'无河，全赖集雨')]);
   rows.push(['地区',`${W.region_names[A.region[i]]} <button class="mini" data-region="${A.region[i]}">九格表</button>`]);
   if (W.polity) rows.push(['政体',polityLine(i)]);
   rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`]);
-  if (GR) rows.push(['气象',metHtml(gread(A.lat[i],A.lon[i]))+`<div class="small">网格插值（海面）；岛上温度另减直减率 × 高度</div>`]);
-  rows.push(['史前',`谱系 L${A.lineage[i]} · 约 ${Math.round(A.arrival_yr[i])} 年前到达`]);
-  rows.push(['隔离度',MODES.map((m,k)=>`<span class="mode-${m}">${MODE_ZH[m]} ${fmt(A.iso[k*n+i]/255)}</span>`).join(' ')]);
-  rows.push(['流量',fmt(A.node_flow[i],0)]);
+  if (GR) more.push(['气象',metHtml(gread(A.lat[i],A.lon[i]))+`<div class="small">网格插值（海面）；岛上温度另减直减率 × 高度</div>`]);
+  more.push(['史前',`谱系 L${A.lineage[i]} · 约 ${Math.round(A.arrival_yr[i])} 年前到达`]);
+  more.push(['隔离度',MODES.map((m,k)=>`<span class="mode-${m}">${MODE_ZH[m]} ${fmt(A.iso[k*n+i]/255)}</span>`).join(' ')]);
+  more.push(['流量',fmt(A.node_flow[i],0)]);
   // 出边
   const es=[]; for(let e=0;e<W.n_edges;e++){ if(A.e_src[e]===i||A.e_dst[e]===i) es.push(e); }
-  const wmode=$('edgeMode').value;
+  const wmode=edgeModeVal();
   const edgeHtml = es.map(e=>{ const o=A.e_src[e]===i?A.e_dst[e]:A.e_src[e]; const c=A.e_src[e]===i?A.e_cost_ab[e]:A.e_cost_ba[e]; const p=[0,1,2,3].map(k=>fmt(A.e_perm[e*4+k]/255)).join('/'); const b=A.e_barrier[e]>=0?W.regional_order[A.e_barrier[e]]:''; const wf=GR?windFacText(windFactor(i,o,wmode,e)):'—'; return `<tr><td><button class="mini" data-node="${o}">#${o}</button></td><td>${fmt(c)} 日</td><td>${wf}</td><td>${p}</td><td>${A.e_gblock[e]?'<b style="color:#f66">G</b>':b}</td></tr>`; }).join('');
   // 槽位
   let slotHtml='';
@@ -766,14 +860,17 @@ function selectIsland(i){
     slotHtml+=`<div style="margin:6px 0"><b class="mode-${W.slot_mode[slot]}">${W.slot_meta[slot].zh}</b> <span class="small">${MODE_ZH[W.slot_mode[slot]]}</span>${top}${rej}</div>`;
   });
   let pairHtml='';
-  if (home!==null && home!==i){ const d=pairDistance(home,i); pairHtml=`<div class="sec"><h3>与家（#${home}）的文化距离</h3>`+['all',...MODES].map(m=>`<div><span class="bar" style="width:${Math.round(d[m]*120)}px;background:${m==='all'?'#ccc':MODE_COLOR[m]}"></span>${fmt(d[m])} ${m==='all'?'全部':MODE_ZH[m]}</div>`).join('')+`<div class="btnrow"><button id="btnPath">画出家→此的最优路径</button><select id="pathMode">${MODES.map(m=>`<option value="${m}">${MODE_ZH[m]}</option>`).join('')}</select></div><div id="pathBox" class="small"></div></div>`; }
+  if (home!==null && home!==i){ const d=pairDistance(home,i); pairHtml=`<div class="sec"><h3>与家（#${home}）的文化距离</h3>`+['all',...MODES].map(m=>`<div><span class="bar" style="width:${Math.round(d[m]*120)}px;background:${m==='all'?'#ccc':MODE_COLOR[m]}"></span>${fmt(d[m])} ${m==='all'?'全部':MODE_ZH[m]}</div>`).join('')+`<div class="btnrow"><button id="btnPath">画出家→此的最优路径</button><select id="pathMode">${MODES.map(m=>`<option value="${m}"${m===wmode?' selected':''}>${MODE_ZH[m]}</option>`).join('')}</select></div><div id="pathBox" class="small"></div></div>`; }
+  const fold=(key,title,body)=>`<details class="fold" data-fold="${key}"${probeOpen[key]?' open':''}><summary>${title}</summary>${body}</details>`;
   box.innerHTML = `<table class="kv">${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>
-    <div class="btnrow"><button id="btnHome">以此为家（文化距离着色）</button><button id="btnFly">飞到这里</button></div>
+    <div class="btnrow"><button id="btnHome">以此为家（看文化距离）</button><button id="btnFly">飞到这里</button></div>
     ${pairHtml}
-    <div class="sec"><h3>各槽位（比例分布）</h3>${slotHtml}</div>
-    <div class="sec"><h3>出边（${es.length}）</h3><table class="kv"><tr><td>对端</td><td>成本</td><td>去程风（${MODE_ZH[wmode]}）</td><td>日常/商旅/使节/迁徙</td><td>障碍</td></tr>${edgeHtml}</table>
-    <div class="small">去程风 = 从本岛出发的风因子 dir(c)^α（顺 &lt;1、逆 &gt;1；模式随左侧「边着色」的模式）</div></div>`;
-  $('btnHome').onclick=()=>{ home=i; distCache=null; $('colorBy').value='dist'; updateRowVisibility(); repaintIslands(); repaintLabels(); };
+    ${fold('more','更多属性',`<table class="kv">${more.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>`)}
+    ${fold('slots','各槽位（比例分布）',slotHtml)}
+    ${fold('edges',`出边（${es.length}）`,`<table class="kv"><tr><td>对端</td><td>成本</td><td>去程风（${MODE_ZH[wmode]}）</td><td>日常/商旅/使节/迁徙</td><td>障碍</td></tr>${edgeHtml}</table>
+    <div class="small">去程风 = 从本岛出发的风因子 dir(c)^α（顺 &lt;1、逆 &gt;1；模式随左侧「模式」）</div>`)}`;
+  box.querySelectorAll('details[data-fold]').forEach(d=>d.addEventListener('toggle',()=>{ probeOpen[d.dataset.fold]=d.open; }));
+  $('btnHome').onclick=()=>{ home=i; distCache=null; if(!lensShows('culture')) setLens('culture'); $('colorBy').value='dist'; $('modeSel').value='all'; updateRowVisibility(); repaintIslands(); repaintLabels(); };
   $('btnFly').onclick=()=>globe.pointOfView({lat:A.lat[i],lng:A.lon[i],altitude:0.6},800);
   const bp=$('btnPath'); if(bp) bp.onclick=()=>drawPath(home,i,$('pathMode').value);
   box.querySelectorAll('button[data-node]').forEach(b=>b.onclick=()=>selectIsland(+b.dataset.node));
@@ -814,6 +911,7 @@ async function loadGrid(r){
   else md = await (await api(`/api/ninegrid?run=${currentRun}&region=${r}`)).text();
   $('gridBody').innerHTML = mdToHtml(md);
   // 高亮地区
+  if(!lensShows('geo')&&!lensShows('culture')) setLens('geo');
   $('colorBy').value='region'; updateRowVisibility(); repaintIslands();
   const seed=W.region_seeds[r]; globe.pointOfView({lat:A.lat[seed],lng:A.lon[seed],altitude:0.7},800);
 }
@@ -909,7 +1007,7 @@ async function startRun(){
     $('log').textContent=s.log.join('\n'); $('log').scrollTop=1e9;
     if(!s.running){ clearInterval(timer); $('btnRun').disabled=false;
       if(s.error){ $('log').textContent+='\n失败：'+s.error; return; }
-      await loadRunList(); $('runsel').value=s.done_run; await loadRun(s.done_run); showTab('check'); }
+      await loadRunList(); $('runsel').value=s.done_run; await loadRun(s.done_run); showTab('dev'); $('foldCheck').open=true; }
   },1000);
 }
 
@@ -924,9 +1022,12 @@ function buildCheck(){
 // ------------------------------------------------------------ UI 绑定
 function showTab(t){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t)); document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.id==='tab-'+t)); }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
-['colorBy','slotSel','valueSel','traitSel','fieldSel','modeSel'].forEach(id=>$(id).addEventListener('change',()=>{ if(id==='slotSel') fillValueSel(); if(id==='modeSel') distCache=null; updateRowVisibility(); repaintIslands(); if($('lyIso').checked) repaintEdges(); }));
+['colorBy','slotSel','valueSel','traitSel','fieldSel','modeSel'].forEach(id=>$(id).addEventListener('change',()=>{ if(id==='slotSel') fillValueSel(); if(id==='modeSel') distCache=null; updateRowVisibility(); repaintIslands(); if($('lyIso').checked||(id==='modeSel'&&$('lyEdges').checked)) repaintEdges(); }));
+document.querySelectorAll('#lensBar button').forEach(b=>b.onclick=()=>setLens(b.dataset.l));
+$('showAll').addEventListener('change',()=>{ applyLensVisibility(); updateRowVisibility(); });
+$('checkBadge').onclick=()=>{ showTab('dev'); $('foldCheck').open=true; };
 ['lyIslands','lyScale'].forEach(id=>$(id).addEventListener('change',repaintIslands));
-['lyEdges','lyHubs','lyTrunks','lyGeo','lyBands','lyIso','lyBorders','edgeColor','edgeMode','edgeFilter','theta'].forEach(id=>$(id).addEventListener('change',()=>{ updateRowVisibility(); repaintEdges(); }));
+['lyEdges','lyHubs','lyTrunks','lyGeo','lyBands','lyIso','lyBorders','edgeColor','edgeFilter','theta'].forEach(id=>$(id).addEventListener('change',()=>{ updateRowVisibility(); repaintEdges(); }));
 $('edgeN').addEventListener('input',()=>$('edgeNv').textContent=$('edgeN').value);
 $('edgeN').addEventListener('change',repaintEdges);
 $('theta').addEventListener('input',()=>$('thetav').textContent=$('theta').value);
@@ -942,7 +1043,8 @@ $('windDens').addEventListener('change',rebuildStreams);
 $('btnView').onclick=()=>{ const g=W.bands.G; globe.pointOfView({lat:g.lat,lng:g.lon,altitude:2.2},800); };
 $('btnRotate').onclick=()=>{ rotating=!rotating; globe.controls().autoRotate=rotating; $('btnRotate').textContent=rotating?'停止自转':'自转'; };
 
-(async()=>{ try{ await loadRunList(); if(!currentRun){ $('loading').textContent='out/ 下没有可用 run，请先 zhouzhu run'; return; } updateRowVisibility(); await loadRun(currentRun); } catch(e){ $('loading').textContent='加载失败：'+e.message; console.error(e); } })();
+(async()=>{ try{ let saved=(location.hash.match(/lens=(\w+)/)||[])[1]||null; if(!saved){ try{ saved=localStorage.getItem('zhouzhu.lens'); }catch(e){} } setLens(LENS[saved]?saved:'geo');
+  await loadRunList(); if(!currentRun){ $('loading').textContent='out/ 下没有可用 run，请先 zhouzhu run'; return; } await loadRun(currentRun); } catch(e){ $('loading').textContent='加载失败：'+e.message; console.error(e); } })();
 </script>
 </body>
 </html>
