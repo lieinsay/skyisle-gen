@@ -518,4 +518,40 @@ fluvial_k = 0.02              # 河道冲刷（无量纲）：Δh = k × 起伏 
 fluvial_m = 0.5
 talus_deg = 38.0              # 热力坍塌休止角
 diffusion_k = 0.04            # 坡面扩散
+fill_iters = 40               # 每轮侵蚀前在粗网格上迭代填洼的轮数（Planchon–Darboux，填直径 ≤ 此格数的洼地，保持排水）
+pit_keep_m = 2.0              # 填洼后实际高程最多低于填平面此值（更深的洼地被抬起：湖应当少见）
 cliff_cells = 2               # 岸线向内几格标为崖缘
+
+[island.hydro]                # 5.3 水系
+fill_eps_m = 0.001            # 洼地填平的最小落差（填后每格严格高于下游）
+lake_min_km2 = 0.5            # 填平后保留为湖的洼地：面积 ≥ 此值且深 ≥ lake_min_depth_m（默认少见，大岛偶有）
+lake_min_depth_m = 3.0
+stream_min_km2 = 1.0          # 汇流面积 ≥ 此值即有季节性溪涧（小岛一律只有溪涧）
+river_min_km2 = 60.0          # 常年河（只在主岛、has_river 为真时）：汇流面积门槛；若主岛最大汇流不足，降到 river_reach_frac × 最大汇流
+river_reach_frac = 0.35
+river_mid_size = 400.0        # 行星层 river_size（主岛 km² × 相对降水）达此值 → 最大的河为中河；river_big_size → 大河
+river_big_size = 1500.0
+basin_mouth_km2 = 5.0         # 主岛集水盆地：汇流 ≥ max(此值, basin_mouth_frac × 岛面积) 的出口算河口，其集水区为一个盆地
+basin_mouth_frac = 0.02
+basin_large_frac = 0.15       # 「大盆地」= 集水区 ≥ 岛面积的此比例（R9 推论 2 的素材，≥ 2 个时标出）
+
+[island.landcover]            # 5.3 地表分类与可耕地
+rock_temp_c = -6.0            # 海拔温度（海面年均 − 6 °C/km × 高程）低于此 → 裸岩；低于 alpine_temp_c → 高山草甸
+alpine_temp_c = 2.0
+rock_slope_deg = 35.0         # 坡度 ≥ 此值 → 裸岩
+forest_wet_min = 0.5          # 湿度指数（降水 / 1500 mm × 迎风修正）≥ 此值且土层 ≥ forest_soil_min 且温度 ≥ forest_temp_min_c → 林地
+forest_soil_min = 0.3         # 土层指数（老岛厚、平地厚、汇流处厚；山脊 / 陡坡 / 新岛薄）
+forest_temp_min_c = 5.0
+shrub_wet_min = 0.25          # 不成林但 ≥ 此湿度且土层 ≥ 一半 → 灌丛；其余草坡
+wet_slope_deg = 1.5           # 湿地：坡度 < 此值且汇流 ≥ wet_acc_km2 且降水 ≥ wet_precip_mm
+wet_acc_km2 = 3.0
+wet_precip_mm = 800.0
+water_near_cells = 15         # 离河 / 湖几格内算「近水」（可耕适宜度加分，随距离平方根衰减）
+arable_slope_max_deg = 25.0   # 适宜度 = (1 − 坡度/此值)^1.5 × 温度项 × 土层项 × 近水项 × 湿度项
+arable_temp_min_c = 2.0
+terrace_slope_deg = 8.0       # 可耕且坡度 ≥ 此值 → 梯田
+
+[island.climate]              # 5.4 季节气候
+precip_mm_min = 150.0         # 第八节 a：相对降水 0 → 150 mm，1 → 4,000 mm，中间按 p^1.3
+precip_mm_max = 4000.0
+precip_mm_exp = 1.3

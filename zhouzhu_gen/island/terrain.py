@@ -167,6 +167,22 @@ def priority_fill(h: np.ndarray, mask: np.ndarray, eps: float = 1e-3) -> np.ndar
     return np.where(mask, np.array(res), np.nan)
 
 
+def fill_iter(h: np.ndarray, mask: np.ndarray, iters: int, eps: float = 0.01) -> np.ndarray:
+    """Planchon–Darboux 迭代填洼（向量化，近似）：W 从岸缘向内收敛到 max(h, min 邻 W + eps)。iters 轮能填直径 ≤ iters 格的洼地。"""
+    edge = mask & ~binary_erode(mask, 1)
+    hh = np.where(mask, h, np.inf)
+    Wf = np.where(edge, hh, np.inf)
+    for _ in range(iters):
+        mn = np.full_like(Wf, np.inf)
+        for di, dj in N8:
+            mn = np.minimum(mn, shift(Wf, di, dj, np.inf))
+        new = np.where(edge, hh, np.maximum(hh, mn + eps))
+        if np.array_equal(new, Wf):
+            break
+        Wf = new
+    return np.where(mask & np.isfinite(Wf), Wf, np.where(mask, h, np.nan))
+
+
 def d8(hf: np.ndarray, mask: np.ndarray, res_m: float):
     """D8 流向。返回 (recv_i, recv_j, slope)；出口格（流向虚空）recv = −1，slope 用 (h − keel 0) 的代理 = 本格向外的坡。"""
     H, W = hf.shape
@@ -229,16 +245,11 @@ def erode(rng, h: np.ndarray, mask: np.ndarray, res_m: float, rounds: int, base_
     slope_ref = relief / max(R_m, res_m)          # 岛的平均坡度：起伏 / 等效半径
     a_ref = 0.1 * area_km2                        # 参考汇流面积：岛的十分之一
     for _ in range(rounds):
-        # 单格洼地：抬到最低邻居之上
-        hh = np.where(mask, h, np.inf)
-        mn = np.full_like(hh, np.inf)
-        for di, dj in N8:
-            mn = np.minimum(mn, shift(hh, di, dj, np.inf))
-        edge = mask & ~binary_erode(mask, 1)
-        pit = mask & ~edge & (hh <= mn)
-        h = np.where(pit, mn + 0.05, h)
-        ri, rj, slope, _ = d8(h, mask, res_m)
-        A = accumulate(h, mask, ri, rj)
+        # 保持排水：把洼地填到出口高度（粗网格上的近似填洼；水流沿填后的面走，冲刷作用在实际高程上）
+        hf = fill_iter(h, mask, int(c["fill_iters"]))
+        h = np.where(mask, np.maximum(h, hf - float(c["pit_keep_m"])), h)
+        ri, rj, slope, _ = d8(hf, mask, res_m)
+        A = accumulate(hf, mask, ri, rj)
         E = kf * relief * (A * cell_km2 / a_ref) ** m_exp * (slope / slope_ref)
         # 不切到下游以下（保持排水）
         recv_h = np.where(ri >= 0, h[np.clip(ri, 0, None), np.clip(rj, 0, None)], base_level)

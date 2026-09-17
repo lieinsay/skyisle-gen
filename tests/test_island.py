@@ -15,7 +15,7 @@ from zhouzhu_gen.pipeline import Context, run
 
 PKG = Path(__file__).resolve().parent.parent / "zhouzhu_gen"
 SMALL = ["s03.islands.n_islands=1600"]
-STEPS = 1   # 开发中：已实现到第几步
+STEPS = 2   # 开发中：已实现到第几步
 
 
 # ---------------- IS-iso：管线不得读岛群生成器（第三层不回灌） ----------------
@@ -64,6 +64,14 @@ def test_island_deterministic_and_consistent(small_ctx):
     assert abs(c["area_km2"]["actual"] - c["area_km2"]["target"]) <= 0.02 * c["area_km2"]["target"]
     assert abs(c["main_area_km2"]["actual"] - c["main_area_km2"]["target"]) <= 0.02 * c["main_area_km2"]["target"]
     assert abs(c["height_m"]["actual"] - c["height_m"]["target"]) <= 0.01 * c["height_m"]["target"]
+    if STEPS >= 2:
+        assert abs(c["arable_frac"]["actual"] - c["arable_frac"]["target"]) < 0.005      # IS-arable
+        assert c["has_river"]["actual"] == c["has_river"]["target"]                       # IS-river
+        assert all(not i["has_perennial_river"] for i in J1["islands"][1:])               # 小岛只有溪涧
+        z = np.load(out / "terrain.npz")
+        land = z["island_id"] >= 0
+        assert np.isnan(z["height"][~land]).all() and not np.isnan(z["height"][land]).any()
+        assert (z["landcover"][land] > 0).all() and (z["landcover"][~land] == 0).all()
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)

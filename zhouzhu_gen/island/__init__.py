@@ -157,6 +157,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     c_lo, c_hi = int(max(0, cols[0] - mg)), int(min(W, cols[-1] + mg + 1))
     height = height[r_lo:r_hi, c_lo:c_hi]
     island_id = island_id[r_lo:r_hi, c_lo:c_hi]
+    land = island_id >= 0
     H, W = height.shape
     x0 += c_lo * res_km
     y0 -= r_lo * res_km
