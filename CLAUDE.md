@@ -16,9 +16,13 @@
   $py -m zhouzhu_gen.cli polity --run out/seed42  # ⑨ 政治层摘要：宗主 / 变法之国 / 兼并纪年 / 最大诸邦 / 开局候选
   $py -m zhouzhu_gen.cli probe node <id> | edge a b | path a b --mode m | trait <id> --node j
   $py -m zhouzhu_gen.cli ninegrid --run out/seed42 [--region K]
+  $py -m zhouzhu_gen.cli island 1165 --run out/seed42 [--year 0] [--res 100] [--export DIR] [--set island.x.y=v]
+                                                  # 第三层岛群生成器：out/seed42/islands/1165/（约 5–15 s；不进管线、不回灌）
+  $py -m zhouzhu_gen.cli island check 1165 --run out/seed42   # IS-* 九条校验（含重跑比哈希）
+  $py -m zhouzhu_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
   $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）
   $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 38 个测试，约 10 s
+  $py -m pytest tests -q                          # 45 个测试，约 20 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
@@ -47,6 +51,18 @@ zhouzhu_gen/
   ninegrid.py    九格表草稿（RegionData 聚合 + build_region_md + lint）
   viz.py / probe.py / web/(server.py bundle.py static/index.html static/vendor/globe.gl.min.js)
                  操作台数据通道：/api/world、/api/fields、/api/grid（② 风 / ④ 气候的 1° 网格场，R2）、/api/texture；单文件版全部内嵌于 INLINE
+                 /api/island?run=&node= 按需生成岛群并返回摘要，/api/island/preview 取总览图（探针折叠区「岛群生成器」；单文件版不支持）
+  island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`zhouzhu island <节点>`，按需生成、不进十步管线、不回灌
+                 （stages/ 与 check/ninegrid/polity/culture 不得 import 它，pytest 与 IS-iso 有静态断言）
+                 __init__  island_config（[island] 段：默认值 ← run 的 resolved ← --set，不进缓存 key）、_node_inputs、build_terrain、generate
+                 grid      局部分形噪声（LatticeNoise / FractalNoise，特征尺度以 km 给）、行程并查集连通分量、形态学、块均值 / 双线性、PNG 写出
+                 layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、峰高、索桥 / 短渡 / 导水槽 MST
+                 terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（锥 / 脊 / 台地）、粗网格侵蚀（fill_iter 保持排水、无量纲冲刷）、priority_fill / d8 / accumulate（5.3 共用）
+                 hydro     5.3 河（主岛按 has_river 调阈值）/ 溪涧 / 湖 / 河口盆地、地表 12 类、可耕地按适宜度分位取到 arable_frac
+                 climate   5.4 四季：带界随太阳摆动（Δφ = k_shift·倾角·A_sea·cos）取样再缩放到年均；温度 = 年均 + season_range/2·cos(相位 − 滞后)；季型分类命名
+                 weather   5.5 逐日：马尔可夫晴雨 + 伽马雨量（风暴日计入预算）、风暴事件、AR(1) 风温、云海漫顶；multi_year_stats 供 IS-daily
+                 output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz / climate.json / weather_y<年>.csv / preview.png
+                 check     第六节 IS-area/summit/arable/river/season/link/det/iso（硬）+ IS-daily（软，60 年）；batch 分层抽样批跑
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
@@ -66,6 +82,9 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 6. 随机数只从 `rng.stage_rng / entity_rng` 取；列表排序后使用；不迭代 set。
 7. 新增参数：写进 `config/default.toml` 对应阶段段落并给注释；操作台参数面板（`index.html` 的 `PARAM_SPEC` 或矩阵区块）按需加。
 8. `slots.toml` / `traits.toml` / `production_templates.toml` 不在 `default.toml` 里，通过 `pipeline.STAGE_EXTRA_SECTIONS` 进 ⑧⑩ 的缓存 key（⑨ 政治层不读它们）。新增这类独立配置文件要同步登记，否则改了不会失效。
+9. **第三层不回灌**：`zhouzhu_gen/island/` 只读 ①③④ 的产物，`stages/`、check、ninegrid、polity、culture 不得 import 它（`test_stages_do_not_import_island` + IS-iso）。
+   岛内的湖、多盆地等「会改变故事」的情形只写进 `island.json`，不改任何场。它的随机数用 `entity_rng(seed, ISLAND_STREAM=21, "island:{node}:{部件}")`，天气另加 `weather:{year}`；
+   `[island]` 段不进任何阶段的缓存 key，旧 run 没有这段时用 default.toml 的默认值。
 
 ## 当前默认值的由来（调参前先看）
 
@@ -103,10 +122,18 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 - 验收阈值中几个是按三 seed 校准过的：P5 强度比 2.0、重心顺风占比 0.75（起源风速门槛 2 m/s）；C5 中心周边岛上全年温差 ≥ 20 °C、冬温 ≤ 5、夏温 ≥ 20；
   「干旱」口径 `arid_precip` 0.2（≈560 mm）；河流降水门槛 0.22；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
 
+- **岛群生成器（2026-09-17，PLAN-ISLAND，`[island]`）**：栅格 100 m（群外框 > 2048 格自动加倍，38,000 km² 的最大群落到 400 m）；岛数 12–80、Zipf 1.1、最小岛 0.3 km²；
+  岸距 1–15 km（beta(1.3, 2.2)）、索桥 ≤ 2 km 且岸缘高差 ≤ 250 m；侵蚀 30 / 8 轮在 ≤ 320 格的粗网格上；湖 = 填平深 ≥ 3 m 且 ≥ 0.5 km²（`pit_keep_m=2` 让它少见）；
+  河阈值 60 km²（不够则 0.35 × 主岛最大汇流），盆地 = 汇流 ≥ max(5 km², 2%) 的河口集水区，≥ 15% 岛面积算大盆地；
+  相对降水 → mm：150 + 3850 × p^1.3（第八节 a）；带界摆动 k_shift 0.35（±5° 左右）；季型阈值：四季分明 ≥ 20 °C、冷暖两季 ≥ 8 °C、雨旱 2.5 倍、风暴 / 窗口季差 0.25；
+  雨日比例 0.12 + 0.30 × (季雨量/1000)^0.7、湿→湿持续 0.45、伽马形状 0.8、风暴日比例 0.35 × 强度^1.2（布尔覆盖率反解事件数）、云海漫顶只在峰高 < 800 m 的群。
+  IS-daily 用 60 年样本：30 年时单季标准误约 5%，和 5% 的阈值同量级（DESIGN-NOTES 四点十四）。
+
 ## 未做 / 可改进（按价值排序）
 
 - Monte Carlo 引擎（`s08.engine="mc"` 只留接口）、软先到权重（`first_arrival_weight` 默认关未实现）
-- 季节窗口进模型（现只有 `seasonal` 标志与 ④ 的窗口比例）；政治性障碍只支持经纬矩形覆盖
+- 季节窗口进模型（现只有 `seasonal` 标志与 ④ 的窗口比例；岛群生成器已给出每季窗口，但管线不读它）；政治性障碍只支持经纬矩形覆盖
+- 岛群生成器：聚落 / 田块 / 码头点位未做（第八节 e，留接口）；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四
 - 九格表 ④ 特有种 / ⑦ 外观 标【待填】；⑨ 文本量词与归因还比较模板化。⑧ 的世仇 = 接壤且势均力敌、界边最多的邻邦（启发式）
 - 政治层：兼并史是静态快照 + 逐邦顺序（无年内事件、无分裂/复国）；附庸只一层；邦名是 `邦NNN` 占位；南圈与 NW 圈不发生变法（docs/11 §八）
 - 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图；气象层没有粒子动画（流线虚线已够用）；水汽 q / 抬升 uplift 已在网格通道里
