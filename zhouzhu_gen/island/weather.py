@@ -182,9 +182,13 @@ def multi_year_stats(ctx, node: int, c: dict, g: dict, years: int = 30) -> dict:
             P[yv, s] = y["precip_mm"][m].sum()
             F[yv, s] = y["wet"][m].mean()
     clim_p = np.array([s["precip_mm"] for s in clim["seasons"]])
+    annual = P.sum(axis=1)
+    se = float(annual.std(ddof=1) / math.sqrt(years)) if years > 1 else 1.0
     return {"years": years, "precip_mean_mm": P.mean(axis=0).round(1).tolist(), "precip_climate_mm": clim_p.tolist(),
             "precip_rel_err": (np.abs(P.mean(axis=0) - clim_p) / np.maximum(clim_p, 1.0)).round(4).tolist(),
-            "annual_rel_err": round(float(abs(P.sum(axis=1).mean() - clim_p.sum()) / max(1.0, clim_p.sum())), 4),
+            "annual_rel_err": round(float(abs(annual.mean() - clim_p.sum()) / max(1.0, clim_p.sum())), 4),
+            "annual_z": round(float(abs(annual.mean() - clim_p.sum()) / max(se, 1e-9)), 2),
+            "annual_se_rel": round(se / max(1.0, clim_p.sum()), 4),
             "wet_frac_mean": F.mean(axis=0).round(3).tolist(), "wet_frac_setting": [round(p["f_rain_days"], 3) for p in params],
             "wet_frac_err": np.abs(F.mean(axis=0) - np.array([p["f_rain_days"] for p in params])).round(4).tolist()}
 

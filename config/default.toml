@@ -524,8 +524,11 @@ cliff_cells = 2               # 岸线向内几格标为崖缘
 
 [island.hydro]                # 5.3 水系
 fill_eps_m = 0.001            # 洼地填平的最小落差（填后每格严格高于下游）
-lake_min_km2 = 0.5            # 填平后保留为湖的洼地：面积 ≥ 此值且深 ≥ lake_min_depth_m（默认少见，大岛偶有）
-lake_min_depth_m = 3.0
+lake_min_km2 = 1.0            # 填平后保留为湖的洼地：面积 ≥ 此值且深 ≥ lake_min_depth_m，取最大的几个（默认少见，大岛偶有）
+lake_min_depth_m = 5.0
+lake_max_per_island = 2       # 主岛最多几个湖；其余岛 lake_max_per_islet；落选的洼地抬到填平面以下 pit_keep_m
+lake_max_per_islet = 1
+pit_keep_m = 2.0
 stream_min_km2 = 1.0          # 汇流面积 ≥ 此值即有季节性溪涧（小岛一律只有溪涧）
 river_min_km2 = 60.0          # 常年河（只在主岛、has_river 为真时）：汇流面积门槛；若主岛最大汇流不足，降到 river_reach_frac × 最大汇流
 river_reach_frac = 0.35
@@ -533,7 +536,7 @@ river_mid_size = 400.0        # 行星层 river_size（主岛 km² × 相对降�
 river_big_size = 1500.0
 basin_mouth_km2 = 5.0         # 主岛集水盆地：汇流 ≥ max(此值, basin_mouth_frac × 岛面积) 的出口算河口，其集水区为一个盆地
 basin_mouth_frac = 0.02
-basin_large_frac = 0.15       # 「大盆地」= 集水区 ≥ 岛面积的此比例（R9 推论 2 的素材，≥ 2 个时标出）
+basin_large_frac = 0.10       # 「大盆地」= 集水区 ≥ 岛面积的此比例（R9 推论 2 的素材，≥ 2 个时标出；0.15 时三 seed 没有一个群达标，0.10 约两成）
 
 [island.landcover]            # 5.3 地表分类与可耕地
 rock_temp_c = -6.0            # 海拔温度（海面年均 − 6 °C/km × 高程）低于此 → 裸岩；低于 alpine_temp_c → 高山草甸

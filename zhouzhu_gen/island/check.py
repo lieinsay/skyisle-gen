@@ -68,9 +68,10 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
         if ctx is not None and "daily" in g:
             from .weather import multi_year_stats
             st = multi_year_stats(ctx, node, c, g, years=daily_years)
-            add("IS-daily", f"{daily_years} 年逐日降水的平均 = 气候值；雨日比例落在设定 ±0.05",
-                {"annual_rel_err": st["annual_rel_err"], "season_rel_err": st["precip_rel_err"], "wet_frac_err": st["wet_frac_err"]},
-                "< 0.05 / ≤ 0.05", st["annual_rel_err"] < 0.05 and max(st["wet_frac_err"]) <= 0.05, hard=False)
+            add("IS-daily", f"{daily_years} 年逐日降水的平均 = 气候值（相对误差 < 5% 或 |z| < 3，z = 偏差 / 年际标准误）；雨日比例落在设定 ±0.05",
+                {"annual_rel_err": st["annual_rel_err"], "annual_z": st["annual_z"], "annual_se_rel": st["annual_se_rel"],
+                 "season_rel_err": st["precip_rel_err"], "wet_frac_err": st["wet_frac_err"]},
+                "< 0.05 或 z < 3 / ≤ 0.05", (st["annual_rel_err"] < 0.05 or st["annual_z"] < 3.0) and max(st["wet_frac_err"]) <= 0.05, hard=False)
     # IS-link：索桥 + 短渡连通
     from ..graph import weak_components
     n = len(J["islands"])

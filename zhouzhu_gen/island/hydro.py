@@ -67,7 +67,8 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
         mk = m[sl]
         h = np.where(mk, height[sl], np.nan)
         hf = priority_fill(h, mk, eps=float(hc["fill_eps_m"]))
-        # 湖：填平深度 ≥ lake_min_depth_m 且面积 ≥ lake_min_km2 的洼地
+        # 湖：填平深度 ≥ lake_min_depth_m 且面积 ≥ lake_min_km2 的洼地里最大的几个（每岛 ≤ lake_max_per_island）；
+        # 其余洼地按填平面抬起（最多低于填平面 pit_keep_m），不留一地小坑。湖默认少见（大岛偶有）
         depth = np.where(mk, hf - h, 0.0)
         pond = depth >= float(hc["lake_min_depth_m"])
         lk = np.zeros_like(mk)
@@ -76,9 +77,13 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
             lab, nl = label_components(pond)
             if nl:
                 cnt = np.bincount(lab.ravel(), minlength=nl + 1)[1:]
-                big = np.where(cnt * cell_km2 >= float(hc["lake_min_km2"]))[0] + 1
-                lk = np.isin(lab, big)
-                n_lakes = int(big.size)
+                big = [int(i) + 1 for i in np.argsort(-cnt, kind="stable") if cnt[i] * cell_km2 >= float(hc["lake_min_km2"])]
+                big = big[: int(hc["lake_max_per_island"] if k == 0 else hc["lake_max_per_islet"])]
+                lk = np.isin(lab, big) if big else lk
+                n_lakes = len(big)
+        raised = mk & ~lk & (hf - h > float(hc["pit_keep_m"]))
+        h = np.where(raised, hf - float(hc["pit_keep_m"]), h)
+        height[sl][raised] = h[raised]
         ri, rj, slope, _ = d8(hf, mk, res_m)
         A = accumulate(hf, mk, ri, rj)
         Akm = A * cell_km2

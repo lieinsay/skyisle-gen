@@ -64,6 +64,22 @@ def continentality(ctx, inp: dict) -> tuple[float, float]:
     return float(np.clip(cont, 0.0, 1.0)), alt
 
 
+def match_mean(raw, target: float, lo: float, hi: float, iters: int = 12) -> np.ndarray:
+    """把四季原始值缩放到均值 = target 并夹在 [lo, hi]：先乘性，夹断后把剩余亏欠加性摊到未顶格的季。"""
+    x = np.clip(np.asarray(raw, dtype=np.float64), lo, hi)
+    if x.mean() > 1e-9:
+        x = np.clip(x * (target / x.mean()), lo, hi)
+    for _ in range(iters):
+        d = target - float(x.mean())
+        if abs(d) < 1e-7:
+            break
+        free = (x < hi - 1e-12) if d > 0 else (x > lo + 1e-12)
+        if not free.any():
+            break
+        x = np.clip(x + np.where(free, d * x.size / free.sum(), 0.0), lo, hi)
+    return x
+
+
 def _sample_lat(lat: float, lon: float, dphi: float, band_local: dict) -> float:
     """摆动后的取样纬度：lat − Δφ（Δφ 为带系整体向北的偏移），不跨越赤道永暴带的局部边界。"""
     e = local_edges(band_local, np.array([lon]))
@@ -112,13 +128,9 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print) -> None:
         raw["v"].append(float(grid_interp(wl["v"], wl["lats"], wl["lons"], ls, lon)))
     raw = {k: np.array(v) for k, v in raw.items()}
     # 缩放到年均：降水 / 风暴乘性（风暴夹 [0,1] 后再校两轮），窗口加性
-    precip = raw["precip"] * (inp["precip"] / max(1e-9, raw["precip"].mean()))
-    storm = raw["storm"].copy()
-    for _ in range(4):
-        storm = np.clip(storm * (inp["storm"] / max(1e-9, storm.mean())), 0.0, 1.0) if storm.mean() > 1e-9 else np.full(n_s, inp["storm"])
-    window = np.clip(raw["window"] + (inp["window"] - raw["window"].mean()), 0.03, 1.0)
-    for _ in range(3):
-        window = np.clip(window + (inp["window"] - window.mean()), 0.03, 1.0)
+    precip = match_mean(raw["precip"], inp["precip"], 0.0, 1.0)
+    storm = match_mean(raw["storm"], inp["storm"], 0.0, 1.0) if raw["storm"].mean() > 1e-9 else np.full(n_s, inp["storm"])
+    window = match_mean(raw["window"], inp["window"], 0.03, 1.0)
     # 温度：年均 + 半振幅 × cos(相位 − 滞后)，南半球反相
     amp_isl = 0.5 * inp["season_range"]
     amp_sea = 0.5 * inp["season_range_sea"]
