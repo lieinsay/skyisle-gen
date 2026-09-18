@@ -380,7 +380,7 @@ function buildDayLayer(d){
       else { r = 120; g = 170; b = 255; al = 150 * Math.min(1, flow); }
     } else {
       const sp = T.snow[d * NBIN + S.bin[p]];
-      if (sp > 5) { snowCells++; r = 245; g = 248; b = 255; al = 255 * Math.min(0.95, 0.4 + sp / 60); }
+      if (sp > 5) { snowCells++; r = 245; g = 248; b = 255; al = 255 * Math.min(0.72, 0.35 + sp / 150); }
       else if (S.veg[p] === 4) { r = cropCol[0]; g = cropCol[1]; b = cropCol[2]; al = 175; }
       else if (S.veg[p]) { const v = S.veg[p]; r = VEG_DORMANT[v][0] + (VEG_LUSH[v][0] - VEG_DORMANT[v][0]) * gr; g = VEG_DORMANT[v][1] + (VEG_LUSH[v][1] - VEG_DORMANT[v][1]) * gr; b = VEG_DORMANT[v][2] + (VEG_LUSH[v][2] - VEG_DORMANT[v][2]) * gr; al = 135; }
     }
@@ -404,7 +404,7 @@ function fxFrame(ts){
   if (storm) { ctx.fillStyle = 'rgba(15,18,50,0.28)'; ctx.fillRect(0, 0, W, H); if (Math.random() < 0.012) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(0, 0, W, H); } }
   else if (w.type === '多云') { ctx.fillStyle = 'rgba(50,55,70,0.18)'; ctx.fillRect(0, 0, W, H); }
   // 粒子池：雨 / 雪 / 风
-  const want = rain ? (storm ? 700 : (w.type === '大雨' ? 400 : 150)) : (w.wind_ms > 3 ? Math.min(220, (w.wind_ms * 12) | 0) : 0);
+  const want = rain ? (storm ? 700 : (w.type === '大雨' ? 400 : 150)) : (w.wind_ms >= 5 ? Math.min(140, ((w.wind_ms - 4) * 10) | 0) : 0);
   while (particles.length < want) particles.push({ x: Math.random() * W, y: Math.random() * H, l: Math.random() });
   if (particles.length > want) particles.length = want;
   const vx = wx * 18, vy = wy * 18;
@@ -414,8 +414,8 @@ function fxFrame(ts){
     for (const q of particles) { const dx = vx * (snowing ? 0.4 : 1), dy = fall + vy; q.x += dx * dt; q.y += dy * dt; if (q.y > H || q.x < -20 || q.x > W + 20) { q.x = Math.random() * W; q.y = -10; } if (snowing) { ctx.moveTo(q.x, q.y); ctx.lineTo(q.x + 1.5, q.y + 1.5); } else { ctx.moveTo(q.x, q.y); ctx.lineTo(q.x - dx * 0.02, q.y - dy * 0.02); } }
     ctx.stroke();
   } else if (want) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.beginPath();
-    for (const q of particles) { q.x += vx * dt; q.y += vy * dt; q.l += dt; if (q.x < -20 || q.x > W + 20 || q.y < -20 || q.y > H + 20 || q.l > 3) { q.x = Math.random() * W; q.y = Math.random() * H; q.l = 0; } const a = Math.sin(Math.min(1, q.l / 3) * Math.PI); ctx.globalAlpha = a; ctx.moveTo(q.x, q.y); ctx.lineTo(q.x - vx * 0.05, q.y - vy * 0.05); }
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (const q of particles) { q.x += vx * dt; q.y += vy * dt; q.l += dt; if (q.x < -20 || q.x > W + 20 || q.y < -20 || q.y > H + 20 || q.l > 3) { q.x = Math.random() * W; q.y = Math.random() * H; q.l = 0; } const a = Math.sin(Math.min(1, q.l / 3) * Math.PI); ctx.globalAlpha = a; ctx.moveTo(q.x, q.y); ctx.lineTo(q.x - vx * 0.12, q.y - vy * 0.12); }
     ctx.stroke(); ctx.globalAlpha = 1;
   }
   if (w.type === '云海漫顶') {
@@ -471,7 +471,9 @@ function renderDay(){
     $('dayState').innerHTML = `雪线 ${T.snowLine[day] > T.hmax ? '无雪' : fmt(T.snowLine[day], 0) + ' m'}${st ? `（积雪覆盖陆地 ${fmt(st.snowFrac * 100, 0)}%）` : ''} · 岸缘气温 ${fmt(T.Trim[day], 1)} °C · 土壤湿度 ${fmt(T.wet[day], 2)} · 植被 ${fmt(T.green[day], 2)} · 作物 ${['休耕', '出苗', '生长', '将熟', '待收'][Math.min(4, (T.crop[day] * 5) | 0)]} · 溪涧 ${T.flow[day] >= 0.5 ? '有水' : '<span style="color:#e0a060">断流</span>'} · 河 ${riverState}${d.type === '云海漫顶' ? ' · <span style="color:#e6e1f2">云海漫上岸缘 ' + fmt(T.fogH, 0) + ' m</span>' : ''}`;
   } else $('dayState').textContent = '';
   const C = D.climate; const arrow = '↓↙←↖↑↗→↘'[Math.round(d.wind_from_deg / 45) % 8];
-  $('dayCard').innerHTML = `<b>第 ${d.day} 日</b> · ${d.season_name} · ${d.month} 月 ${d.day_of_month} 日 <span class="pill" style="background:${TYPE_COLORS[d.type]};color:#111">${d.type}</span> ${d.storm_event ? '<span class="pill">风暴 #' + d.storm_event + '</span>' : ''}
+  let ground = '';
+  if (dayTab && liveOn() && dayStats) { const T = dayTab; const tags = []; if (dayStats.snowFrac >= 0.05) tags.push(`积雪 ${fmt(dayStats.snowFrac * 100, 0)}%`); if (T.frozen[day]) tags.push('河湖结冰'); if (T.flood[day]) tags.push('漫滩'); if (T.flow[day] < 0.5 && !T.frozen[day]) tags.push('溪涧断流'); if (tags.length) ground = ' <span class="small">地面：</span>' + tags.map(t => `<span class="pill" style="background:#2b3646">${t}</span>`).join(''); }
+  $('dayCard').innerHTML = `<b>第 ${d.day} 日</b> · ${d.season_name} · ${d.month} 月 ${d.day_of_month} 日 <span class="small">天空：</span><span class="pill" style="background:${TYPE_COLORS[d.type]};color:#111">${d.type}</span> ${d.storm_event ? '<span class="pill">风暴 #' + d.storm_event + '</span>' : ''}${ground}
     <div>降水 ${fmt(d.precip_mm, 1)} mm · 气温 ${fmt(d.temp_c, 1)} °C（岛上年均高度处）· 风 ${fmt(d.wind_ms, 1)} m/s 自 ${d.wind_from_deg}° ${arrow} · ${d.sailable ? '<span style="color:#9be0b6">可出航</span>' : '<span style="color:#f0a2a2">禁航</span>'}</div>
     <div class="small">季中气候：${C.seasons[d.season].name} 温 ${fmt(C.seasons[d.season].temp_c, 1)} °C，季雨 ${fmt(C.seasons[d.season].precip_mm, 0)} mm，风暴 ${fmt(C.seasons[d.season].storm, 2)}，窗口 ${fmt(C.seasons[d.season].window, 2)}</div>`;
 }
