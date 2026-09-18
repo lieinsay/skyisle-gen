@@ -247,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
     def _island_data(self, rid, node, year, force=False, sets=None):
         ctx = self.app.ctx(rid)
         out = ctx.out_dir / "islands" / str(node)
-        need = force or not all((out / f).exists() for f in ("island.json", "climate.json", "terrain.npz", "preview_main.png", f"weather_y{year}.csv"))
+        need = force or not all((out / f).exists() for f in ("island.json", "climate.json", "terrain.npz", "preview_main.png", "settlements.json", f"weather_y{year}.csv"))
         if not need:
             C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
             need = C.get("weather", {}).get("year") != year or not isinstance(C.get("weather", {}).get("days"), list)
@@ -257,7 +257,8 @@ class Handler(BaseHTTPRequestHandler):
                 generate(ctx, node, year=year, sets=list(sets or []), log=lambda *a: None)
         J = json.loads((out / "island.json").read_text(encoding="utf-8"))
         C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
-        return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "island_cfg": ctx.cfg.get("island", {}),
+        S = json.loads((out / "settlements.json").read_text(encoding="utf-8")) if (out / "settlements.json").exists() else None
+        return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "settlements": S, "island_cfg": ctx.cfg.get("island", {}),
                 "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
                 "preview_main": f"/api/island/preview?run={rid}&node={node}&main=1&t={int(time.time())}"}
 

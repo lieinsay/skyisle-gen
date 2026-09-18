@@ -85,6 +85,12 @@ def _lens_panel(ax, g: dict):
         ax.imshow(rv, extent=extent, origin="upper", cmap="Blues", alpha=0.95, vmin=-1, vmax=3, interpolation="nearest")
         lk = np.where(g["lake"], 1.0, np.nan)
         ax.imshow(lk, extent=extent, origin="upper", cmap="winter", alpha=0.9, vmin=0, vmax=1, interpolation="nearest")
+    if "settle" in g:
+        S = g["settle"]
+        vx = [r["km"][0] for r in S["villages"]]; vy = [r["km"][1] for r in S["villages"]]
+        vs = [6 + 0.25 * r["households"] for r in S["villages"]]
+        ax.scatter(vx, vy, s=vs, c="white", edgecolors="black", linewidths=0.5, zorder=5)
+        ax.scatter([r["km"][0] for r in S["hamlets"]], [r["km"][1] for r in S["hamlets"]], s=5, c="#ffc8c8", edgecolors="black", linewidths=0.3, zorder=5)
     isl = J["islands"]
     cx = {i["id"]: i["center_km"] for i in isl}
     for e in J["links"]:
@@ -209,3 +215,12 @@ def write_preview_main(out: Path, g: dict) -> Path:
     fig.savefig(p, dpi=110, bbox_inches="tight")
     plt.close(fig)
     return p
+
+
+SETTLE_PALETTE = [(0, 0, 0), (230, 200, 90), (210, 170, 60), (255, 255, 255), (255, 200, 200), (60, 200, 255), (255, 230, 80), (80, 120, 255), (120, 200, 255)]
+
+
+def write_settlements(out: Path, g: dict) -> None:
+    """settlements.json + settlements.png（8 位索引：1 田块 / 2 梯田 / 3 村 / 4 散户 / 5 码头 / 6 桥头 / 7 蓄水池 / 8 取水点）。"""
+    write_png8(out / "settlements.png", g["settle_raster"], SETTLE_PALETTE)
+    (out / "settlements.json").write_text(json.dumps(g["settle"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")

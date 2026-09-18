@@ -596,3 +596,15 @@ fog_peak_max_m = 800.0        # 云海漫顶：主岛峰高低于此值的群才
 fog_p0 = 0.45                 # 基础概率（× 低度 × 静风 × 潮湿）
 fog_calm_ms = 6.0             # 风速达此值即不成雾
 sail_wind_max_ms = 14.0       # 出航：非风暴、风速低于此值、按季窗口的平静概率
+
+[island.settle]               # 聚落生成器（docs/PLAN-SETTLE.md；第三层，人口只读 ⑨）
+household_size = 5.0          # 人 / 户（只用于把人口换成户数）
+village_min_hh = 8            # 田块分到的户数 ≥ 此值成村，否则散户
+village_max_hh = 80           # 大田块按此户数的地量切分，一份配一村
+seat_max_hh = 300             # 主岛最大的田块可以撑到邑治规模
+site_reach_cells = 8          # 村址离自家田块 ≤ 此格数（100 m 格 = 800 m）
+site_slope_max_deg = 15.0     # 村址坡度上限
+village_min_sep_km = 1.0      # 同岛村与村的最小间距（不够就退而求其次）
+water_near_cells = 10         # 「近水」评分的距离尺度（格）
+shore_near_cells = 20         # 「近岸」评分的距离尺度（格）
+site_weights = { field = 1.0, water = 0.8, slope = 0.5, lee = 0.3, shore = 0.3 }   # 村址评分权重

@@ -222,12 +222,18 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     if steps >= 4:
         from .weather import build_weather
         build_weather(ctx, node, c, g, year=year, log=log)
+    if steps >= 5:
+        from .settle import build_settlements
+        build_settlements(ctx, node, c, g, log=log)
     out = ctx.out_dir / "islands" / str(node)
     g["json"]["meta"]["seconds"] = round(time.perf_counter() - t0, 2)
     write_terrain(out, g)
     if "climate" in g:
         from .climate import write_climate
         write_climate(out, g, year)
+    if "settle" in g:
+        from .output import write_settlements
+        write_settlements(out, g)
     p = write_preview(out, g)
     write_preview_main(out, g)
     log(f"[island {node}] 完成 {time.perf_counter() - t0:.1f} s → {out}")

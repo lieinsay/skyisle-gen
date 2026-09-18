@@ -86,6 +86,7 @@ a{color:var(--acc2)}
     <label class="chk"><input type="checkbox" id="ovContour"> 等高线（100 m）</label>
     <label class="chk" title="随日期变化：积雪与雪线、植被枯荣与作物、溪涧断流 / 河道涨水漫滩 / 结冰、云海漫顶"><input type="checkbox" id="ovLive" checked> 季相与水情（随日期变）</label>
     <label class="chk" title="雨丝 / 雪花 / 风暴 / 多云 / 云雾 / 风的粒子"><input type="checkbox" id="ovFx" checked> 天气特效</label>
+    <label class="chk" title="村（圆的大小 = 户数）、散户、码头 / 桥头 / 蓄水池"><input type="checkbox" id="ovSettle" checked> 聚落</label>
     <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="4"><span id="exagV" class="small">4</span></div>
     <div id="legend" class="legend"></div>
   </div>
@@ -196,6 +197,8 @@ function renderSide(){
   $('hydro').innerHTML = `<tr><td>降水</td><td>${fmt(hy.precip_mm, 0)} mm/年</td></tr><tr><td>河阈值</td><td>${hy.river_threshold_km2 ?? '—'} km²（主岛最大汇流 ${fmt(hy.main_max_flowacc_km2, 0)}）</td></tr>
     <tr><td>湖</td><td>${hy.n_lakes} 个 · ${fmt(hy.lake_km2, 2)} km²</td></tr><tr><td>盆地</td><td>${hy.main_basins ? hy.main_basins.n_basins + ' 个，大盆地 ' + hy.main_basins.n_large + '（最大占 ' + fmt(hy.main_basins.largest_frac * 100, 0) + '%）' : '—'}</td></tr>
     <tr><td>索桥/短渡</td><td>${J.layout.n_bridges} / ${J.layout.n_ferries}，导水槽联通 ${J.layout.channel_islands} 岛，岸距中位 ${J.layout.gap_median_km} km</td></tr><tr><td>地表</td><td>${lcs}</td></tr>`;
+  const S = D.settlements;
+  if (S) $('hydro').innerHTML += `<tr><td>聚落</td><td>人口 ${fmt(S.population, 0)}（${S.population_source}）· ${S.households} 户 · 村 ${S.n_villages}（邑治 ${S.seat_households} 户，中位 ${S.village_hh_median}）· 散户 ${S.n_hamlets} · 田块 ${S.n_fields}，户均地 ${fmt(S.land_per_household_km2 * 100, 1)} ha</td></tr>`;
   $('islandList').innerHTML = J.islands.map(i => `<button class="mini" data-i="${i.id}" title="${i.area_km2} km² · 峰 ${i.peak_m} m · 岸缘 ${i.rim_m} m · ${i.age_zh}${i.n_lakes ? ' · 湖 ' + i.n_lakes : ''}${i.has_perennial_river ? ' · 有河' : ''}">${i.id}</button>`).join('');
   $('islandList').querySelectorAll('button').forEach(b => b.onclick = () => zoomIsland(+b.dataset.i));
   const f = `/api/island/preview?run=${run}&node=${node}`;
@@ -287,6 +290,7 @@ function draw(){
     for (const e of J.links) { const a = pos(J.islands[e.a]), b = pos(J.islands[e.b]); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); if (e.kind === 'bridge') { ctx.strokeStyle = 'rgba(255,221,85,.9)'; ctx.lineWidth = 1.5; ctx.setLineDash([]); } else { ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 0.8; ctx.setLineDash([4, 4]); } ctx.stroke(); }
     ctx.setLineDash([]); for (const [a, b] of J.channels) { const p = pos(J.islands[a]), r = pos(J.islands[b]); ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(r[0], r[1]); ctx.strokeStyle = 'rgba(51,204,255,.85)'; ctx.lineWidth = 2.5; ctx.stroke(); }
   }
+  if ($('ovSettle').checked && D.settlements) drawSettlements(ctx);
   if ($('ovLabels').checked) { ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const i of J.islands) { const p = pos(i); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(p[0] - 9, p[1] - 7, 18, 14); ctx.fillStyle = '#fff'; ctx.fillText(i.id, p[0], p[1]); } }
   // 比例尺
   const km = 10 * 1000 / R.res_m * view.s; ctx.fillStyle = '#fff'; ctx.fillRect(12, cv.height - 18, km, 3); ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.fillText('10 km', 12, cv.height - 26);
@@ -314,7 +318,7 @@ function draw(){
   window.addEventListener('resize', () => draw());
   ['baseSel','ovWater','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
   $('ovFx').addEventListener('change', () => { if (!$('ovFx').checked) { const f = $('fx'); f.getContext('2d').clearRect(0, 0, f.width, f.height); } });
-  ['ovLinks','ovLabels'].forEach(id => $(id).addEventListener('change', draw));
+  ['ovLinks','ovLabels','ovSettle'].forEach(id => $(id).addEventListener('change', draw));
   $('exag').addEventListener('input', () => { $('exagV').textContent = $('exag').value; base = null; draw(); });
   $('btnFit').onclick = () => { fitView(); draw(); }; $('btnMain').onclick = () => zoomIsland(0);
   $('btnGo').onclick = () => { run = $('runIn').value.trim(); node = +$('nodeIn').value; load(); };
@@ -326,6 +330,16 @@ function draw(){
   $('btnPlay').onclick = () => { playing = !playing; $('btnPlay').textContent = playing ? '❚❚' : '▶'; if (playTimer) clearInterval(playTimer); if (playing) playTimer = setInterval(() => { day = (day + 1) % 336; $('daySl').value = day; onDay(); }, 1000 / +$('speed').value); };
   requestAnimationFrame(fxFrame);
 })();
+
+// ------------------------------------------------------------ 聚落叠加层（settlements.json）
+function drawSettlements(ctx){
+  const S = D.settlements; const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];
+  for (const h of S.hamlets || []) { const p = cellPos(h.cell); ctx.fillStyle = 'rgba(255,200,200,0.9)'; ctx.beginPath(); ctx.arc(p[0], p[1], 2, 0, 7); ctx.fill(); }
+  for (const v of S.villages || []) { const p = cellPos(v.cell); const r = 2.5 + Math.sqrt(v.households) * 0.6; ctx.fillStyle = v.seat ? 'rgba(255,215,90,0.95)' : 'rgba(255,255,255,0.9)'; ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.fill(); ctx.stroke(); if (view.s * (10 / R.step) > 14 || v.seat) { ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`${v.name} ${v.households}户`, p[0] + r + 2, p[1] + 3); } }
+  for (const d of S.docks || []) { const p = cellPos(d.cell); ctx.fillStyle = '#3cc8ff'; ctx.fillRect(p[0] - 3, p[1] - 3, 6, 6); }
+  for (const b of S.bridgeheads || []) { const p = cellPos(b.cell); ctx.fillStyle = '#ffe650'; ctx.fillRect(p[0] - 2, p[1] - 2, 4, 4); }
+  for (const w of (S.cisterns || []).concat(S.intakes || [])) { const p = cellPos(w.cell); ctx.fillStyle = '#5078ff'; ctx.beginPath(); ctx.moveTo(p[0], p[1] - 4); ctx.lineTo(p[0] + 4, p[1] + 3); ctx.lineTo(p[0] - 4, p[1] + 3); ctx.closePath(); ctx.fill(); }
+}
 
 // ------------------------------------------------------------ 季相与水情（随日期变化的地貌）
 // 全部在浏览器里按逐日天气推：积雪按高程分箱做度日融雪，前期降水指数给土壤湿度，积温给作物阶段；不改任何产物。

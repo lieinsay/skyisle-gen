@@ -15,7 +15,7 @@ from zhouzhu_gen.pipeline import Context, run
 
 PKG = Path(__file__).resolve().parent.parent / "zhouzhu_gen"
 SMALL = ["s03.islands.n_islands=1600"]
-STEPS = 4   # 开发中：已实现到第几步
+STEPS = 5   # 开发中：已实现到第几步
 
 
 # ---------------- IS-iso：管线不得读岛群生成器（第三层不回灌） ----------------
@@ -91,6 +91,23 @@ def test_island_deterministic_and_consistent(small_ctx):
         h3 = _hash_dir(out3)
         assert h3["terrain.npz"] == h1["terrain.npz"] and h3["height.png"] == h1["height.png"]
         assert (out3 / "weather_y1.csv").read_bytes() != (out / "weather_y0.csv").read_bytes()
+    if STEPS >= 5:
+        S = json.loads((out / "settlements.json").read_text(encoding="utf-8"))
+        z = np.load(out / "terrain.npz")
+        # SET-pop：户数之和 = 人口 / 户均；SET-field：田块面积之和 = 可耕地；SET-site：村不在崖缘 / 水面 / 漫滩，且村之间 ≥ 1 km
+        assert S["households_in_villages"] + S["households_in_hamlets"] == S["households"] == round(S["population"] / S["household_size"])
+        assert abs(sum(f["area_km2"] for f in S["fields"]) - float((z["arable"] > 0).sum()) * (J1["raster"]["res_m"] / 1000) ** 2) < 1e-3
+        assert all(f["households"] >= 8 for f in S["fields"] if f["village"] and f["village"] > 0)
+        for v in S["villages"]:
+            i, j = v["cell"]
+            assert not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0 and z["island_id"][i, j] == v["island"]
+        cells = np.array([v["cell"] for v in S["villages"]], dtype=float)
+        if cells.shape[0] > 1:
+            d = np.sqrt(((cells[:, None, :] - cells[None, :, :]) ** 2).sum(-1)) * J1["raster"]["res_m"] / 1000
+            np.fill_diagonal(d, 9e9)
+            assert d.min() > 0.05, d.min()                       # 不同村不同格（1 km 间距是软项：放不下时退而求其次）
+            assert (d.min(axis=1) >= 1.0 - 1e-9).mean() >= 0.8    # 八成以上的村满足 1 km 间距
+        assert any(v.get("seat") for v in S["villages"]) and S["villages"][0]["island"] == 0 or S["n_villages"] == 0
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)
