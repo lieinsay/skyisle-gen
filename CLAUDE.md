@@ -55,6 +55,7 @@ zhouzhu_gen/
                  /api/island?run=&node= 按需生成岛群并返回摘要，/api/island/preview 取总览图（探针折叠区「岛群生成器」；单文件版不支持）
                  **岛群调试台** `static/island.html`（`/island.html?run=&node=[&year=]`，探针里有链接）：2D canvas 图层（地形 / 晕渲 / 地表 / 坡度 / 汇流 / 岛号 / 当日海拔温度）、
                  滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水 / 当日温度）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
+                 「季相与水情」日图层（积雪 / 雪线、植被枯荣、作物阶段、溪涧断流、河道涨水漫滩、结冰、云海漫顶）与「天气特效」（雨雪风暴云雾风粒子）都在浏览器里按逐日天气推，不改产物（DESIGN-NOTES 四点十四）；
                  数据通道 /api/island/data（island.json + climate.json 含 weather.days）、/api/island/raster（terrain.npz 定型数组 base64，> 160 万格抽稀）、POST /api/island/regen
   island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`zhouzhu island <节点>`，按需生成、不进十步管线、不回灌
                  （stages/ 与 check/ninegrid/polity/culture 不得 import 它，pytest 与 IS-iso 有静态断言）
