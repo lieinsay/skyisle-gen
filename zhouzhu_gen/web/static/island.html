@@ -21,6 +21,7 @@ aside{background:var(--panel);overflow:auto;padding:10px 12px;border-right:1px s
 aside.right{border-right:0;border-left:1px solid var(--line)}
 #mapWrap{position:relative;overflow:hidden;background:#05070d}
 #map{position:absolute;left:0;top:0;width:100%;height:100%;display:block;cursor:crosshair}
+#fx{position:absolute;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none}
 footer{grid-column:1/4;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--panel);border-top:1px solid var(--line);color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden}
 .sec{margin-bottom:14px}
 .sec h3{font-size:12px;color:var(--dim);margin:0 0 6px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
@@ -83,6 +84,8 @@ a{color:var(--acc2)}
     <label class="chk"><input type="checkbox" id="ovLinks" checked> 索桥 / 短渡 / 导水槽</label>
     <label class="chk"><input type="checkbox" id="ovLabels" checked> 岛号标签</label>
     <label class="chk"><input type="checkbox" id="ovContour"> 等高线（100 m）</label>
+    <label class="chk" title="随日期变化：积雪与雪线、植被枯荣与作物、溪涧断流 / 河道涨水漫滩 / 结冰、云海漫顶"><input type="checkbox" id="ovLive" checked> 季相与水情（随日期变）</label>
+    <label class="chk" title="雨丝 / 雪花 / 风暴 / 多云 / 云雾 / 风的粒子"><input type="checkbox" id="ovFx" checked> 天气特效</label>
     <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="4"><span id="exagV" class="small">4</span></div>
     <div id="legend" class="legend"></div>
   </div>
@@ -97,6 +100,7 @@ a{color:var(--acc2)}
 
 <div id="mapWrap">
   <canvas id="map"></canvas>
+  <canvas id="fx"></canvas>
   <div id="tip"></div>
   <div id="loading">加载中…</div>
 </div>
@@ -112,6 +116,7 @@ a{color:var(--acc2)}
     <canvas class="chart" id="dayChart" height="170"></canvas>
     <div class="row"><input type="range" id="daySl" min="0" max="335" value="0"><button id="btnPlay" class="mini">▶</button><select id="speed" style="max-width:70px"><option value="8">8 d/s</option><option value="24" selected>24 d/s</option><option value="84">84 d/s</option></select></div>
     <div id="dayCard"></div>
+    <div id="dayState" class="small"></div>
     <table class="kv" id="wseasons"></table>
   </div>
   <details class="fold"><summary>参数覆盖与重新生成</summary>
@@ -164,8 +169,8 @@ async function load(force = false, sets = null){
       slope: rr.slope_u8 ? b64(rr.slope_u8, Uint8Array) : null, fa: rr.flowacc_log_u8 ? b64(rr.flowacc_log_u8, Uint8Array) : null };
     R.res_m = D.island.raster.res_m * R.step;
     history.replaceState(null, '', `?run=${run}&node=${node}&year=${year}`);
-    base = null; day = Math.min(day, 335);
-    renderSide(); fitView(); draw(); renderClimate(); renderWeather();
+    base = null; dayLayer = null; dayTab = null; day = Math.min(day, 335);
+    renderSide(); buildDayTables(); fitView(); draw(); renderClimate(); renderWeather();
     setStatus(`就绪：${run} #${node} · ${R.rows}×${R.cols} @ ${R.res_m} m${R.step > 1 ? '（抽稀 ' + R.step + '×）' : ''} · 生成 ${D.island.meta.seconds} s`);
   } catch (e) { setStatus('出错：' + e); console.error(e); }
   $('loading').style.display = 'none';
@@ -250,7 +255,7 @@ function buildBase(){
     d[o] = c[0]; d[o+1] = c[1]; d[o+2] = c[2]; d[o+3] = 255;
   }
   // 叠加层直接画进 base（栅格级）
-  if ($('ovWater').checked && R.river) for (let p = 0; p < rows * cols; p++) { const o = p * 4; if (R.lake && R.lake[p]) { d[o]=30; d[o+1]=80; d[o+2]=200; } else if (R.river[p]) { const v = R.river[p]; d[o]=40; d[o+1]=90+20*v; d[o+2]=200+15*v; } else if (R.stream && R.stream[p]) { d[o]=(d[o]+120)/2; d[o+1]=(d[o+1]+170)/2; d[o+2]=(d[o+2]+255)/2; } }
+  if ($('ovWater').checked && R.river && !liveOn()) for (let p = 0; p < rows * cols; p++) { const o = p * 4; if (R.lake && R.lake[p]) { d[o]=30; d[o+1]=80; d[o+2]=200; } else if (R.river[p]) { const v = R.river[p]; d[o]=40; d[o+1]=90+20*v; d[o+2]=200+15*v; } else if (R.stream && R.stream[p]) { d[o]=(d[o]+120)/2; d[o+1]=(d[o+1]+170)/2; d[o+2]=(d[o+2]+255)/2; } }
   if ($('ovArable').checked && R.arable) for (let p = 0; p < rows * cols; p++) { const a = R.arable[p]; if (!a) continue; const o = p * 4; const c = a === 2 ? [210,150,40] : [240,205,80]; d[o]=(d[o]+c[0]*2)/3; d[o+1]=(d[o+1]+c[1]*2)/3; d[o+2]=(d[o+2]+c[2]*2)/3; }
   if ($('ovCliff').checked && R.cliff) for (let p = 0; p < rows * cols; p++) if (R.cliff[p]) { const o = p * 4; d[o]=150; d[o+1]=60; d[o+2]=60; }
   if ($('ovContour').checked) { const step = 100; for (let i = 1; i < rows; i++) for (let j = 1; j < cols; j++) { const p = i * cols + j; if (!h[p] || !h[p-1] || !h[p-cols]) continue; const a = ((h[p]-1)/step)|0; if (a !== (((h[p-1]-1)/step)|0) || a !== (((h[p-cols]-1)/step)|0)) { const o = p*4; d[o]*=0.45; d[o+1]*=0.45; d[o+2]*=0.45; } } }
@@ -274,6 +279,7 @@ function draw(){
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, cv.width, cv.height);
   ctx.imageSmoothingEnabled = view.s < 1;
   ctx.setTransform(view.s, 0, 0, view.s, view.tx, view.ty); ctx.drawImage(base, 0, 0);
+  if (liveOn()) { if (!dayLayer || dayLayerDay !== day) buildDayLayer(day); ctx.drawImage(dayLayer, 0, 0); }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const J = D.island; const pos = i => { const [x, y] = cellXY(i.center_km[0], i.center_km[1]); return [x * view.s + view.tx, y * view.s + view.ty]; };
   if ($('ovLinks').checked) {
@@ -305,7 +311,8 @@ function draw(){
   });
   cv.addEventListener('mouseleave', () => $('tip').style.display = 'none');
   window.addEventListener('resize', () => draw());
-  ['baseSel','ovWater','ovArable','ovCliff','ovContour'].forEach(id => $(id).addEventListener('change', () => { base = null; draw(); }));
+  ['baseSel','ovWater','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
+  $('ovFx').addEventListener('change', () => { if (!$('ovFx').checked) { const f = $('fx'); f.getContext('2d').clearRect(0, 0, f.width, f.height); } });
   ['ovLinks','ovLabels'].forEach(id => $(id).addEventListener('change', draw));
   $('exag').addEventListener('input', () => { $('exagV').textContent = $('exag').value; base = null; draw(); });
   $('btnFit').onclick = () => { fitView(); draw(); }; $('btnMain').onclick = () => zoomIsland(0);
@@ -313,9 +320,112 @@ function draw(){
   $('btnYear').onclick = () => { year = +$('yearIn').value; load(); };
   $('btnRegen').onclick = () => { year = +$('yearIn').value; load(false, $('sets').value.split('\n').map(s => s.trim()).filter(Boolean)); };
   $('btnDefaults').onclick = () => { const b = $('cfgBox'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; b.textContent = JSON.stringify(D.island_cfg, null, 1); };
-  $('daySl').addEventListener('input', () => { day = +$('daySl').value; renderDay(); if ($('baseSel').value === 'temp') { base = null; draw(); } });
-  $('btnPlay').onclick = () => { playing = !playing; $('btnPlay').textContent = playing ? '❚❚' : '▶'; if (playTimer) clearInterval(playTimer); if (playing) playTimer = setInterval(() => { day = (day + 1) % 336; $('daySl').value = day; renderDay(); if ($('baseSel').value === 'temp' && day % 4 === 0) { base = null; draw(); } }, 1000 / +$('speed').value); };
+  const onDay = () => { renderDay(); if ($('baseSel').value === 'temp') base = null; if (liveOn() || $('baseSel').value === 'temp') draw(); };
+  $('daySl').addEventListener('input', () => { day = +$('daySl').value; onDay(); });
+  $('btnPlay').onclick = () => { playing = !playing; $('btnPlay').textContent = playing ? '❚❚' : '▶'; if (playTimer) clearInterval(playTimer); if (playing) playTimer = setInterval(() => { day = (day + 1) % 336; $('daySl').value = day; onDay(); }, 1000 / +$('speed').value); };
+  requestAnimationFrame(fxFrame);
 })();
+
+// ------------------------------------------------------------ 季相与水情（随日期变化的地貌）
+// 全部在浏览器里按逐日天气推：积雪按高程分箱做度日融雪，前期降水指数给土壤湿度，积温给作物阶段；不改任何产物。
+let dayTab = null, dayLayer = null, dayLayerDay = -1, dayStats = null, cellStatic = null;
+const NBIN = 24, LAPSE = 6.0;
+function liveOn(){ return $('ovLive').checked && !!(D && D.climate.weather && D.climate.weather.days); }
+function smooth(t){ t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+function buildDayTables(){
+  if (!D.climate.weather || !D.climate.weather.days) { dayTab = null; return; }
+  const days = D.climate.weather.days; const n = days.length;
+  let hmin = 1e9, hmax = -1e9; for (const v of R.h) { if (v) { const hv = v - 1; if (hv < hmin) hmin = hv; if (hv > hmax) hmax = hv; } }
+  const peak = D.island.constraints.height_m.actual; const rim = D.island.islands[0].rim_m;
+  const binH = k => hmin + (k + 0.5) * (hmax - hmin) / NBIN;
+  const Tat = (d, h) => days[d].temp_c + LAPSE * (peak - h) / 1000;      // 逐日 temp_c 是主岛峰高处的气温
+  const snow = new Float32Array(n * NBIN); const pack = new Float32Array(NBIN);
+  for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) for (let k = 0; k < NBIN; k++) { const T = Tat(d, binH(k)); if (T <= 0) pack[k] += days[d].precip_mm; else pack[k] = Math.max(0, pack[k] - 3 * T); if (pass) snow[d * NBIN + k] = pack[k]; }
+  const api = new Float32Array(n); let a = 0; for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) { a = 0.96 * a + days[d].precip_mm; if (pass) api[d] = a; }
+  let mean = 0; for (const v of api) mean += v; const apiRef = Math.max(mean / n, 1e-6); const pMean = Math.max(D.climate.annual.precip_mm / n, 1e-6);
+  const Trim = new Float32Array(n), green = new Float32Array(n), wet = new Float32Array(n), flow = new Float32Array(n), snowLine = new Float32Array(n), crop = new Float32Array(n);
+  const frozen = new Uint8Array(n), high = new Uint8Array(n), flood = new Uint8Array(n);
+  for (let d = 0; d < n; d++) {
+    Trim[d] = Tat(d, rim); wet[d] = Math.min(1.5, api[d] / apiRef);
+    green[d] = smooth((Trim[d] - 2) / 10) * (0.3 + 0.7 * Math.min(1, wet[d]));
+    flow[d] = 0.6 * wet[d] + 0.4 * Math.min(3, days[d].precip_mm / (pMean * 4 + 1));
+    frozen[d] = Trim[d] < -2 ? 1 : 0; high[d] = (days[d].precip_mm >= 15 || days[d].type === '风暴') ? 1 : 0; flood[d] = (days[d].type === '风暴' || days[d].precip_mm >= 30) ? 1 : 0;
+    let sl = hmax + 1; for (let k = 0; k < NBIN; k++) if (snow[d * NBIN + k] > 5) { sl = binH(k); break; } snowLine[d] = sl;
+  }
+  let gdd = 0; for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) { const T = Trim[d]; if (T < 3) gdd = Math.max(0, gdd - 20); else gdd += Math.max(0, T - 3) * (0.4 + 0.6 * Math.min(1, wet[d])); if (gdd >= 1200) gdd = 0; if (pass) crop[d] = gdd / 1200; }
+  dayTab = { snow, api, Trim, green, wet, flow, snowLine, crop, frozen, high, flood, hmin, hmax, binH, fogH: 120 + 0.25 * Math.max(0, 800 - peak) };
+  // 每格的静态索引：高程箱、植被类、河岸漫滩（河两格内且坡 < 3°）
+  const { rows, cols } = R; const bin = new Uint8Array(rows * cols), veg = new Uint8Array(rows * cols), fp = new Uint8Array(rows * cols);
+  for (let p = 0; p < rows * cols; p++) { if (!R.h[p]) continue; const hv = R.h[p] - 1; bin[p] = Math.max(0, Math.min(NBIN - 1, ((hv - hmin) / (hmax - hmin) * NBIN) | 0)); const lc = R.lc ? R.lc[p] : 0; veg[p] = lc === 4 ? 1 : (lc === 5 ? 2 : ((lc === 6 || lc === 3) ? 3 : ((lc === 7 || lc === 8) ? 4 : 0))); }
+  if (R.river && R.slope) for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) { const p = i * cols + j; if (!R.river[p]) continue; for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= rows || jj >= cols) continue; const q = ii * cols + jj; if (R.h[q] && R.slope[q] / 4 < 3 && !R.river[q]) fp[q] = 1; } }
+  cellStatic = { bin, veg, fp };
+}
+const VEG_DORMANT = [[0,0,0], [112,92,58], [150,130,80], [190,170,110]], VEG_LUSH = [[0,0,0], [36,118,44], [108,150,60], [150,200,90]];
+function buildDayLayer(d){
+  const { rows, cols, h } = R; if (!dayTab) return; const T = dayTab, S = cellStatic; const days = D.climate.weather.days; const w = days[d];
+  const img = new ImageData(cols, rows); const px = img.data;
+  const gr = T.green[d], crop = T.crop[d], flow = T.flow[d], frozen = T.frozen[d], high = T.high[d], flood = T.flood[d];
+  const fog = w.type === '云海漫顶'; const rim = D.island.islands[0].rim_m; const fogTop = rim + T.fogH;
+  const cropCol = crop < 0.15 ? [150, 120, 80] : (crop < 0.75 ? [60 + 40 * (1 - crop), 150 + 40 * Math.min(1, crop * 2), 50] : [225, 190, 70]);
+  let snowCells = 0, land = 0;
+  for (let p = 0; p < rows * cols; p++) {
+    if (!h[p]) continue; land++; const o = p * 4; const hv = h[p] - 1;
+    let r = 0, g = 0, b = 0, al = 0;
+    const isLake = R.lake && R.lake[p], rv = R.river ? R.river[p] : 0, st = R.stream ? R.stream[p] : 0;
+    if ($('ovWater').checked && (isLake || rv || (st && flow >= 0.5) || (flood && S.fp[p]))) {
+      if (frozen) { r = 215; g = 230; b = 250; al = 255; }
+      else if (isLake) { r = 30; g = 80; b = 200; al = 255; }
+      else if (rv) { const lv = Math.min(3, rv + (high ? 1 : 0)); r = 40; g = 90 + 20 * lv; b = 200 + 15 * lv; al = 255; }
+      else if (flood && S.fp[p]) { r = 60; g = 110; b = 210; al = 200; }
+      else { r = 120; g = 170; b = 255; al = 150 * Math.min(1, flow); }
+    } else {
+      const sp = T.snow[d * NBIN + S.bin[p]];
+      if (sp > 5) { snowCells++; r = 245; g = 248; b = 255; al = 255 * Math.min(0.95, 0.4 + sp / 60); }
+      else if (S.veg[p] === 4) { r = cropCol[0]; g = cropCol[1]; b = cropCol[2]; al = 175; }
+      else if (S.veg[p]) { const v = S.veg[p]; r = VEG_DORMANT[v][0] + (VEG_LUSH[v][0] - VEG_DORMANT[v][0]) * gr; g = VEG_DORMANT[v][1] + (VEG_LUSH[v][1] - VEG_DORMANT[v][1]) * gr; b = VEG_DORMANT[v][2] + (VEG_LUSH[v][2] - VEG_DORMANT[v][2]) * gr; al = 135; }
+    }
+    if (fog && hv < fogTop) { const f = 0.8 * (1 - Math.max(0, hv - rim) / T.fogH); r = r * (1 - f) + 240 * f; g = g * (1 - f) + 240 * f; b = b * (1 - f) + 248 * f; al = Math.max(al, 255 * f); }
+    px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = al;
+  }
+  const cv = dayLayer && dayLayer.width === cols && dayLayer.height === rows ? dayLayer : document.createElement('canvas'); cv.width = cols; cv.height = rows; cv.getContext('2d').putImageData(img, 0, 0);
+  dayLayer = cv; dayLayerDay = d; dayStats = { snowFrac: land ? snowCells / land : 0 };
+}
+// ---- 天气特效（屏幕空间，每帧）
+let particles = [], fogBlobs = [], fxLast = 0;
+function fxFrame(ts){
+  requestAnimationFrame(fxFrame);
+  const f = $('fx'); if (!D || !$('ovFx').checked || !D.climate.weather || !D.climate.weather.days) return;
+  if (f.width !== f.clientWidth || f.height !== f.clientHeight) { f.width = f.clientWidth; f.height = f.clientHeight; }
+  const ctx = f.getContext('2d'); const W = f.width, H = f.height; ctx.clearRect(0, 0, W, H);
+  const w = D.climate.weather.days[day]; const dt = Math.min(0.05, (ts - fxLast) / 1000 || 0.016); fxLast = ts;
+  const to = (w.wind_from_deg + 180) * Math.PI / 180; const wx = Math.sin(to) * w.wind_ms, wy = -Math.cos(to) * w.wind_ms;   // 风去向（屏幕 x 东 y 南）
+  const Trim = dayTab ? dayTab.Trim[day] : w.temp_c; const snowing = w.precip_mm > 0 && Trim < 0.5;
+  const storm = w.type === '风暴', rain = w.type === '小雨' || w.type === '大雨' || storm;
+  if (storm) { ctx.fillStyle = 'rgba(15,18,50,0.28)'; ctx.fillRect(0, 0, W, H); if (Math.random() < 0.012) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(0, 0, W, H); } }
+  else if (w.type === '多云') { ctx.fillStyle = 'rgba(50,55,70,0.18)'; ctx.fillRect(0, 0, W, H); }
+  // 粒子池：雨 / 雪 / 风
+  const want = rain ? (storm ? 700 : (w.type === '大雨' ? 400 : 150)) : (w.wind_ms > 3 ? Math.min(220, (w.wind_ms * 12) | 0) : 0);
+  while (particles.length < want) particles.push({ x: Math.random() * W, y: Math.random() * H, l: Math.random() });
+  if (particles.length > want) particles.length = want;
+  const vx = wx * 18, vy = wy * 18;
+  if (rain) {
+    ctx.strokeStyle = snowing ? 'rgba(255,255,255,0.85)' : (storm ? 'rgba(200,215,255,0.55)' : 'rgba(170,200,255,0.45)'); ctx.lineWidth = snowing ? 2 : 1; ctx.beginPath();
+    const fall = snowing ? 60 : (storm ? 900 : 550);
+    for (const q of particles) { const dx = vx * (snowing ? 0.4 : 1), dy = fall + vy; q.x += dx * dt; q.y += dy * dt; if (q.y > H || q.x < -20 || q.x > W + 20) { q.x = Math.random() * W; q.y = -10; } if (snowing) { ctx.moveTo(q.x, q.y); ctx.lineTo(q.x + 1.5, q.y + 1.5); } else { ctx.moveTo(q.x, q.y); ctx.lineTo(q.x - dx * 0.02, q.y - dy * 0.02); } }
+    ctx.stroke();
+  } else if (want) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (const q of particles) { q.x += vx * dt; q.y += vy * dt; q.l += dt; if (q.x < -20 || q.x > W + 20 || q.y < -20 || q.y > H + 20 || q.l > 3) { q.x = Math.random() * W; q.y = Math.random() * H; q.l = 0; } const a = Math.sin(Math.min(1, q.l / 3) * Math.PI); ctx.globalAlpha = a; ctx.moveTo(q.x, q.y); ctx.lineTo(q.x - vx * 0.05, q.y - vy * 0.05); }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  if (w.type === '云海漫顶') {
+    while (fogBlobs.length < 14) fogBlobs.push({ x: Math.random() * W, y: Math.random() * H, r: 80 + Math.random() * 160, s: 0.3 + Math.random() * 0.7 });
+    for (const b of fogBlobs) { b.x += (wx * 3 + 4) * dt * b.s; b.y += wy * 3 * dt * b.s; if (b.x - b.r > W) b.x = -b.r; if (b.y - b.r > H) b.y = -b.r; if (b.y + b.r < 0) b.y = H + b.r; const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r); g.addColorStop(0, 'rgba(235,235,245,0.35)'); g.addColorStop(1, 'rgba(235,235,245,0)'); ctx.fillStyle = g; ctx.fillRect(b.x - b.r, b.y - b.r, 2 * b.r, 2 * b.r); }
+  } else fogBlobs.length = 0;
+  // 风向风速角标
+  ctx.save(); ctx.translate(W - 46, 46); ctx.rotate(to); ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, 18); ctx.lineTo(0, -18); ctx.lineTo(-6, -10); ctx.moveTo(0, -18); ctx.lineTo(6, -10); ctx.stroke(); ctx.restore();
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(`${w.type} · ${fmt(w.wind_ms, 0)} m/s`, W - 46, 78);
+}
 
 // ------------------------------------------------------------ 气候
 function renderClimate(){
@@ -356,6 +466,10 @@ function drawDayChart(){
 }
 function renderDay(){
   const days = D.climate.weather.days; const d = days[day]; if (!d) return; drawDayChart();
+  if (dayTab && liveOn()) { if (!dayLayer || dayLayerDay !== day) buildDayLayer(day); const st = dayStats; const T = dayTab;
+    const riverState = T.frozen[day] ? '结冰' : (T.flood[day] ? '<span style="color:#8fb8de">漫滩</span>' : (T.high[day] ? '涨水' : '平水'));
+    $('dayState').innerHTML = `雪线 ${T.snowLine[day] > T.hmax ? '无雪' : fmt(T.snowLine[day], 0) + ' m'}${st ? `（积雪覆盖陆地 ${fmt(st.snowFrac * 100, 0)}%）` : ''} · 岸缘气温 ${fmt(T.Trim[day], 1)} °C · 土壤湿度 ${fmt(T.wet[day], 2)} · 植被 ${fmt(T.green[day], 2)} · 作物 ${['休耕', '出苗', '生长', '将熟', '待收'][Math.min(4, (T.crop[day] * 5) | 0)]} · 溪涧 ${T.flow[day] >= 0.5 ? '有水' : '<span style="color:#e0a060">断流</span>'} · 河 ${riverState}${d.type === '云海漫顶' ? ' · <span style="color:#e6e1f2">云海漫上岸缘 ' + fmt(T.fogH, 0) + ' m</span>' : ''}`;
+  } else $('dayState').textContent = '';
   const C = D.climate; const arrow = '↓↙←↖↑↗→↘'[Math.round(d.wind_from_deg / 45) % 8];
   $('dayCard').innerHTML = `<b>第 ${d.day} 日</b> · ${d.season_name} · ${d.month} 月 ${d.day_of_month} 日 <span class="pill" style="background:${TYPE_COLORS[d.type]};color:#111">${d.type}</span> ${d.storm_event ? '<span class="pill">风暴 #' + d.storm_event + '</span>' : ''}
     <div>降水 ${fmt(d.precip_mm, 1)} mm · 气温 ${fmt(d.temp_c, 1)} °C（岛上年均高度处）· 风 ${fmt(d.wind_ms, 1)} m/s 自 ${d.wind_from_deg}° ${arrow} · ${d.sailable ? '<span style="color:#9be0b6">可出航</span>' : '<span style="color:#f0a2a2">禁航</span>'}</div>
