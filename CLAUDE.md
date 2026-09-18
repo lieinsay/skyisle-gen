@@ -20,7 +20,7 @@
                                                   # 第三层岛群生成器：out/seed42/islands/1165/（约 5–15 s；不进管线、不回灌）
   $py -m zhouzhu_gen.cli island check 1165 --run out/seed42   # IS-* 九条校验（含重跑比哈希）
   $py -m zhouzhu_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
-  $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）
+  $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
   $py -m pytest tests -q                          # 45 个测试，约 20 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
   ```
@@ -52,6 +52,9 @@ zhouzhu_gen/
   viz.py / probe.py / web/(server.py bundle.py static/index.html static/vendor/globe.gl.min.js)
                  操作台数据通道：/api/world、/api/fields、/api/grid（② 风 / ④ 气候的 1° 网格场，R2）、/api/texture；单文件版全部内嵌于 INLINE
                  /api/island?run=&node= 按需生成岛群并返回摘要，/api/island/preview 取总览图（探针折叠区「岛群生成器」；单文件版不支持）
+                 **岛群调试台** `static/island.html`（`/island.html?run=&node=[&year=]`，探针里有链接）：2D canvas 图层（地形 / 晕渲 / 地表 / 坡度 / 汇流 / 岛号 / 当日海拔温度）、
+                 滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水 / 当日温度）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
+                 数据通道 /api/island/data（island.json + climate.json 含 weather.days）、/api/island/raster（terrain.npz 定型数组 base64，> 160 万格抽稀）、POST /api/island/regen
   island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`zhouzhu island <节点>`，按需生成、不进十步管线、不回灌
                  （stages/ 与 check/ninegrid/polity/culture 不得 import 它，pytest 与 IS-iso 有静态断言）
                  __init__  island_config（[island] 段：默认值 ← run 的 resolved ← --set，不进缓存 key）、_node_inputs、build_terrain、generate

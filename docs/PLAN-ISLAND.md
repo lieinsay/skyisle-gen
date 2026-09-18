@@ -165,6 +165,7 @@ zhouzhu island batch --run out/seed42 --sample 30     # 抽样批跑，看分布
 ```
 
 操作台（最后一步）：探针里加「生成此岛群」→ 新接口 `/api/island` → 在探针折叠区显示 `preview.png` 与四季气候表；单文件版不支持（和路径计算一样）。
+另有独立的**岛群调试台** `/island.html?run=&node=`（2026-09-18 加）：2D 图层、悬停读格、逐日天气播放、改年份 / 参数覆盖重生成，见 DESIGN-NOTES 四点十四。
 
 ## 六、一致性校验（`island check`）
 
