@@ -20,6 +20,7 @@
                                                   # 第三层岛群生成器：out/seed42/islands/1165/（约 5–15 s；不进管线、不回灌）
   $py -m zhouzhu_gen.cli island check 1165 --run out/seed42   # IS-* 九条校验（含重跑比哈希）
   $py -m zhouzhu_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
+  $py -m zhouzhu_gen.cli island stats --run out/seed42   # 全量季型统计（只算气候，8000 群 4 s）→ islands/season_stats.json；操作台气候视角「季型」着色读它
   $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
   $py -m pytest tests -q                          # 45 个测试，约 20 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
@@ -131,6 +132,8 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
   相对降水 → mm：150 + 3850 × p^1.3（第八节 a）；带界摆动 k_shift 0.35（±5° 左右）；季型阈值：四季分明 ≥ 20 °C、冷暖两季 ≥ 8 °C、雨旱 2.5 倍、风暴 / 窗口季差 0.25；
   雨日比例 0.12 + 0.30 × (季雨量/1000)^0.7、湿→湿持续 0.45、伽马形状 0.8、风暴日比例 0.35 × 强度^1.2（布尔覆盖率反解事件数）、云海漫顶只在峰高 < 800 m 的群。
   IS-daily 用 60 年样本：30 年时单季标准误约 5%，和 5% 的阈值同量级（DESIGN-NOTES 四点十四）。
+  季型判定的分数 = 差异 / 该项门槛（温度按冷暖两季的 8 °C，不是 20），取 ≥ 1 的最大者；三 seed 全量：四季分明 57–60%、冷暖两季 19–23%、风暴季 18%、雨旱季 1.5%、常夏 1%，
+  西风带以北 100% 四季分明，信风带一半冷暖两季一半风暴季。
 
 ## 未做 / 可改进（按价值排序）
 
