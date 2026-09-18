@@ -67,7 +67,9 @@ zhouzhu_gen/
                  climate   5.4 四季：带界随太阳摆动（Δφ = k_shift·倾角·A_sea·cos）取样再缩放到年均；温度 = 年均 + season_range/2·cos(相位 − 滞后)；季型分类命名
                  weather   5.5 逐日：马尔可夫晴雨 + 伽马雨量（风暴日计入预算）、风暴事件、AR(1) 风温、云海漫顶、岸缘 ≤ 0.5 °C 记为雪（小雪 / 大雪 / 暴风雪）；multi_year_stats 供 IS-daily
                  output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz / climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）
-                 check     第六节 IS-area/summit/arable/river/season/link/det/iso（硬）+ IS-daily（软，60 年）；batch 分层抽样批跑
+                 settle    聚落（PLAN-SETTLE，DESIGN-NOTES 四点十五）：人口只读 ⑨ → 户；可耕地连通块切田块（k-means 按 80 户地量分）；村址评分；码头 / 桥头 / 导水槽；蓄水池 / 取水点；
+                           前哨、三个主家候选、都与城（城居人口 = 本邑 × 城居率 + 邦 × 集聚率，郭沿索桥，仓城 = 主码头，祭台）→ settlements.json / png
+                 check     第六节 IS-area/summit/arable/river/season/link/det/iso（硬）+ IS-daily（软，60 年）+ SET-pop/field/site/dock/home（硬）/ SET-water（软）；batch 分层抽样批跑
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
@@ -133,6 +135,8 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
   相对降水 → mm：150 + 3850 × p^1.3（第八节 a）；带界摆动 k_shift 0.35（±5° 左右）；季型阈值：四季分明 ≥ 20 °C、冷暖两季 ≥ 8 °C、雨旱 2.5 倍、风暴 / 窗口季差 0.25；
   雨日比例 0.12 + 0.30 × (季雨量/1000)^0.7、湿→湿持续 0.45、伽马形状 0.8、风暴日比例 0.35 × 强度^1.2（布尔覆盖率反解事件数）、云海漫顶只在峰高 < 800 m 的群。
   IS-daily 用 60 年样本：30 年时单季标准误约 5%，和 5% 的阈值同量级（DESIGN-NOTES 四点十四）。
+  聚落 `[island.settle]`：5 人/户、村 8–80 户（邑治田块可到 300）、村址离田 ≤ 800 m、村间距 1 km（软）、码头合并半径 max(2 km, 0.35√岛面积)、蓄水池只给 ≥ 5% 岛面积的盆地、
+  都的城居率 0.3 / 集聚率 0.05（变法之国 0.10）、郭 5 km。
   季型判定的分数 = 差异 / 该项门槛（温度按冷暖两季的 8 °C，不是 20），取 ≥ 1 的最大者；三 seed 全量：四季分明 57–60%、冷暖两季 19–23%、风暴季 18%、雨旱季 1.5%、常夏 1%，
   西风带以北 100% 四季分明，信风带一半冷暖两季一半风暴季。
 
