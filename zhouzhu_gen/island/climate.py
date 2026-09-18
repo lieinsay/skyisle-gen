@@ -54,9 +54,17 @@ def thermal(cont: float, c4: dict, ydays: float) -> tuple[float, float, float]:
     return tau, float(amplitude_retained(ydays, tau)), math.atan(w * tau)
 
 
-def continentality(ctx, inp: dict) -> tuple[float, float]:
-    """(海面口径, 岛上口径) 的陆地性，与 ④ 同一公式。"""
+def load_grids(ctx) -> dict:
+    """④ 的三份网格产物一次读入（全量分类 8000 群时不能每群读盘）。"""
     cg = ctx.load_npz(4, "climate_grid")
+    wl = ctx.load_npz(4, "wind_local")
+    bl = ctx.load_npz(4, "band_local")
+    return {"cg": cg, "wl": wl, "band_local": {"lons": bl["lons"], "edges": bl["edges"], "keys": bl["keys"]}}
+
+
+def continentality(ctx, inp: dict, grids: dict | None = None) -> tuple[float, float]:
+    """(海面口径, 岛上口径) 的陆地性，与 ④ 同一公式。"""
+    cg = grids["cg"] if grids else ctx.load_npz(4, "climate_grid")
     c4 = ctx.cfg["s04"]["climate"]
     cont = float(grid_interp(cg["continentality"], cg["lats"], cg["lons"], inp["lat"], inp["lon"])) if "continentality" in cg else 0.1
     keel = inp["keel_clearance_m"]
@@ -90,9 +98,10 @@ def _sample_lat(lat: float, lon: float, dphi: float, band_local: dict) -> float:
     return min(s, -eq - 0.25)
 
 
-def build_climate(ctx, node: int, c: dict, g: dict, log=print) -> None:
+def build_climate(ctx, node: int, c: dict, g: dict, log=print, grids: dict | None = None) -> None:
     cc = c["climate"]
     inp = g["inp"]
+    grids = grids or load_grids(ctx)
     planet = inp["planet"]
     c4 = ctx.cfg["s04"]["climate"]
     cal = calendar(planet)
@@ -102,14 +111,11 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print) -> None:
     tilt = float(planet["axial_tilt_deg"])
     lat, lon = inp["lat"], inp["lon"]
     south = lat < 0
-    cont_sea, cont_isl = continentality(ctx, inp)
+    cont_sea, cont_isl = continentality(ctx, inp, grids)
     tau_sea, A_sea, lag_sea = thermal(cont_sea, c4, ydays)
     tau_isl, A_isl, lag_isl = thermal(cont_isl, c4, ydays)
 
-    cg = ctx.load_npz(4, "climate_grid")
-    wl = ctx.load_npz(4, "wind_local")
-    bl = ctx.load_npz(4, "band_local")
-    band_local = {"lons": bl["lons"], "edges": bl["edges"], "keys": bl["keys"]}
+    cg, wl, band_local = grids["cg"], grids["wl"], grids["band_local"]
     lats, lons = cg["lats"], cg["lons"]
 
     mids = np.array([(s + 0.5) * dps for s in range(n_s)])
@@ -144,13 +150,14 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print) -> None:
     pr_ratio = float(precip.max() / max(1e-9, precip.min()))
     st_diff = float(storm.max() - storm.min())
     wn_diff = float(window.max() - window.min())
-    scores = {"temp": r_t / float(cc["four_season_range_c"]),
+    # 分数 = 各项差异 / 该项门槛：温度按冷暖两季门槛（8 °C）算 —— 若按四季门槛 20 °C 算，够 20 的早已归四季分明，冷暖两季永远打不到 1 分（曾全球 0%）
+    scores = {"temp": r_t / float(cc["two_season_range_c"]),
               "rain": pr_ratio / float(cc["wet_dry_ratio"]),
               "storm": max(st_diff / float(cc["storm_season_diff"]), wn_diff / float(cc["window_season_diff"]))}
     if r_t >= float(cc["four_season_range_c"]):
         stype = "four"
     else:
-        cand = {k: v for k, v in scores.items() if v >= 1.0 and not (k == "temp" and r_t < float(cc["two_season_range_c"]))}
+        cand = {k: v for k, v in scores.items() if v >= 1.0}
         if cand:
             best = max(sorted(cand), key=lambda k: cand[k])
             stype = {"temp": "two", "rain": "rain", "storm": "storm"}[best]
@@ -322,3 +329,71 @@ def draw_climate_panels(fig, gs, g: dict) -> None:
             ax4b.set_ylabel("mm/日")
             ax4.set_xlim(0, cur["day"].size)
             ax4.set_title("全年曲线（季节插值）", fontsize=9)
+
+
+# ---------------------------------------------------------------- 全量季型统计（`zhouzhu island stats`）
+TYPE_CODES = ["four", "two", "rain", "storm", "none_warm", "none_cold"]
+TYPE_CODE_ZH = [TYPE_ZH[k] for k in TYPE_CODES]
+
+
+def classify_all(ctx, c: dict, log=print) -> dict:
+    """全世界每个岛群的季型（只算气候，不做地形；8000 群约 1 分钟）。写 islands/season_stats.json，供操作台着色与文档统计。"""
+    import time
+    isl = ctx.load_npz(3, "islands")
+    cli = ctx.load_npz(4, "climate_islands")
+    planet = ctx.load_json(1, "planet")
+    grids = load_grids(ctx)
+    n = int(isl["lat"].size)
+    keel = float(ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))
+    codes = np.zeros(n, dtype=np.int8)
+    ratio = np.zeros(n, dtype=np.float32)
+    names_all = []
+    t0 = time.perf_counter()
+    for j in range(n):
+        inp = {k: float(isl[k][j]) for k in ("lat", "lon", "height_m")}
+        for k in ("precip", "temp", "storm", "window", "temp_sea", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
+            inp[k] = float(cli[k][j])
+        inp["planet"] = planet
+        inp["keel_clearance_m"] = keel
+        g = {"inp": inp, "json": {}}
+        build_climate(ctx, j, c, g, log=lambda *a: None, grids=grids)
+        C = g["climate"]
+        st = C["season_type"]
+        code = TYPE_CODES.index(st) if st != "none" else (5 if C["season_type_zh"] == TYPE_ZH["none_cold"] else 4)
+        codes[j] = code
+        ratio[j] = C["scores"]["rain"] * float(c["climate"]["wet_dry_ratio"])
+        names_all.append("/".join(C["season_names"]))
+        if j % 1000 == 999:
+            log(f"  {j + 1}/{n} … {time.perf_counter() - t0:.0f} s")
+    lat = np.abs(isl["lat"].astype(np.float64))
+    bands = [(0, 8, "赤道永暴带"), (8, 28, "信风带"), (28, 36, "无风带"), (36, 62, "西风带"), (62, 90, "极地")]
+    by_band = {}
+    for lo, hi, name in bands:
+        m = (lat >= lo) & (lat < hi)
+        if m.any():
+            cnt = np.bincount(codes[m], minlength=6)
+            by_band[f"{name} {lo}–{hi}°"] = {"n": int(m.sum()), **{TYPE_CODE_ZH[k]: round(float(cnt[k] / m.sum()), 3) for k in range(6)}}
+    cnt = np.bincount(codes, minlength=6)
+    summary = {"run": ctx.out_dir.name, "seed": ctx.seed, "n": n, "seconds": round(time.perf_counter() - t0, 1),
+               "share": {TYPE_CODE_ZH[k]: round(float(cnt[k] / n), 4) for k in range(6)},
+               "count": {TYPE_CODE_ZH[k]: int(cnt[k]) for k in range(6)},
+               "by_band": by_band,
+               "season_range_c": {"median": round(float(np.median(cli["season_range"])), 1),
+                                  "share_ge_20": round(float((cli["season_range"] >= 20).mean()), 4),
+                                  "share_ge_16": round(float((cli["season_range"] >= 16).mean()), 4)},
+               "wet_dry_ratio_median": round(float(np.median(ratio)), 2),
+               "type_codes": TYPE_CODES, "type_zh": TYPE_CODE_ZH,
+               "codes": codes.tolist(), "names": names_all}
+    out = ctx.out_dir / "islands"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "season_stats.json").write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+    return summary
+
+
+def print_stats(st: dict) -> None:
+    print(f"== 季型全量统计 {st['run']}（{st['n']} 群，{st['seconds']} s）==")
+    print("  全球：" + "  ".join(f"{k} {v * 100:.1f}%" for k, v in st["share"].items() if v > 0))
+    for band, row in st["by_band"].items():
+        print(f"  {band:<16} n={row['n']:<5} " + "  ".join(f"{k} {v * 100:.0f}%" for k, v in row.items() if k != "n" and v > 0))
+    sr = st["season_range_c"]
+    print(f"  岛上全年温差中位 {sr['median']} °C，≥ 20 °C 占 {sr['share_ge_20'] * 100:.1f}%，≥ 16 °C 占 {sr['share_ge_16'] * 100:.1f}%；最湿/最干季比中位 {st['wet_dry_ratio_median']}")

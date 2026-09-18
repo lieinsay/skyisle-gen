@@ -7,7 +7,7 @@ zhouzhu probe <node|path|edge|trait> ...
 zhouzhu check --run out/seed42 [--calibrate]
 zhouzhu ninegrid --run out/seed42 [--region K]
 zhouzhu island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
-zhouzhu island check <节点> | batch --sample 30
+zhouzhu island check <节点> | batch --sample 30 | stats
 """
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def main(argv=None):
     p_pol.add_argument("--top", type=int, default=15)
 
     p_isl = sub.add_parser("island", help="岛群生成器（第三层）：生成 / check / batch")
-    p_isl.add_argument("what", help="节点号，或 check / batch")
+    p_isl.add_argument("what", help="节点号，或 check / batch / stats（全量季型统计）")
     p_isl.add_argument("node", nargs="?", type=int, default=None, help="check 时的节点号")
     p_isl.add_argument("--run", default="out/seed42")
     p_isl.add_argument("--year", type=int, default=0)
@@ -142,6 +142,10 @@ def main(argv=None):
         if a.what == "batch":
             from .island.batch import run_batch
             return run_batch(ctx, sample=a.sample, year=a.year, sets=a.sets)
+        if a.what == "stats":
+            from .island.climate import classify_all, print_stats
+            print_stats(classify_all(ctx, isl.island_config(ctx, a.sets)))
+            return 0
         isl.generate(ctx, int(a.what), year=a.year, res_m=a.res, export=a.export, sets=a.sets, steps=a.steps)
         return 0
     return 1

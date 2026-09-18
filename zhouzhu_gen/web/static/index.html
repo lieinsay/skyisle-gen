@@ -119,6 +119,7 @@ details.fold>summary{margin-bottom:4px}
         <option value="arrival" data-lens="geo culture">史前到达</option>
         <option value="precip" data-lens="climate">降水</option>
         <option value="stab" data-lens="climate">稳定度</option>
+        <option value="season" data-lens="climate">季型（岛群生成器）</option>
         <option value="flow" data-lens="routes">流量</option>
         <option value="trait" data-lens="culture">特征场</option>
         <option value="share" data-lens="culture">槽位份额</option>
@@ -344,6 +345,14 @@ let home=null, selected=null, pathData=null;
 let distCache=null; // Float32Array 文化距离（以 home 为基准）
 let rotating=false;
 const probeOpen={};  // 探针折叠区的展开状态，跨岛保持
+// 岛群生成器的全量季型（/api/island/stats，按 run 缓存在磁盘）
+let seasonStats=null, seasonStatsRun=null, seasonLoading=false;
+const SEASON_COLORS=['#e05a5a','#f0b35a','#3fbf7f','#8172b2','#c8ccd2','#5aa9f0'];   // 四季分明 / 冷暖两季 / 雨旱季 / 风暴季 / 常夏 / 常寒
+async function loadSeasonStats(){
+  if (INLINE || seasonLoading) return; seasonLoading=true; setStatus('计算全量季型…');
+  try{ const rid=currentRun; seasonStats=await (await api(`/api/island/stats?run=${rid}`)).json(); seasonStatsRun=rid; } catch(e){ setStatus('季型统计失败：'+e); }
+  seasonLoading=false; setStatus('就绪：'+currentRun); repaintIslands(); if(selected!==null&&selected>=0) selectIsland(selected);
+}
 // 地址栏状态：#lens=geo&run=seed42&node=1165 —— 刷新 / 从岛群调试台返回时恢复选中的岛并飞过去
 function hashGet(k){ const m=location.hash.match(new RegExp('(?:^#|&)'+k+'=([^&]+)')); return m?decodeURIComponent(m[1]):null; }
 function writeHash(){ const parts=[]; if(typeof lens!=='undefined'&&lens) parts.push('lens='+lens); if(currentRun) parts.push('run='+currentRun); if(selected!==null&&selected!==undefined&&selected>=0) parts.push('node='+selected); history.replaceState(null,'','#'+parts.join('&')); }
@@ -538,6 +547,7 @@ function islandColorFn(){
   else if (by==='iso'){ const m=$('modeSel').value; const mi = m==='all'?0:MODES.indexOf(m); fn=i=>viridis(A.iso[mi*n+i]/255); legend=grad('0','1','隔离度 '+(m==='all'?'daily':MODE_ZH[m])); }
   else if (by==='suit'){ fn=i=>viridis(A.suitability[i]/255); legend=grad('低','高','适宜度'); }
   else if (by==='precip'){ fn=i=>viridis(A.precip[i]/255); legend=grad('干','湿','降水'); }
+  else if (by==='season'){ if(!seasonStats||seasonStatsRun!==currentRun){ fn=()=>'#556'; legend='季型统计计算中（全量 8000 群几秒钟，只算一次）…'; loadSeasonStats(); } else { const cs=seasonStats.codes; fn=i=>SEASON_COLORS[cs[i]]||'#556'; legend=seasonStats.type_zh.map((z,k)=>seasonStats.share[z]>0?`<span class="pill" style="background:${SEASON_COLORS[k]};color:#111">${z} ${(seasonStats.share[z]*100).toFixed(0)}%</span>`:'').join(''); } }
   else if (by==='stab'){ fn=i=>viridis(A.stability[i]/255); legend=grad('风暴','稳定','稳定度'); }
   else if (by==='arrival'){ let mx=0; for(let i=0;i<n;i++) mx=Math.max(mx,A.arrival_yr[i]); fn=i=>viridis(1-A.arrival_yr[i]/mx); legend=grad('最晚','最早','史前到达'); }
   else if (by==='flow'){ let mx=0; for(let i=0;i<n;i++) mx=Math.max(mx,A.node_flow[i]); fn=i=>plasma(Math.log10(1+A.node_flow[i])/Math.log10(1+mx)); legend=grad('0','高','log 流量'); }
@@ -845,7 +855,7 @@ function selectIsland(i){
     + (A.has_river&&A.has_river[i]?`<span class="mode-daily">有常年河流</span>（集水 ${fmt(A.river_size[i],0)}）`:'无河，全赖集雨')]);
   rows.push(['地区',`${W.region_names[A.region[i]]} <button class="mini" data-region="${A.region[i]}">九格表</button>`]);
   if (W.polity) rows.push(['政体',polityLine(i)]);
-  rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`]);
+  rows.push(['气候',`降水 ${fmt(A.precip[i]/255)} · 稳定度 ${fmt(A.stability[i]/255)}`+(seasonStats&&seasonStatsRun===currentRun?` · <span style="color:${SEASON_COLORS[seasonStats.codes[i]]}">${seasonStats.type_zh[seasonStats.codes[i]]}</span>（${seasonStats.names[i]}）`:'')]);
   if (GR) more.push(['气象',metHtml(gread(A.lat[i],A.lon[i]))+`<div class="small">网格插值（海面）；岛上温度另减直减率 × 高度</div>`]);
   more.push(['史前',`谱系 L${A.lineage[i]} · 约 ${Math.round(A.arrival_yr[i])} 年前到达`]);
   more.push(['隔离度',MODES.map((m,k)=>`<span class="mode-${m}">${MODE_ZH[m]} ${fmt(A.iso[k*n+i]/255)}</span>`).join(' ')]);
@@ -1066,7 +1076,7 @@ $('edgeN').addEventListener('input',()=>$('edgeNv').textContent=$('edgeN').value
 $('edgeN').addEventListener('change',repaintEdges);
 $('theta').addEventListener('input',()=>$('thetav').textContent=$('theta').value);
 $('regionSel').addEventListener('change',()=>loadGrid(+$('regionSel').value));
-$('runsel').addEventListener('change',async()=>{ selected=null; await loadRun($('runsel').value); writeHash(); });
+$('runsel').addEventListener('change',async()=>{ selected=null; seasonStats=null; await loadRun($('runsel').value); writeHash(); });
 $('surfSel').addEventListener('change',applySurface);
 $('surfAlpha').addEventListener('input',()=>$('surfAlphav').textContent=(+$('surfAlpha').value).toFixed(2));
 $('surfAlpha').addEventListener('change',applySurface);

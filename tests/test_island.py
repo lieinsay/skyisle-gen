@@ -156,3 +156,14 @@ def test_daily_weather_returns_to_climate(small_ctx):
     st = multi_year_stats(small_ctx, node, c, g, years=60)
     assert st["annual_rel_err"] < 0.05 or st["annual_z"] < 3.0, st
     assert max(st["wet_frac_err"]) <= 0.05, st
+
+
+def test_classify_all_small_world(small_ctx):
+    """全量季型统计：每群有一个类别，类别名与代码对应；西风带（36–62°）应几乎全是四季分明（骨架第二版 C5 的口径）。"""
+    from zhouzhu_gen import island as isl
+    from zhouzhu_gen.island.climate import classify_all
+    st = classify_all(small_ctx, isl.island_config(small_ctx), log=lambda *a: None)
+    assert st["n"] == len(st["codes"]) == len(st["names"])
+    assert abs(sum(st["share"].values()) - 1.0) < 1e-6
+    west = [v for k, v in st["by_band"].items() if k.startswith("西风带")]
+    assert west and west[0]["四季分明"] >= 0.9

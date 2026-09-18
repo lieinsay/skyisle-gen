@@ -12,6 +12,7 @@ GET  /api/ninegrid?run=&region=   九格表 markdown
 GET  /api/path?run=&a=&b=&mode=   最优路径逐跳
 GET  /api/island?run=&node=[&year=0][&force=1]   岛群生成器（第三层）：按需生成并返回摘要；/api/island/preview 取 preview.png
 GET  /island.html?run=&node=[&year=]   岛群调试台（2D 图层、四季、逐日天气、改年份 / 参数重生成）
+GET  /api/island/stats?run=            全量季型统计（islands/season_stats.json，没有就算，8000 群约 5 s）
 GET  /api/island/data?run=&node=&year=   island.json + climate.json（含逐日天气）
 GET  /api/island/raster?run=&node=       terrain.npz 的栅格（base64 定型数组，过大时抽稀）
 POST /api/island/regen {run, node, year, sets:[...]}   强制重生成（可带 island.* 参数覆盖）
@@ -123,6 +124,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send((STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
             elif p == "/island.html":
                 self._send((STATIC / "island.html").read_bytes(), "text/html; charset=utf-8")
+            elif p == "/api/island/stats":
+                rid = q["run"]
+                f = self.app.out_root / rid / "islands" / "season_stats.json"
+                if not f.exists() or q.get("force") == "1":
+                    from ..island import island_config
+                    from ..island.climate import classify_all
+                    ctx = self.app.ctx(rid)
+                    with self.app.island_lock:
+                        classify_all(ctx, island_config(ctx), log=lambda *a: None)
+                self._send(f.read_bytes())
             elif p == "/api/island/data":
                 self._json(self._island_data(q["run"], int(q["node"]), int(q.get("year", 0)), q.get("force") == "1"))
             elif p == "/api/island/raster":
