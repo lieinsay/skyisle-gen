@@ -63,7 +63,7 @@ a{color:var(--acc2)}
   <label class="small">run</label><input id="runIn" type="text" size="9">
   <label class="small">节点</label><input id="nodeIn" type="number" style="width:80px">
   <button id="btnGo">打开</button>
-  <a href="/" class="small" style="margin-left:8px">← 行星操作台</a>
+  <a href="/" id="backLink" class="small" style="margin-left:8px" title="回到行星操作台并选中这个岛">← 行星操作台（选中此岛）</a>
 </header>
 
 <aside>
@@ -176,6 +176,8 @@ function renderSide(){
   const J = D.island, m = J.meta, c = J.constraints;
   $('hdr').textContent = `#${node}（${fmt(m.lat, 1)}°, ${fmt(m.lon, 1)}°）${m.cls_zh} · ${m.age_zh} · 板块${m.boundary_type}带 · ${J.islands.length} 岛`;
   $('runIn').value = run; $('nodeIn').value = node; $('yearIn').value = year;
+  const back = q.get('back') || ''; const lensPart = (back.match(/lens=(\w+)/) || [])[1];
+  $('backLink').href = `/#${lensPart ? 'lens=' + lensPart + '&' : ''}run=${run}&node=${node}`;
   const row = (k, t, a, rel) => `<tr><td>${k}</td><td>${fmt(t, 3)}</td><td>${fmt(a, 3)}</td><td class="small">${rel}</td></tr>`;
   $('cons').innerHTML = `<tr><th>量</th><th>行星层</th><th>实际</th><th>误差</th></tr>`
     + row('陆地 km²', c.area_km2.target, c.area_km2.actual, fmt(Math.abs(c.area_km2.actual - c.area_km2.target) / c.area_km2.target * 100, 2) + '%')

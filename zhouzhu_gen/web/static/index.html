@@ -89,6 +89,7 @@ details.fold>summary{margin-bottom:4px}
   <span class="small" id="runinfo"></span>
   <span class="sp"></span>
   <label class="small">run</label><select id="runsel"></select>
+  <input id="jumpNode" type="number" min="0" placeholder="节点#" style="width:84px" title="输入节点号回车：选中并飞过去">
   <button id="btnView">重置视角</button>
   <button id="btnRotate">自转</button>
   <span id="checkBadge"></span>
@@ -343,6 +344,10 @@ let home=null, selected=null, pathData=null;
 let distCache=null; // Float32Array 文化距离（以 home 为基准）
 let rotating=false;
 const probeOpen={};  // 探针折叠区的展开状态，跨岛保持
+// 地址栏状态：#lens=geo&run=seed42&node=1165 —— 刷新 / 从岛群调试台返回时恢复选中的岛并飞过去
+function hashGet(k){ const m=location.hash.match(new RegExp('(?:^#|&)'+k+'=([^&]+)')); return m?decodeURIComponent(m[1]):null; }
+function writeHash(){ const parts=[]; if(typeof lens!=='undefined'&&lens) parts.push('lens='+lens); if(currentRun) parts.push('run='+currentRun); if(selected!==null&&selected!==undefined&&selected>=0) parts.push('node='+selected); history.replaceState(null,'','#'+parts.join('&')); }
+function jumpTo(n){ if(!W||isNaN(n)||n<0||n>=N()) { setStatus('没有节点 #'+n); return; } selectIsland(n); globe.pointOfView({lat:A.lat[n],lng:A.lon[n],altitude:0.6},800); }
 
 // ------------------------------------------------------------ 数据加载
 async function loadRunList(){
@@ -465,7 +470,7 @@ function applyLensVisibility(){
 }
 // preset=false：只切换可见控件，不动当前的着色与图层（用于「以此为家」「九格表」这类跳转）
 function setLens(name, preset=true){
-  lens=name; try{ localStorage.setItem('zhouzhu.lens',name); }catch(e){}
+  lens=name; try{ localStorage.setItem('zhouzhu.lens',name); }catch(e){} writeHash();
   if (preset){
     const L=LENS[name];
     for (const id of LAYER_IDS){ if(!$(id).disabled) $(id).checked=L.on.includes(id); }
@@ -826,7 +831,7 @@ function onHover(ev){
 
 // ------------------------------------------------------------ 探针
 function selectIsland(i){
-  selected=i; repaintIslands(); showTab('probe');
+  selected=i; repaintIslands(); showTab('probe'); writeHash();
   const n=N(); const box=$('tab-probe');
   const rows=[], more=[];   // rows = 概况（常显）；more = 折叠在「更多属性」里
   rows.push(['节点',`#${i}（${fmt(A.lat[i],2)}°, ${fmt(A.lon[i],2)}°）`]);
@@ -871,7 +876,7 @@ function selectIsland(i){
     <div class="small">去程风 = 从本岛出发的风因子 dir(c)^α（顺 &lt;1、逆 &gt;1；模式随左侧「模式」）</div>`)}
     ${fold('island','岛群生成器（第三层）',`<div class="btnrow"><button id="btnIsland">生成此岛群</button><button id="btnIslandRe" class="mini" title="忽略已有产物重新生成">重新生成</button></div>
     <div id="islandBox" class="small">按需生成群内布局、岛内地形、水系、四季气候与逐日天气（约 5–15 s；只读管线产物，不回灌）。</div>
-    <div class="small">或直接 <a href="/island.html?run=${currentRun}&node=${i}" target="_blank" style="color:var(--acc2)">打开岛群调试台</a>（2D 图层、逐日天气、改年份 / 参数重生成）</div>`)}`;
+    <div class="small">或直接 <a href="/island.html?run=${currentRun}&node=${i}&back=${encodeURIComponent(location.hash)}" target="_blank" style="color:var(--acc2)">打开岛群调试台</a>（2D 图层、逐日天气、改年份 / 参数重生成）</div>`)}`;
   box.querySelectorAll('details[data-fold]').forEach(d=>d.addEventListener('toggle',()=>{ probeOpen[d.dataset.fold]=d.open; }));
   $('btnHome').onclick=()=>{ home=i; distCache=null; if(!lensShows('culture')) setLens('culture'); $('colorBy').value='dist'; $('modeSel').value='all'; updateRowVisibility(); repaintIslands(); repaintLabels(); };
   $('btnFly').onclick=()=>globe.pointOfView({lat:A.lat[i],lng:A.lon[i],altitude:0.6},800);
@@ -1061,7 +1066,7 @@ $('edgeN').addEventListener('input',()=>$('edgeNv').textContent=$('edgeN').value
 $('edgeN').addEventListener('change',repaintEdges);
 $('theta').addEventListener('input',()=>$('thetav').textContent=$('theta').value);
 $('regionSel').addEventListener('change',()=>loadGrid(+$('regionSel').value));
-$('runsel').addEventListener('change',()=>loadRun($('runsel').value));
+$('runsel').addEventListener('change',async()=>{ selected=null; await loadRun($('runsel').value); writeHash(); });
 $('surfSel').addEventListener('change',applySurface);
 $('surfAlpha').addEventListener('input',()=>$('surfAlphav').textContent=(+$('surfAlpha').value).toFixed(2));
 $('surfAlpha').addEventListener('change',applySurface);
@@ -1072,8 +1077,15 @@ $('windDens').addEventListener('change',rebuildStreams);
 $('btnView').onclick=()=>{ const g=W.bands.G; globe.pointOfView({lat:g.lat,lng:g.lon,altitude:2.2},800); };
 $('btnRotate').onclick=()=>{ rotating=!rotating; globe.controls().autoRotate=rotating; $('btnRotate').textContent=rotating?'停止自转':'自转'; };
 
-(async()=>{ try{ let saved=(location.hash.match(/lens=(\w+)/)||[])[1]||null; if(!saved){ try{ saved=localStorage.getItem('zhouzhu.lens'); }catch(e){} } setLens(LENS[saved]?saved:'geo');
-  await loadRunList(); if(!currentRun){ $('loading').textContent='out/ 下没有可用 run，请先 zhouzhu run'; return; } await loadRun(currentRun); } catch(e){ $('loading').textContent='加载失败：'+e.message; console.error(e); } })();
+(async()=>{ try{ const hr=hashGet('run'), hn=parseInt(hashGet('node'));   // 先读：setLens 会重写地址栏
+  let saved=(location.hash.match(/lens=(\w+)/)||[])[1]||null; if(!saved){ try{ saved=localStorage.getItem('zhouzhu.lens'); }catch(e){} } setLens(LENS[saved]?saved:'geo');
+  await loadRunList(); if(!currentRun){ $('loading').textContent='out/ 下没有可用 run，请先 zhouzhu run'; return; }
+  if(hr && [...$('runsel').options].some(o=>o.value===hr)){ $('runsel').value=hr; currentRun=hr; }
+  await loadRun(currentRun);
+  if(!isNaN(hn)) jumpTo(hn); else writeHash();
+} catch(e){ $('loading').textContent='加载失败：'+e.message; console.error(e); } })();
+$('jumpNode').addEventListener('keydown',e=>{ if(e.key==='Enter'){ jumpTo(parseInt($('jumpNode').value)); } });
+window.addEventListener('hashchange',()=>{ const hn=parseInt(hashGet('node')); if(!isNaN(hn)&&hn!==selected) jumpTo(hn); });
 </script>
 </body>
 </html>

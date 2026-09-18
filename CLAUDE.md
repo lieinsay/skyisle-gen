@@ -142,6 +142,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 - 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图；气象层没有粒子动画（流线虚线已够用）；水汽 q / 抬升 uplift 已在网格通道里
 - 操作台改前端时注意：globe.gl 会清空 `#globe` 的内容，遮罩/悬停框必须放在 `#globeWrap`；`pathsData` 的点高度靠 `pathPointAlt(p=>p[2])` 才生效（DESIGN-NOTES 五）
 - 操作台左栏按「视角」组织（地理/气候/航运/文化/政治，`index.html` 的 `LENS`）：新控件或新下拉选项要加 `data-lens="…"` 标明属于哪些视角，否则所有视角都显示；
-  新图层开关要登记进 `LAYER_IDS` 并写进相应视角的 `on` 预设。「模式」全局一个（`modeSel`），边相关处用 `edgeModeVal()`（「全部」按商旅）。`#lens=climate` 可直接打开某视角。右侧「开发」标签 = 验收 + 参数。
+  新图层开关要登记进 `LAYER_IDS` 并写进相应视角的 `on` 预设。「模式」全局一个（`modeSel`），边相关处用 `edgeModeVal()`（「全部」按商旅）。右侧「开发」标签 = 验收 + 参数。
+  地址栏 `#lens=climate&run=seed42&node=1165` 是页面状态：`selectIsland` / `setLens` 都会 `writeHash()`，启动时先读再 `setLens`（否则被重写掉），有 node 就选中并飞过去；顶栏「节点#」回车跳转；岛群调试台的返回链接带 node 回来。
 - 性能：8000 岛全跑约 2 分钟（s06 介数 30 s、s10 图 50 s 为大头；s09 政治层约 3 s）；20000 岛未系统测试
 - `check --seeds` 多种子批跑、`viz diff`、`config diff` 未做
