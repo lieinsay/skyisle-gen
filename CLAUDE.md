@@ -65,7 +65,7 @@ zhouzhu_gen/
                  terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（锥 / 脊 / 台地）、粗网格侵蚀（fill_iter 保持排水、无量纲冲刷）、priority_fill / d8 / accumulate（5.3 共用）
                  hydro     5.3 河（主岛按 has_river 调阈值）/ 溪涧 / 湖 / 河口盆地、地表 12 类、可耕地按适宜度分位取到 arable_frac
                  climate   5.4 四季：带界随太阳摆动（Δφ = k_shift·倾角·A_sea·cos）取样再缩放到年均；温度 = 年均 + season_range/2·cos(相位 − 滞后)；季型分类命名
-                 weather   5.5 逐日：马尔可夫晴雨 + 伽马雨量（风暴日计入预算）、风暴事件、AR(1) 风温、云海漫顶；multi_year_stats 供 IS-daily
+                 weather   5.5 逐日：马尔可夫晴雨 + 伽马雨量（风暴日计入预算）、风暴事件、AR(1) 风温、云海漫顶、岸缘 ≤ 0.5 °C 记为雪（小雪 / 大雪 / 暴风雪）；multi_year_stats 供 IS-daily
                  output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz / climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）
                  check     第六节 IS-area/summit/arable/river/season/link/det/iso（硬）+ IS-daily（软，60 年）；batch 分层抽样批跑
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
