@@ -164,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/api/island":
                 self._json(self._island(q["run"], int(q["node"]), int(q.get("year", 0)), q.get("force") == "1"))
             elif p == "/api/island/preview":
-                f = self.app.out_root / q["run"] / "islands" / str(int(q["node"])) / "preview.png"
+                f = self.app.out_root / q["run"] / "islands" / str(int(q["node"])) / ("preview_main.png" if q.get("main") == "1" else "preview.png")
                 self._send(f.read_bytes(), "image/png") if f.exists() else self._send(b"not found", "text/plain", 404)
             else:
                 self._send(b"not found", "text/plain", 404)
@@ -208,7 +208,7 @@ class Handler(BaseHTTPRequestHandler):
         """岛群生成器：产物已存在（同年份）就直接读，否则生成（约 5–15 s）。只读管线产物，不回灌。"""
         ctx = self.app.ctx(rid)
         out = ctx.out_dir / "islands" / str(node)
-        if force or not (out / "island.json").exists() or not (out / f"weather_y{year}.csv").exists():
+        if force or not all((out / f).exists() for f in ("island.json", "climate.json", "preview.png", "preview_main.png", f"weather_y{year}.csv")):
             from ..island import generate
             with self.app.island_lock:
                 generate(ctx, node, year=year, log=lambda *a: None)
@@ -219,7 +219,8 @@ class Handler(BaseHTTPRequestHandler):
                 "hydro": {k: J["hydro"][k] for k in ("precip_mm", "n_lakes", "lake_km2", "main_basins")}, "landcover": J["landcover"]["share"],
                 "climate": {"season_type_zh": C["season_type_zh"], "annual": C["annual"], "thermal": C["thermal"],
                             "seasons": [{k: s[k] for k in ("index", "name", "days", "temp_c", "temp_sea_c", "precip_mm", "storm", "window", "wind", "band_shift_deg")} for s in C["seasons"]]},
-                "weather": C.get("weather", {}), "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}", "dir": str(out)}
+                "weather": C.get("weather", {}), "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
+                "preview_main": f"/api/island/preview?run={rid}&node={node}&main=1&t={int(time.time())}", "dir": str(out)}
 
     def do_POST(self):
         try:

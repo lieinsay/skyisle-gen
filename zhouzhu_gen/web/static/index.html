@@ -907,7 +907,8 @@ async function loadIsland(i,force){
       <div><b>${C.season_type_zh}</b>（全年温差 ${fmt(C.annual.season_range_c,1)} °C，滞后 ${fmt(C.thermal.lag_island_days,0)} 日，带界摆幅 ±${fmt(C.thermal.band_shift_amp_deg,1)}°）</div>
       <table class="kv"><tr><td>季</td><td>日</td><td>°C</td><td>mm</td><td>风暴</td><td>窗口</td><td>风</td></tr>${S}</table>
       ${wt?`<div>天气 y${j.weather.year}：${wt}；雨 ${fmt(j.weather.precip_mm,0)} mm；风暴 ${j.weather.storm_events} 场；可出航 ${j.weather.sailable_days} 天</div>`:''}
-      <img src="${j.preview}" style="width:100%;margin-top:6px;border:1px solid var(--line)" alt="preview">
+      <a href="${j.preview}" target="_blank" title="点开看大图"><img src="${j.preview}" style="width:100%;margin-top:6px;border:1px solid var(--line)" alt="preview"></a>
+      <a href="${j.preview_main}" target="_blank" title="主岛放大：晕渲 + 等高线 + 水系 + 田块"><img src="${j.preview_main}" style="width:100%;margin-top:4px;border:1px solid var(--line)" alt="preview_main"></a>
       <div class="small">${j.dir}</div>`;
   }catch(e){ box.textContent='出错：'+e; }
   setStatus('就绪');
