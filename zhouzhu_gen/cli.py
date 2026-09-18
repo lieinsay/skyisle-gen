@@ -93,12 +93,14 @@ def main(argv=None):
     p_serve.add_argument("--out", default="out")
     p_serve.add_argument("--port", type=int, default=8642)
     p_serve.add_argument("--no-open", action="store_true")
+    p_serve.add_argument("--host", default="127.0.0.1",
+                         help="监听地址，逗号分隔可多个（远程机用 --host 192.168.0.116,10.8.0.12）；不接受 0.0.0.0")
 
     a = ap.parse_args(argv)
 
     if a.cmd == "serve":
         from .web.server import serve
-        serve(Path(a.out), a.port, open_browser=not a.no_open)
+        serve(Path(a.out), a.port, open_browser=not a.no_open, host=a.host)
         return 0
 
     if a.cmd in ("run", "stage"):

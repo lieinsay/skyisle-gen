@@ -312,18 +312,33 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(e)}, 400)
 
 
-def serve(out_root: Path, port: int = 8642, open_browser: bool = True):
+def serve(out_root: Path, port: int = 8642, open_browser: bool = True, host: str = "127.0.0.1"):
+    """host 可以是逗号分隔的多个地址（每个地址一个监听套接字）。
+    不接受 0.0.0.0 / ::：远程机（ME Pro）上要显式列出内网与 WG 地址，不要把操作台暴露到所有网卡。"""
+    hosts = [h.strip() for h in host.split(",") if h.strip()] or ["127.0.0.1"]
+    for h in hosts:
+        if h in ("0.0.0.0", "::", "*"):
+            raise SystemExit(f"--host 不接受 {h}：请显式列出地址，例如 --host 192.168.0.116,10.8.0.12")
     app = App(out_root)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, app=app))
-    url = f"http://127.0.0.1:{port}/"
-    print(f"操作台：{url}   产物根目录：{Path(out_root).resolve()}   Ctrl+C 退出")
-    if open_browser:
+    servers = []
+    for h in hosts:
+        srv = ThreadingHTTPServer((h, port), partial(Handler, app=app))
+        srv.daemon_threads = True
+        servers.append(srv)
+    urls = [f"http://{h}:{port}/" for h in hosts]
+    print(f"操作台：{'   '.join(urls)}   产物根目录：{Path(out_root).resolve()}   Ctrl+C 退出")
+    if open_browser and hosts[0] in ("127.0.0.1", "localhost", "::1"):
         import webbrowser
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: webbrowser.open(urls[0])).start()
+    for srv in servers[1:]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
-        httpd.serve_forever()
+        servers[0].serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        for srv in servers:
+            srv.shutdown()
 
 
 def export_static(ctx, out_file: Path, body_only: bool = False) -> Path:
