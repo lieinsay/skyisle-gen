@@ -1,6 +1,7 @@
 """第六节：岛群生成器的一致性校验（`zhouzhu island check <节点>`）。
 
-IS-area / IS-summit / IS-arable / IS-river / IS-season / IS-link / IS-det / IS-iso 为硬项，IS-daily 为软项。
+IS-area / IS-summit / IS-arable / IS-river / IS-season / IS-link / IS-det / IS-iso 为硬项，IS-daily 为软项；
+聚落 SET-pop / SET-field / SET-site / SET-dock / SET-home 为硬项，SET-water 为软项（PLAN-SETTLE 第六节）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
 """
 from __future__ import annotations
@@ -79,6 +80,38 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
     dst = np.array([e["b"] for e in J["links"]], dtype=np.int64)
     ncomp = int(weak_components(n, src, dst).max()) + 1 if n > 1 else 1
     add("IS-link", "群内任意两岛经索桥 + 短渡连通", {"components": ncomp, "islands": n}, "1 个分量", ncomp == 1)
+    # ---- 聚落（PLAN-SETTLE 第六节）
+    S = g.get("settle")
+    if S is not None:
+        import numpy as _np
+        hh_ok = S["households_in_villages"] + S["households_in_hamlets"] == S["households"] == round(S["population"] / S["household_size"])
+        add("SET-pop", "Σ 户数 × 户均 = 群人口（只读 ⑨）", {"households": S["households"], "population": S["population"]}, "相等", hh_ok)
+        arable_km2 = float((g["arable"] > 0).sum()) * (J["raster"]["res_m"] / 1000.0) ** 2
+        f_sum = sum(f["area_km2"] for f in S["fields"])
+        every = all(f.get("households", 0) >= 8 for f in S["fields"] if f.get("village") and f["village"] > 0)
+        add("SET-field", "每村有田；Σ 田块 = 可耕地", {"fields_km2": round(f_sum, 3), "arable_km2": round(arable_km2, 3), "villages_have_field": every}, "< 1%",
+            abs(f_sum - arable_km2) <= 0.01 * max(arable_km2, 1e-9) and every)
+        bad = 0
+        for v in S["villages"]:
+            i, j_ = v["cell"]
+            if g["cliff"][i, j_] or g["lake"][i, j_] or g["river"][i, j_] or g["island_id"][i, j_] != v["island"]:
+                bad += 1
+        cells = _np.array([v["cell"] for v in S["villages"]], dtype=float)
+        sep_share = 1.0
+        if cells.shape[0] > 1:
+            d = _np.sqrt(((cells[:, None, :] - cells[None, :, :]) ** 2).sum(-1)) * J["raster"]["res_m"] / 1000.0
+            _np.fill_diagonal(d, 9e9)
+            sep_share = float((d.min(axis=1) >= 1.0 - 1e-9).mean())
+            bad += int((d.min() <= 0.05))
+        add("SET-site", "村不在崖缘 / 水面 / 别的岛上、不同格；1 km 间距（软，报告占比）", {"bad": bad, "sep_1km_share": round(sep_share, 3)}, "bad = 0", bad == 0)
+        ferry_isl = {e["a"] for e in J["links"] if e["kind"] == "ferry"} | {e["b"] for e in J["links"] if e["kind"] == "ferry"}
+        dock_isl = {d_["island"] for d_ in S["docks"]}
+        n_bridge = sum(1 for e in J["links"] if e["kind"] == "bridge")
+        add("SET-dock", "有短渡的岛有码头；索桥两端各一桥头", {"islands_without_dock": sorted(ferry_isl - dock_isl), "bridgeheads": len(S["bridgeheads"]), "bridges": n_bridge},
+            "无缺", ferry_isl <= dock_isl and len(S["bridgeheads"]) == 2 * n_bridge)
+        add("SET-water", "村 1 km 内有水源的占比", S["water_ok_share"], "≥ 0.8", S["water_ok_share"] >= 0.8, hard=False)
+        kinds = [h["kind"] for h in S["home_candidates"]]
+        add("SET-home", "主家候选 2–3 个、类型各异", kinds, "2–3 个", 2 <= len(kinds) <= 3 and len(kinds) == len(set(kinds)))
     if det_hashes is not None:
         h1, h2 = det_hashes
         diff = sorted(k for k in set(h1) | set(h2) if h1.get(k) != h2.get(k))

@@ -318,10 +318,11 @@ def build_links_water(ctx, g, sc, villages, hamlets, sraster, km, res_km, dist_w
                 bridgeheads.append({"island": k, "to": b if k == a else a, "cell": cell, "km": km(*cell), "gap_km": e["gap_km"]})
             continue
         for k, other in ((a, b), (b, a)):
-            pts = cliffs[k]
-            ob = cliffs[other][::3] if cliffs[other].shape[0] > 600 else cliffs[other]
+            # 岸缘格抽稀到 ≤ 600 / ≤ 300 个点：码头落点精度 1–2 格足够，全量算 99 条短渡要 4 s
+            pts = cliffs[k][::max(1, cliffs[k].shape[0] // 600)]
+            ob = cliffs[other][::max(1, cliffs[other].shape[0] // 300)]
             # 联合评分：离对岸近 + 离本岛最大村近
-            d_other = np.sqrt(((pts[:, None, :] - ob[None, :, :]) ** 2).sum(-1)).min(axis=1) if pts.shape[0] * ob.shape[0] < 4_000_000 else np.array([_nearest_pair(pts[i:i + 1], ob)[2] for i in range(pts.shape[0])])
+            d_other = np.sqrt(((pts[:, None, :] - ob[None, :, :]) ** 2).sum(-1)).min(axis=1)
             v = np.array(big[k], dtype=float)
             d_vill = np.sqrt(((pts - v) ** 2).sum(-1))
             score = d_other + w_v * d_vill
