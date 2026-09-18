@@ -13,8 +13,11 @@ import math
 
 import numpy as np
 
-TYPES = ["晴", "多云", "小雨", "大雨", "云海漫顶", "风暴"]
-TYPE_COLORS = {"晴": "#f7d76b", "多云": "#c8ccd2", "小雨": "#8fb8de", "大雨": "#3b6fb6", "云海漫顶": "#e6e1f2", "风暴": "#7a2d8c"}
+TYPES = ["晴", "多云", "小雨", "大雨", "云海漫顶", "风暴", "小雪", "大雪", "暴风雪"]
+TYPE_COLORS = {"晴": "#f7d76b", "多云": "#c8ccd2", "小雨": "#8fb8de", "大雨": "#3b6fb6", "云海漫顶": "#e6e1f2", "风暴": "#7a2d8c",
+               "小雪": "#dfe8f5", "大雪": "#b7c6dc", "暴风雪": "#5a4a8c"}
+SNOW_TYPES = {"小雪", "大雪", "暴风雪"}
+STORM_TYPES = {"风暴", "暴风雪"}
 
 
 def season_params(clim: dict, wc: dict) -> list[dict]:
@@ -39,7 +42,8 @@ def season_params(clim: dict, wc: dict) -> list[dict]:
     return out
 
 
-def simulate_year(rng, clim: dict, daily: dict, params: list[dict], peak_m: float, wc: dict) -> dict:
+def simulate_year(rng, clim: dict, daily: dict, params: list[dict], peak_m: float, wc: dict, rim_m: float | None = None,
+                  lapse_c_per_km: float = 6.0) -> dict:
     cal = clim["calendar"]
     ydays = int(round(cal["year_days"]))
     dps = int(round(cal["days_per_season"]))
@@ -111,21 +115,29 @@ def simulate_year(rng, clim: dict, daily: dict, params: list[dict], peak_m: floa
         calm = np.clip(1.0 - speed / float(wc["fog_calm_ms"]), 0.0, 1.0)
         p_fog = float(wc["fog_p0"]) * (0.3 + 0.7 * low) * calm * humid
         fog = (rng.uniform(0.0, 1.0, n) < p_fog) & ~storm & (precip < float(wc["heavy_rain_mm"]))
-    # 天气类型
+    # 天气类型。雨 / 雪按岸缘气温分：逐日 temp 是主岛峰高处的气温，岸缘 = temp + 直减率 × (峰 − 岸缘)
     cloudy = ~wet & (rng.uniform(0.0, 1.0, n) < np.array([params[int(s)]["f_wet"] for s in season]) * float(wc["cloudy_k"]))
+    rim = peak_m if rim_m is None else float(rim_m)
+    t_rim = temp + lapse_c_per_km * max(0.0, peak_m - rim) / 1000.0
+    snowy = t_rim <= float(wc["snow_temp_c"])
+    heavy = precip >= float(wc["heavy_rain_mm"])
     t = np.full(n, 0, dtype=np.int8)                      # 晴
     t[cloudy] = 1
-    t[wet & (precip < float(wc["heavy_rain_mm"]))] = 2
-    t[wet & (precip >= float(wc["heavy_rain_mm"]))] = 3
+    t[wet & ~heavy] = 2
+    t[wet & heavy] = 3
     t[fog] = 4
     t[storm] = 5
+    t[wet & ~heavy & snowy & ~storm] = 6                  # 小雪
+    t[wet & heavy & snowy & ~storm] = 7                   # 大雪
+    t[storm & snowy] = 8                                  # 暴风雪
+    t[fog & ~storm] = 4
     # 出航：非风暴、风 < sail_wind_max、按季窗口的平静概率
     calm_ok = rng.uniform(0.0, 1.0, n) < np.array([params[int(s)]["p_calm"] for s in season])
     sailable = ~storm & (speed < float(wc["sail_wind_max_ms"])) & calm_ok
     day = np.arange(n)
     return {"day": day, "season": season, "month": day // dpm, "day_of_month": day % dpm + 1, "type": t,
             "precip_mm": precip, "temp_c": temp, "wind_from_deg": wind_from, "wind_ms": speed, "sailable": sailable,
-            "storm_event": storm_id, "wet": wet}
+            "storm_event": storm_id, "wet": wet, "temp_rim_c": t_rim, "snow": snowy & wet}
 
 
 def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) -> None:
@@ -135,8 +147,9 @@ def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) ->
     daily = g["daily"]
     params = season_params(clim, wc)
     peak = float(g["json"]["islands"][0]["peak_m"])
+    rim = float(g["json"]["islands"][0]["rim_m"])
     rng = _rng(ctx, node, f"weather:{year}")
-    y = simulate_year(rng, clim, daily, params, peak, wc)
+    y = simulate_year(rng, clim, daily, params, peak, wc, rim_m=rim, lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
     names = clim["season_names"]
     n = y["day"].size
     days = []
@@ -144,25 +157,28 @@ def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) ->
         s = int(y["season"][d])
         days.append({"day": int(d), "season": s, "season_name": names[s], "month": int(y["month"][d]) + 1, "day_of_month": int(y["day_of_month"][d]),
                      "type": TYPES[int(y["type"][d])], "precip_mm": round(float(y["precip_mm"][d]), 1), "temp_c": round(float(y["temp_c"][d]), 1),
+                     "temp_rim_c": round(float(y["temp_rim_c"][d]), 1),
                      "wind_from_deg": int(round(float(y["wind_from_deg"][d]))), "wind_ms": round(float(y["wind_ms"][d]), 1),
                      "sailable": bool(y["sailable"][d]), "storm_event": int(y["storm_event"][d])})
     per_season = []
     for s in range(int(clim["calendar"]["seasons"])):
         m = y["season"] == s
-        per_season.append({"season": s, "name": names[s], "rain_days": int(y["wet"][m].sum()), "storm_days": int((y["storm_event"][m] > 0).sum()),
+        per_season.append({"season": s, "name": names[s], "rain_days": int((y["wet"][m] & ~y["snow"][m]).sum()), "snow_days": int(y["snow"][m].sum()),
+                           "storm_days": int((y["storm_event"][m] > 0).sum()),
                            "storm_events": int(np.unique(y["storm_event"][m][y["storm_event"][m] > 0]).size),
                            "fog_days": int((y["type"][m] == 4).sum()), "sailable_days": int(y["sailable"][m].sum()),
                            "precip_mm": round(float(y["precip_mm"][m].sum()), 0), "precip_climate_mm": clim["seasons"][s]["precip_mm"],
                            "temp_mean_c": round(float(y["temp_c"][m].mean()), 1), "wet_frac_setting": round(params[s]["f_rain_days"], 3)})
     summary = {"year": year, "n_days": n, "types": {t: int((y["type"] == i).sum()) for i, t in enumerate(TYPES)},
+               "snow_days": int(y["snow"].sum()), "storm_days": int((y["storm_event"] > 0).sum()),
                "precip_mm": round(float(y["precip_mm"].sum()), 0), "precip_climate_mm": clim["annual"]["precip_mm"],
                "storm_events": int(y["storm_event"].max()), "sailable_days": int(y["sailable"].sum()),
                "temp_min_c": round(float(y["temp_c"].min()), 1), "temp_max_c": round(float(y["temp_c"].max()), 1),
                "seasons": per_season, "params": [{k: round(v, 4) for k, v in p.items()} for p in params]}
     g["weather"] = {"json": summary, "days": days, "arrays": y}
     g["json"]["weather"] = {"year": year, "precip_mm": summary["precip_mm"], "types": summary["types"], "storm_events": summary["storm_events"],
-                            "sailable_days": summary["sailable_days"]}
-    log(f"  天气 y{year}：{summary['types']} 雨 {summary['precip_mm']:.0f} / 气候 {clim['annual']['precip_mm']:.0f} mm，风暴 {summary['storm_events']} 场，可出航 {summary['sailable_days']} 天")
+                            "storm_days": summary["storm_days"], "snow_days": summary["snow_days"], "sailable_days": summary["sailable_days"]}
+    log(f"  天气 y{year}：{summary['types']} 雨雪 {summary['precip_mm']:.0f} / 气候 {clim['annual']['precip_mm']:.0f} mm，雪日 {summary['snow_days']}，风暴 {summary['storm_events']} 场，可出航 {summary['sailable_days']} 天")
 
 
 def multi_year_stats(ctx, node: int, c: dict, g: dict, years: int = 30) -> dict:
@@ -176,7 +192,7 @@ def multi_year_stats(ctx, node: int, c: dict, g: dict, years: int = 30) -> dict:
     P = np.zeros((years, n_s))
     F = np.zeros((years, n_s))
     for yv in range(years):
-        y = simulate_year(_rng(ctx, node, f"weather:{yv}"), clim, g["daily"], params, peak, wc)
+        y = simulate_year(_rng(ctx, node, f"weather:{yv}"), clim, g["daily"], params, peak, wc, rim_m=float(g["json"]["islands"][0].get("rim_m", peak)))
         for s in range(n_s):
             m = y["season"] == s
             P[yv, s] = y["precip_mm"][m].sum()
@@ -216,6 +232,6 @@ def draw_weather_strip(ax, g: dict) -> None:
         ax.axvline(s * dps, color="k", lw=0.5, alpha=0.5)
         ax.text((s + 0.5) * dps, -0.5, clim["season_names"][s], ha="center", va="center", fontsize=9, alpha=0.8)
     J = g["weather"]["json"]
-    types = "  ".join(f"{k} {v}" for k, v in J["types"].items())
+    types = "  ".join(f"{k} {v}" for k, v in J["types"].items() if v)
     ax.set_title(f"逐日天气 y{J['year']}：{types}；雨 {J['precip_mm']:.0f} mm（气候 {J['precip_climate_mm']:.0f}）；风暴 {J['storm_events']} 场；可出航 {J['sailable_days']} 天", fontsize=9)
     ax.set_xlabel("日序（一年 336 日 = 4 季 × 3 月 × 28 日）")

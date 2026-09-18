@@ -56,12 +56,12 @@ def run_batch(ctx, sample: int = 30, year: int = 0, sets: list[str] | None = Non
                "season_range_c": C["annual"]["season_range_c"], "precip_mm": C["annual"]["precip_mm"],
                "lakes": J["hydro"]["n_lakes"], "large_basins": J["hydro"]["main_basins"].get("n_large", 0),
                "forest": J["landcover"]["share"].get("林地", 0.0), "arable_err": round(abs(J["constraints"]["arable_frac"]["actual"] - J["constraints"]["arable_frac"]["target"]), 5),
-               "storm_days": J["weather"]["types"].get("风暴", 0), "fog_days": J["weather"]["types"].get("云海漫顶", 0),
+               "storm_days": J["weather"].get("storm_days", J["weather"]["types"].get("风暴", 0)), "snow_days": J["weather"].get("snow_days", 0), "fog_days": J["weather"]["types"].get("云海漫顶", 0),
                "sailable_days": J["weather"]["sailable_days"], "code": code, "fails": fails}
         rows.append(row)
         print(f"  #{node:<5} {row['seconds']:5.1f}s  {row['res_m']:.0f} m  {row['rows']}×{row['cols']:<5} 陆地 {row['area_km2']:8.0f} 主岛 {row['main_km2']:7.0f} "
               f"{row['n_islands']:2d} 岛 {row['age_zh']} {row['lat']:6.1f}° {row['season_type']} 温差 {row['season_range_c']:.0f} 雨 {row['precip_mm']:.0f} "
-              f"湖 {row['lakes']} 风暴 {row['storm_days']:3d} 雾 {row['fog_days']:3d} 航 {row['sailable_days']:3d}  " + ("全过" if code == 0 else f"失败 {fails}"))
+              f"湖 {row['lakes']} 风暴 {row['storm_days']:3d} 雪 {row['snow_days']:3d} 雾 {row['fog_days']:3d} 航 {row['sailable_days']:3d}  " + ("全过" if code == 0 else f"失败 {fails}"))
     secs = np.array([r["seconds"] for r in rows])
     summary = {
         "run": ctx.out_dir.name, "seed": ctx.seed, "sample": len(rows), "year": year,

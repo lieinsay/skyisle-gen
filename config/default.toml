@@ -575,7 +575,8 @@ wet_frac_min = 0.06
 wet_frac_max = 0.70
 wet_persistence = 0.45        # 湿→湿 = f_wet + persistence × (1 − f_wet)；干→湿由平稳分布 = f_wet 反解
 rain_gamma_shape = 0.8        # 日雨量伽马分布形状（< 1：多小雨、偶有大雨）
-heavy_rain_mm = 15.0          # ≥ 此值叫大雨
+heavy_rain_mm = 15.0          # ≥ 此值叫大雨（雪日则叫大雪）
+snow_temp_c = 0.5             # 岸缘气温 ≤ 此值的降水记为雪（小雪 / 大雪 / 暴风雪）；岸缘气温 = 逐日气温（主岛峰高处）+ 直减率 × (峰 − 岸缘)
 storm_day_k = 0.35            # 风暴日比例 = k × 风暴强度^exp（强度 1 → 35% 的日子在风暴里）
 storm_day_exp = 1.2
 storm_days_min = 1            # 一场风暴持续 1–4 天
