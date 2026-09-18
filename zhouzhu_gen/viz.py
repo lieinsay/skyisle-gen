@@ -19,7 +19,7 @@ from .stages.s03_islands import CLASS_NAMES, CLASS_ZH  # noqa: E402
 MODE_COLORS = {"daily": "#1f77b4", "trade": "#ff7f0e", "envoy": "#2ca02c", "migrate": "#d62728"}
 CLASS_COLORS = {"dense": "#7b3294", "medium": "#008837", "sparse": "#d9a800", "isolated": "#c0392b"}
 
-plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Zen Hei", "DejaVu Sans"]  # Windows 前两个，Linux 后三个
 plt.rcParams["axes.unicode_minus"] = False
 
 

@@ -13,7 +13,7 @@ from matplotlib.colors import LightSource  # noqa: E402
 
 from .grid import write_png16, write_png8  # noqa: E402
 
-plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Zen Hei", "DejaVu Sans"]  # Windows 前两个，Linux 后三个
 plt.rcParams["axes.unicode_minus"] = False
 
 LANDCOVER_CLASSES = ["虚空", "崖缘", "裸岩", "高山草甸", "林地", "灌丛", "草坡", "可耕地", "梯田", "湿地", "河道", "湖"]
