@@ -94,7 +94,12 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     ar_isl = np.array([float((arable & (island_id == k)).sum()) for k in range(n_isl)]) * cell_km2
     share = ar_isl / max(1e-9, ar_isl.sum()) if ar_isl.sum() > 0 else np.eye(1, n_isl)[0]
     hh_isl = np.floor(share * hh_total).astype(int)
-    hh_isl[0] += hh_total - int(hh_isl.sum())          # 取整的零头归主岛
+    richest = int(np.argmax(ar_isl))                    # 可耕地最多的岛（通常是主岛，但主岛可能一块田都没有）
+    hh_isl[richest] += hh_total - int(hh_isl.sum())     # 取整的零头
+    for k in range(n_isl):                              # 没有田的岛不能有户：挪到可耕地最多的岛
+        if ar_isl[k] <= 0 and hh_isl[k] > 0 and k != richest:
+            hh_isl[richest] += hh_isl[k]
+            hh_isl[k] = 0
     land_per_hh = arable_km2 / max(1, hh_total)         # 户均地量 km²
 
     # ---------- 田块：可耕地 8 邻域连通块；小块并入散户田；大块按 80 户切分 ----------
@@ -186,7 +191,7 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         if not cand.any():
             cand = (island_id[sl] == f["island"]) & land[sl] & ~water[sl] & (dfield <= reach)   # 退而求其次：允许落在田上
         if not cand.any():
-            continue
+            cand = fm_local.copy()                                                              # 再不行就落在田块自己的格上（户数不能丢）
         sc_map = np.where(cand, score_base[sl] + float(w["field"]) * (1.0 - dfield / (reach + 1.0)), -1e9)
         flat = np.argsort(-sc_map.ravel(), kind="stable")[:200]
         pick = None
@@ -209,7 +214,15 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
                     pick = (i + r0, j + c0)
                     break
         if pick is None:
-            continue
+            # 所有候选格都被占：落在田块里离已有村最远的格
+            fi, fj = ii, jj
+            tk = np.argwhere(taken)
+            if tk.size:
+                dd = np.sqrt(((np.stack([fi, fj], 1)[:, None, :] - tk[None, :, :]) ** 2).sum(-1)).min(axis=1)
+                b = int(np.argmax(dd))
+            else:
+                b = 0
+            pick = (int(fi[b]), int(fj[b]))
         gi, gj = pick
         rec = {"id": 0, "island": f["island"], "cell": [int(gi), int(gj)], "km": km(gi, gj), "households": int(hh), "field": f["id"],
                "elev_m": round(float(g["height"][gi, gj]), 0), "water_dist_km": round(float(dist_water[gi, gj]) * res_km, 2),
