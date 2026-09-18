@@ -613,3 +613,8 @@ dock_merge_km = 2.0           # 同岛 2 km 内的码头合并（一个码头服
 cistern_basin_min_frac = 0.05 # 无河之群：主岛集水区 ≥ 岛面积此比例的盆地才落蓄水池
 cistern_catch_coef = 0.3      # 蓄水池容量 = 盆地 km² × 年降水 mm × 系数（千 m³，只是数字）
 village_water_km = 1.0        # SET-water：村在此距离内有水源（河 / 湖 / 溪涧 / 取水点 / 蓄水池）
+dock_merge_rel = 0.35         # 码头合并半径 = max(dock_merge_km, 此系数 × √岛面积)：小岛只留一个码头
+city_urban_rate = 0.3         # 都（5.7）：城居人口 = 本邑人口 × 城居率 + 邦人口 × 集聚率（普通邦 / 变法之国）；「帝国拨盘」
+city_gather_rate = 0.05
+city_gather_rate_reformer = 0.10
+city_guo_km = 5.0             # 郭：索桥可达且离城此距离内的村并入（3 km 时都城周围常常一个村都没有：邑治的田块本身就 2 km 宽）

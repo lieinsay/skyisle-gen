@@ -121,6 +121,13 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert len(S["intakes"]) == sum(1 for v in S["villages"] if v["island"] == 0)
         else:
             assert len(S["cisterns"]) >= 1
+        # SET-home：三个主家候选类型各不同，都落在陆地上；前哨都在有码头的小岛
+        kinds = [h["kind"] for h in S["home_candidates"]]
+        assert len(kinds) == len(set(kinds)) and 2 <= len(kinds) <= 3, kinds
+        for h in S["home_candidates"]:
+            assert z["island_id"][h["cell"][0], h["cell"][1]] == h["island"]
+        dock_isl = {d["island"] for d in S["docks"]}
+        assert all(o["island"] in dock_isl and o["island"] != 0 for o in S["outposts"])
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)
