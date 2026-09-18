@@ -84,7 +84,7 @@ def test_island_deterministic_and_consistent(small_ctx):
         assert abs(sum(s["precip_mm"] for s in C["seasons"]) - a["precip_mm"]) <= 0.01 * a["precip_mm"] + 2
     if STEPS >= 4:
         W = C["weather"]
-        assert W["days"] == 336 and sum(W["types"].values()) == 336
+        assert W["n_days"] == 336 and len(W["days"]) == 336 and sum(W["types"].values()) == 336
         assert (out / "weather_y0.csv").exists()
         # 改年份不动地形与气候：只有天气产物变
         out3 = isl.generate(small_ctx, node, res_m=300.0, steps=STEPS, year=1, log=lambda *a: None)

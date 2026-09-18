@@ -11,6 +11,10 @@ GET  /api/check?run=          验收报告
 GET  /api/ninegrid?run=&region=   九格表 markdown
 GET  /api/path?run=&a=&b=&mode=   最优路径逐跳
 GET  /api/island?run=&node=[&year=0][&force=1]   岛群生成器（第三层）：按需生成并返回摘要；/api/island/preview 取 preview.png
+GET  /island.html?run=&node=[&year=]   岛群调试台（2D 图层、四季、逐日天气、改年份 / 参数重生成）
+GET  /api/island/data?run=&node=&year=   island.json + climate.json（含逐日天气）
+GET  /api/island/raster?run=&node=       terrain.npz 的栅格（base64 定型数组，过大时抽稀）
+POST /api/island/regen {run, node, year, sets:[...]}   强制重生成（可带 island.* 参数覆盖）
 POST /api/run  {seed, sets:[...], base_run}   后台重跑管线
 GET  /api/run/status          进度
 """
@@ -117,6 +121,13 @@ class Handler(BaseHTTPRequestHandler):
             p = url.path
             if p in ("/", "/index.html"):
                 self._send((STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+            elif p == "/island.html":
+                self._send((STATIC / "island.html").read_bytes(), "text/html; charset=utf-8")
+            elif p == "/api/island/data":
+                self._json(self._island_data(q["run"], int(q["node"]), int(q.get("year", 0)), q.get("force") == "1"))
+            elif p == "/api/island/raster":
+                body = self._island_raster(q["run"], int(q["node"]))
+                self._send(body)
             elif p.startswith("/vendor/"):
                 f = (STATIC / "vendor" / Path(p).name)
                 if f.exists():
@@ -222,6 +233,52 @@ class Handler(BaseHTTPRequestHandler):
                 "weather": C.get("weather", {}), "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
                 "preview_main": f"/api/island/preview?run={rid}&node={node}&main=1&t={int(time.time())}", "dir": str(out)}
 
+    def _island_data(self, rid, node, year, force=False, sets=None):
+        ctx = self.app.ctx(rid)
+        out = ctx.out_dir / "islands" / str(node)
+        need = force or not all((out / f).exists() for f in ("island.json", "climate.json", "terrain.npz", "preview_main.png", f"weather_y{year}.csv"))
+        if not need:
+            C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
+            need = C.get("weather", {}).get("year") != year or not isinstance(C.get("weather", {}).get("days"), list)
+        if need:
+            from ..island import generate
+            with self.app.island_lock:
+                generate(ctx, node, year=year, sets=list(sets or []), log=lambda *a: None)
+        J = json.loads((out / "island.json").read_text(encoding="utf-8"))
+        C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
+        return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "island_cfg": ctx.cfg.get("island", {}),
+                "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
+                "preview_main": f"/api/island/preview?run={rid}&node={node}&main=1&t={int(time.time())}"}
+
+    def _island_raster(self, rid, node) -> bytes:
+        import base64
+        import numpy as np
+        ctx = self.app.ctx(rid)
+        f = ctx.out_dir / "islands" / str(node) / "terrain.npz"
+        with np.load(f) as z:
+            arrs = {k: z[k] for k in z.files}
+        H, W = arrs["height"].shape
+        step = 1
+        while (H // step) * (W // step) > 1_600_000:
+            step += 1
+        def pick(a):
+            return np.ascontiguousarray(a[::step, ::step])
+        h = pick(arrs["height"]).astype(np.float64)
+        void = np.isnan(h)
+        hq = np.where(void, 0, np.clip(np.round(h), 0, 65534) + 1).astype(np.uint16)   # 0 = 虚空，其余 = 高度 + 1
+        out = {"rows": int(hq.shape[0]), "cols": int(hq.shape[1]), "step": step,
+               "height_u16": base64.b64encode(hq.tobytes()).decode("ascii"),
+               "island_id_i16": base64.b64encode(pick(arrs["island_id"]).astype(np.int16).tobytes()).decode("ascii")}
+        for k, dt in (("landcover", np.uint8), ("river", np.uint8), ("stream", np.uint8), ("lake", np.uint8), ("arable", np.uint8), ("cliff", np.uint8)):
+            if k in arrs:
+                out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
+        if "slope_deg" in arrs:
+            out["slope_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["slope_deg"]) * 4), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+        if "flowacc_km2" in arrs:
+            fa = pick(arrs["flowacc_km2"]).astype(np.float64)
+            out["flowacc_log_u8"] = base64.b64encode(np.clip(np.round(np.log10(np.maximum(fa, 0.0) + 0.01) * 40 + 100), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+        return json.dumps(out).encode("utf-8")
+
     def do_POST(self):
         try:
             n = int(self.headers.get("Content-Length", 0))
@@ -230,6 +287,13 @@ class Handler(BaseHTTPRequestHandler):
                 rid = self.app.start_run(int(body.get("seed", 42)), list(body.get("sets", [])),
                                          body.get("run_id"))
                 self._json({"started": True, "run_id": rid})
+            elif self.path == "/api/island/regen":
+                sets = [str(x).strip() for x in body.get("sets", []) if str(x).strip()]
+                bad = [x for x in sets if not x.startswith("island.") or "=" not in x]
+                if bad:
+                    self._json({"error": f"参数覆盖只接受 island.a.b=value：{bad}"}, 400)
+                else:
+                    self._json(self._island_data(body["run"], int(body["node"]), int(body.get("year", 0)), force=True, sets=sets))
             else:
                 self._send(b"not found", "text/plain", 404)
         except Exception as e:  # noqa: BLE001

@@ -273,8 +273,9 @@ def daily_curves(clim: dict, inp: dict, c4: dict) -> dict:
 def write_climate(out: Path, g: dict, year: int) -> None:
     clim = dict(g["climate"])
     if "weather" in g:
-        clim["weather"] = g["weather"]["json"]
+        clim["weather"] = dict(g["weather"]["json"])
         days = g["weather"]["days"]
+        clim["weather"]["days"] = days
         with open(out / f"weather_y{year}.csv", "w", newline="", encoding="utf-8-sig") as fh:
             w = csv.writer(fh)
             w.writerow(["day", "season", "season_name", "month", "day_of_month", "type", "precip_mm", "temp_c", "wind_from_deg", "wind_ms", "sailable", "storm_event"])

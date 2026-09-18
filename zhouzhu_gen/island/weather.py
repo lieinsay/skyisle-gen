@@ -154,7 +154,7 @@ def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) ->
                            "fog_days": int((y["type"][m] == 4).sum()), "sailable_days": int(y["sailable"][m].sum()),
                            "precip_mm": round(float(y["precip_mm"][m].sum()), 0), "precip_climate_mm": clim["seasons"][s]["precip_mm"],
                            "temp_mean_c": round(float(y["temp_c"][m].mean()), 1), "wet_frac_setting": round(params[s]["f_rain_days"], 3)})
-    summary = {"year": year, "days": n, "types": {t: int((y["type"] == i).sum()) for i, t in enumerate(TYPES)},
+    summary = {"year": year, "n_days": n, "types": {t: int((y["type"] == i).sum()) for i, t in enumerate(TYPES)},
                "precip_mm": round(float(y["precip_mm"].sum()), 0), "precip_climate_mm": clim["annual"]["precip_mm"],
                "storm_events": int(y["storm_event"].max()), "sailable_days": int(y["sailable"].sum()),
                "temp_min_c": round(float(y["temp_c"].min()), 1), "temp_max_c": round(float(y["temp_c"].max()), 1),

@@ -870,7 +870,8 @@ function selectIsland(i){
     ${fold('edges',`出边（${es.length}）`,`<table class="kv"><tr><td>对端</td><td>成本</td><td>去程风（${MODE_ZH[wmode]}）</td><td>日常/商旅/使节/迁徙</td><td>障碍</td></tr>${edgeHtml}</table>
     <div class="small">去程风 = 从本岛出发的风因子 dir(c)^α（顺 &lt;1、逆 &gt;1；模式随左侧「模式」）</div>`)}
     ${fold('island','岛群生成器（第三层）',`<div class="btnrow"><button id="btnIsland">生成此岛群</button><button id="btnIslandRe" class="mini" title="忽略已有产物重新生成">重新生成</button></div>
-    <div id="islandBox" class="small">按需生成群内布局、岛内地形、水系、四季气候与逐日天气（约 5–15 s；只读管线产物，不回灌）。</div>`)}`;
+    <div id="islandBox" class="small">按需生成群内布局、岛内地形、水系、四季气候与逐日天气（约 5–15 s；只读管线产物，不回灌）。</div>
+    <div class="small">或直接 <a href="/island.html?run=${currentRun}&node=${i}" target="_blank" style="color:var(--acc2)">打开岛群调试台</a>（2D 图层、逐日天气、改年份 / 参数重生成）</div>`)}`;
   box.querySelectorAll('details[data-fold]').forEach(d=>d.addEventListener('toggle',()=>{ probeOpen[d.dataset.fold]=d.open; }));
   $('btnHome').onclick=()=>{ home=i; distCache=null; if(!lensShows('culture')) setLens('culture'); $('colorBy').value='dist'; $('modeSel').value='all'; updateRowVisibility(); repaintIslands(); repaintLabels(); };
   $('btnFly').onclick=()=>globe.pointOfView({lat:A.lat[i],lng:A.lon[i],altitude:0.6},800);
