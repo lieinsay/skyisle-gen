@@ -509,7 +509,7 @@ cone_radius_rel = 1.25        # 火山锥半径（× 等效半径）：锥脚落
 cone_profile_pow = 1.5        # 锥剖面 (1 − d)^p：p > 1 上陡下缓
 gully_amp = 0.35              # 放射状沟谷深度（相对）
 plateau_rise = 0.3            # 老岛：向内程度到此值即登上台地
-plateau_valley_depth = 0.35   # 老岛宽谷深度（相对）
+plateau_valley_depth = 0.5    # 老岛宽谷深度（相对）；0.35 时台地几乎全平，D8 河道走直线
 mound_amp = 0.15              # 老岛边缘残丘
 erosion_rounds_main = 30      # 侵蚀轮数（主岛 / 小岛；新岛 ×0.7、老岛 ×1.3）
 erosion_rounds_small = 8
@@ -553,6 +553,8 @@ water_near_cells = 15         # 离河 / 湖几格内算「近水」（可耕适
 arable_slope_max_deg = 25.0   # 适宜度 = (1 − 坡度/此值)^1.5 × 温度项 × 土层项 × 近水项 × 湿度项
 arable_temp_min_c = 2.0
 terrace_slope_deg = 8.0       # 可耕且坡度 ≥ 此值 → 梯田
+arable_patch_km = 2.0         # 适宜度乘的斑块噪声：特征尺度与幅度（田块成团；0 = 关）
+arable_patch_amp = 0.35
 
 [island.climate]              # 5.4 季节气候
 precip_mm_min = 150.0         # 第八节 a：相对降水 0 → 150 mm，1 → 4,000 mm，中间按 p^1.3

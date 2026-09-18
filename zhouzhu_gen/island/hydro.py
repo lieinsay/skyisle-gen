@@ -168,8 +168,17 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     cover[wetland] = LC_WET
     cover[g["cliff"]] = LC_CLIFF
     # ---------- 可耕地：适宜度分位 ----------
-    # 适宜度只用于排名（可耕率是行星层给定的约束）：各项都是软打分、处处 > 0，寒冷 / 陡峭的群也能取到该有的比例
-    suit = (0.02 + np.clip(1.0 - slope / float(lc["arable_slope_max_deg"]), 0.0, 1.0) ** 1.5
+    # 适宜度只用于排名（可耕率是行星层给定的约束）：各项都是软打分、处处 > 0，寒冷 / 陡峭的群也能取到该有的比例。
+    # 再乘一层斑块噪声（特征 arable_patch_km），田块成团而不是沿等值线切出的带与方块
+    from . import _rng
+    from .grid import FractalNoise
+    x0, y0 = g["json"]["raster"]["origin_km"]
+    Xk = x0 + (np.arange(W) + 0.5) * res_km
+    Yk = y0 - (np.arange(H) + 0.5) * res_km
+    XX, YY = np.meshgrid(Xk, Yk)
+    patch = FractalNoise(_rng(ctx, node, "arable"), Xk[0], Yk[-1], Xk[-1], Yk[0], feature_km=float(lc["arable_patch_km"]), octaves=3, persistence=0.5).sample(XX, YY)
+    patch = 1.0 + float(lc["arable_patch_amp"]) * patch
+    suit = patch * (0.02 + np.clip(1.0 - slope / float(lc["arable_slope_max_deg"]), 0.0, 1.0) ** 1.5
             * (0.1 + 0.9 * np.clip((T - float(lc["arable_temp_min_c"])) / 8.0, 0.0, 1.0))
             * (0.4 + 0.6 * soil) * (0.8 + 0.2 * near_water) * np.clip(wet / 0.6, 0.2, 1.2))
     suit = np.where(land & ~g["cliff"] & ~lake & (river == 0) & ~wetland, suit, -1.0)

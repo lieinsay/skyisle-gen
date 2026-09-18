@@ -158,12 +158,12 @@ def binary_dilate(mask: np.ndarray, iterations: int = 1, connectivity: int = 8) 
 
 
 def distance_bands(mask: np.ndarray, max_iter: int) -> np.ndarray:
-    """到 mask 的近似距离（格数，切比雪夫），超过 max_iter 记 max_iter + 1。"""
+    """到 mask 的近似距离（格数，八边形：4/8 邻域交替扩张，比切比雪夫圆得多），超过 max_iter 记 max_iter + 1。"""
     d = np.full(mask.shape, max_iter + 1, dtype=np.int32)
     cur = np.asarray(mask, dtype=bool)
     d[cur] = 0
     for k in range(1, max_iter + 1):
-        nxt = binary_dilate(cur, 1)
+        nxt = binary_dilate(cur, 1, connectivity=4 if k % 2 else 8)
         d[nxt & ~cur] = k
         cur = nxt
         if cur.all():

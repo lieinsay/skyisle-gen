@@ -205,7 +205,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
 def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: str | None = None,
              sets: list[str] | None = None, steps: int = 9, log=print, return_state: bool = False):
     """生成一个岛群的全部产物，写到 out/<run>/islands/<node>/。返回目录。"""
-    from .output import write_preview, write_terrain
+    from .output import write_preview, write_preview_main, write_terrain
     c = island_config(ctx, sets)
     inp = _node_inputs(ctx, node)
     t0 = time.perf_counter()
@@ -229,6 +229,7 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
         from .climate import write_climate
         write_climate(out, g, year)
     p = write_preview(out, g)
+    write_preview_main(out, g)
     log(f"[island {node}] 完成 {time.perf_counter() - t0:.1f} s → {out}")
     if export:
         import shutil

@@ -158,3 +158,54 @@ def write_preview(out: Path, g: dict) -> Path:
     fig.savefig(p, dpi=110, bbox_inches="tight")
     plt.close(fig)
     return p
+
+
+def write_preview_main(out: Path, g: dict) -> Path:
+    """主岛放大图：晕渲 + 等高线 + 河 / 湖 / 溪涧 + 可耕地 + 地表底色，给策划与场景美术看岛内细节。"""
+    J = g["json"]
+    res_m = J["raster"]["res_m"]
+    r0, c0, mm, _ = J["islands"][0]["bbox_cells"]
+    sl = (slice(max(0, r0), r0 + mm), slice(max(0, c0), c0 + mm))
+    ids = g["island_id"][sl]
+    m0 = ids == 0
+    rr, cc = np.where(m0)
+    sub = (slice(rr.min(), rr.max() + 1), slice(cc.min(), cc.max() + 1))
+    h = np.where(m0, g["height"][sl], np.nan)[sub]
+    m = m0[sub]
+    fig, ax = plt.subplots(figsize=(11, 9))
+    shaded = _hillshade_rgb(h, res_m, float(np.nanmin(h)), float(np.nanmax(h)), "terrain")
+    if "landcover" in g:
+        lc = g["landcover"][sl][sub]
+        pal = np.array(LANDCOVER_PALETTE, dtype=float) / 255.0
+        col = pal[np.clip(lc, 0, len(pal) - 1)]
+        shaded = np.where(m[..., None], 0.55 * shaded + 0.45 * col, shaded)
+    ax.imshow(shaded, interpolation="nearest")
+    ax.contour(np.where(np.isnan(h), np.nanmin(h), h), levels=12, colors="k", linewidths=0.35, alpha=0.6)
+    if "river" in g:
+        rv = g["river"][sl][sub].astype(float)
+        st = g["stream"][sl][sub].astype(float)
+        ax.imshow(np.where(st > 0, 1.0, np.nan), cmap="Blues", vmin=0, vmax=2, alpha=0.5, interpolation="nearest")
+        ax.imshow(np.where(rv > 0, rv, np.nan), cmap="Blues", vmin=-1, vmax=3, alpha=1.0, interpolation="nearest")
+        ax.imshow(np.where(g["lake"][sl][sub], 1.0, np.nan), cmap="winter", vmin=0, vmax=1, alpha=0.95, interpolation="nearest")
+        ar = g["arable"][sl][sub]
+        ax.contour(ar > 0, levels=[0.5], colors="#ffdd33", linewidths=0.6)
+    km = 10.0 * 1000.0 / res_m
+    ax.plot([10, 10 + km], [h.shape[0] - 10, h.shape[0] - 10], color="w", lw=3)
+    ax.text(10 + km / 2, h.shape[0] - 16, "10 km", color="w", ha="center", fontsize=9)
+    i0 = J["islands"][0]
+    hy = J.get("hydro", {})
+    ax.set_title(f"主岛（{i0['age_zh']}，{i0['area_km2']:.0f} km²，峰 {i0['peak_m']:.0f} m，岸缘 {i0['rim_m']:.0f} m，崖 {i0['cliff_m']:.0f} m）"
+                 + (f" · 河阈 {hy.get('river_threshold_km2')} km² · 湖 {i0.get('n_lakes', 0)} · 盆地 {hy.get('main_basins', {}).get('n_basins', '-')}（大 {hy.get('main_basins', {}).get('n_large', '-')}）" if hy else ""),
+                 fontsize=10)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    if "landcover" in g:
+        from matplotlib.patches import Patch
+        share = J["landcover"]["share"]
+        handles = [Patch(color=tuple(c / 255 for c in LANDCOVER_PALETTE[k]), label=f"{LANDCOVER_CLASSES[k]} {share.get(LANDCOVER_CLASSES[k], 0) * 100:.0f}%")
+                   for k in range(1, 12) if share.get(LANDCOVER_CLASSES[k], 0) >= 0.003]
+        ax.legend(handles=handles, loc="upper left", fontsize=7, framealpha=0.7)
+    p = out / "preview_main.png"
+    fig.savefig(p, dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    return p
