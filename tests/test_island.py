@@ -108,6 +108,19 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert d.min() > 0.05, d.min()                       # 不同村不同格（1 km 间距是软项：放不下时退而求其次）
             assert (d.min(axis=1) >= 1.0 - 1e-9).mean() >= 0.8    # 八成以上的村满足 1 km 间距
         assert any(v.get("seat") for v in S["villages"]) and S["villages"][0]["island"] == 0 or S["n_villages"] == 0
+        # SET-dock：每座有短渡的岛有码头，每条索桥两端各一桥头；SET-water：八成以上的村 1 km 内有水源
+        ferry_isl = {e["a"] for e in J1["links"] if e["kind"] == "ferry"} | {e["b"] for e in J1["links"] if e["kind"] == "ferry"}
+        dock_isl = {d["island"] for d in S["docks"]}
+        assert ferry_isl <= dock_isl, ferry_isl - dock_isl
+        n_bridge = sum(1 for e in J1["links"] if e["kind"] == "bridge")
+        assert len(S["bridgeheads"]) == 2 * n_bridge
+        for d in S["docks"] + S["bridgeheads"]:
+            assert z["cliff"][d["cell"][0], d["cell"][1]] and z["island_id"][d["cell"][0], d["cell"][1]] == d["island"]
+        assert S["water_ok_share"] >= 0.8, S["water_ok_share"]
+        if S["has_river"]:
+            assert len(S["intakes"]) == sum(1 for v in S["villages"] if v["island"] == 0)
+        else:
+            assert len(S["cisterns"]) >= 1
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)

@@ -241,6 +241,8 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         sraster[r["cell"][0], r["cell"][1]] = 3
     for r in hamlets:
         sraster[r["cell"][0], r["cell"][1]] = 4
+    # ---------- 第 2 步：码头 / 桥头 / 导水槽 / 水设施 ----------
+    links_out = build_links_water(ctx, g, sc, villages, hamlets, sraster, km, res_km, dist_water)
     g["settle_raster"] = sraster
     g["settle_fields"] = fields_raster
     hh_v = sum(r["households"] for r in villages)
@@ -250,10 +252,177 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
          "n_fields": len(fields), "n_villages": len(villages), "n_hamlets": len(hamlets), "households_in_villages": hh_v, "households_in_hamlets": hh_h,
          "seat": seat["id"] if seat else None, "seat_households": seat["households"] if seat else 0,
          "village_hh_median": int(np.median([r["households"] for r in villages])) if villages else 0,
-         "fields": fields, "villages": villages, "hamlets": hamlets,
-         "raster_codes": {"1": "田块", "2": "梯田", "3": "村", "4": "散户"},
+         "fields": fields, "villages": villages, "hamlets": hamlets, **links_out,
+         "raster_codes": {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "码头", "6": "桥头", "7": "蓄水池", "8": "取水点"},
          "note": "第三层，人口只读 ⑨；村只有位置与户数，无等级（原则乙）。村名是 村NNN 占位。"}
     g["settle"] = S
     J["settlements"] = {k: S[k] for k in ("population", "households", "n_fields", "n_villages", "n_hamlets", "seat_households", "village_hh_median")}
+    J["settlements"].update({"n_docks": len(S["docks"]), "n_bridgeheads": len(S["bridgeheads"]), "n_cisterns": len(S["cisterns"]), "n_intakes": len(S["intakes"])})
     log(f"  聚落：人口 {pop:.0f}（{pop_src}）→ {hh_total} 户；田块 {len(fields)}，村 {len(villages)}（邑治 {S['seat_households']} 户，中位 {S['village_hh_median']}），散户 {len(hamlets)}；"
-        f"村户 {hh_v} + 散户 {hh_h} = {hh_v + hh_h}")
+        f"村户 {hh_v} + 散户 {hh_h} = {hh_v + hh_h}；码头 {len(S['docks'])}，桥头 {len(S['bridgeheads'])}，蓄水池 {len(S['cisterns'])}，取水点 {len(S['intakes'])}，"
+        f"村 1 km 内有水源 {S['water_ok_share']:.0%}")
+
+
+# ---------------------------------------------------------------- 第 2 步：码头、桥头、导水槽、水设施
+def _cliff_pts(g, k: int) -> np.ndarray:
+    m = g["cliff"] & (g["island_id"] == k)
+    ii, jj = np.where(m)
+    return np.stack([ii, jj], axis=1)
+
+
+def _nearest_pair(a: np.ndarray, b: np.ndarray, sub: int = 3) -> tuple[int, int, float]:
+    """两组格点间的最近对（b 抽稀），返回 (a 的行号, b 的行号, 距离格数)。"""
+    bb = b[::sub] if b.shape[0] > 600 else b
+    best = (0, 0, 1e18)
+    for s0 in range(0, a.shape[0], 1024):
+        blk = a[s0:s0 + 1024]
+        d = ((blk[:, None, :] - bb[None, :, :]) ** 2).sum(-1)
+        f = int(np.argmin(d))
+        i, j = divmod(f, bb.shape[0])
+        if d[i, j] < best[2]:
+            best = (s0 + i, j * (sub if bb is not b else 1), float(d[i, j]))
+    return best[0], best[1], math.sqrt(best[2])
+
+
+def build_links_water(ctx, g, sc, villages, hamlets, sraster, km, res_km, dist_water) -> dict:
+    J = g["json"]
+    island_id = g["island_id"]
+    H, W = island_id.shape
+    n_isl = len(J["islands"])
+    cliffs = {k: _cliff_pts(g, k) for k in range(n_isl)}
+    # 每岛最大的村（没有村就用散户、再没有就用岛心）
+    big = {}
+    for r in sorted(villages + hamlets, key=lambda r: -r["households"]):
+        big.setdefault(r["island"], r["cell"])
+    for k, isl in enumerate(J["islands"]):
+        if k not in big:
+            r0, c0, m, _ = isl["bbox_cells"]
+            ii, jj = np.where(island_id[max(0, r0):r0 + m, max(0, c0):c0 + m] == k)
+            big[k] = [int(ii.mean()) + max(0, r0), int(jj.mean()) + max(0, c0)] if ii.size else [0, 0]
+    docks, bridgeheads = [], []
+    w_v = float(sc["dock_village_weight"])
+    merge_cells = float(sc["dock_merge_km"]) / res_km
+    for e in J["links"]:
+        a, b = int(e["a"]), int(e["b"])
+        if cliffs[a].shape[0] == 0 or cliffs[b].shape[0] == 0:
+            continue
+        if e["kind"] == "bridge":
+            ia, ib, d = _nearest_pair(cliffs[a], cliffs[b], sub=1)
+            for k, idx in ((a, ia), (b, ib)):
+                cell = [int(cliffs[k][idx][0]), int(cliffs[k][idx][1])]
+                bridgeheads.append({"island": k, "to": b if k == a else a, "cell": cell, "km": km(*cell), "gap_km": e["gap_km"]})
+            continue
+        for k, other in ((a, b), (b, a)):
+            pts = cliffs[k]
+            ob = cliffs[other][::3] if cliffs[other].shape[0] > 600 else cliffs[other]
+            # 联合评分：离对岸近 + 离本岛最大村近
+            d_other = np.sqrt(((pts[:, None, :] - ob[None, :, :]) ** 2).sum(-1)).min(axis=1) if pts.shape[0] * ob.shape[0] < 4_000_000 else np.array([_nearest_pair(pts[i:i + 1], ob)[2] for i in range(pts.shape[0])])
+            v = np.array(big[k], dtype=float)
+            d_vill = np.sqrt(((pts - v) ** 2).sum(-1))
+            score = d_other + w_v * d_vill
+            idx = int(np.argmin(score))
+            cell = [int(pts[idx][0]), int(pts[idx][1])]
+            # 同岛 2 km 内已有码头就并入
+            merged = False
+            for dk in docks:
+                if dk["island"] == k and math.hypot(dk["cell"][0] - cell[0], dk["cell"][1] - cell[1]) <= merge_cells:
+                    dk["serves"].append(other)
+                    merged = True
+                    break
+            if not merged:
+                docks.append({"island": k, "cell": cell, "km": km(*cell), "serves": [other], "gap_km": e["gap_km"],
+                              "village_dist_km": round(float(d_vill[idx]) * res_km, 2)})
+    for i, d in enumerate(docks):
+        d["id"] = i + 1
+        d["serves"] = sorted(set(d["serves"]))
+        d["main"] = False
+    main_docks = [d for d in docks if d["island"] == 0]
+    if main_docks:
+        max(main_docks, key=lambda d: (len(d["serves"]), -d["village_dist_km"]))["main"] = True
+    for i, bh in enumerate(bridgeheads):
+        bh["id"] = i + 1
+    channels = [{"a": int(a), "b": int(b), "a_km": J["islands"][a]["center_km"], "b_km": J["islands"][b]["center_km"]} for a, b in J["channels"]]
+
+    # ---------- 水设施 ----------
+    cisterns, intakes = [], []
+    has_river = bool(J["constraints"]["has_river"].get("actual", False))
+    fa = g["flowacc_km2"]
+    cliff_dist = distance_bands(g["cliff"], 4)
+    slope = g["slope_deg"]
+    river = g["river"] > 0
+    P_mm = float(J["hydro"]["precip_mm"])
+    coef = float(sc["cistern_catch_coef"])
+
+    def upstream(cell, steps=3):
+        i, j = cell
+        for _ in range(steps):
+            best = None
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    a, b = i + di, j + dj
+                    if (di or dj) and 0 <= a < H and 0 <= b < W and island_id[a, b] == island_id[i, j] and fa[a, b] < fa[i, j] and (best is None or fa[a, b] > fa[best]):
+                        best = (a, b)
+            if best is None:
+                break
+            i, j = best
+        return [int(i), int(j)]
+
+    if not has_river:
+        mouths = J["hydro"].get("main_basins", {}).get("mouths", [])
+        main_area = J["islands"][0]["area_km2"]
+        for mi, mj, area in mouths:
+            if area < float(sc["cistern_basin_min_frac"]) * main_area:
+                continue
+            cell = upstream((mi, mj), 3)
+            cisterns.append({"island": 0, "cell": cell, "km": km(*cell), "basin_km2": area, "capacity_1000m3": round(area * P_mm * coef, 0)})
+    for k in range(1 if has_river else 0, n_isl):
+        if has_river and k == 0:
+            continue
+        m = (island_id == k) & (cliff_dist >= 2)
+        if not m.any():
+            m = island_id == k
+        fa_k = np.where(m, fa, -1.0)
+        p = int(np.argmax(fa_k))
+        cell = [p // W, p % W]
+        if k == 0 and cisterns:
+            continue
+        area_k = J["islands"][k]["area_km2"]
+        cisterns.append({"island": k, "cell": cell, "km": km(*cell), "basin_km2": round(float(fa[cell[0], cell[1]]), 2), "capacity_1000m3": round(area_k * P_mm * coef * 0.5, 0)})
+    if has_river:
+        rc = np.stack(np.where(river & (island_id == 0)), axis=1)
+        for r in villages:
+            if r["island"] != 0 or rc.shape[0] == 0:
+                continue
+            d = ((rc - np.array(r["cell"])) ** 2).sum(-1)
+            p = int(np.argmin(d))
+            cell = [int(rc[p][0]), int(rc[p][1])]
+            intakes.append({"island": 0, "village": r["id"], "cell": cell, "km": km(*cell), "dist_km": round(math.sqrt(float(d[p])) * res_km, 2)})
+    for i, x in enumerate(cisterns):
+        x["id"] = i + 1
+    for i, x in enumerate(intakes):
+        x["id"] = i + 1
+    # 村的水源：河 / 湖 / 溪涧（≤ water_near）、取水点、蓄水池
+    wsrc = np.stack([np.array(x["cell"]) for x in cisterns], axis=0) if cisterns else np.zeros((0, 2))
+    ok = 0
+    lim = float(sc["village_water_km"]) / res_km
+    for r in villages:
+        dw = float(dist_water[r["cell"][0], r["cell"][1]])
+        dc = float(np.sqrt(((wsrc - np.array(r["cell"])) ** 2).sum(-1)).min()) if wsrc.shape[0] else 1e9
+        src, dd = ("河湖溪涧", dw) if dw <= dc else ("蓄水池", dc)
+        if has_river and r["island"] == 0:
+            it = next((x for x in intakes if x["village"] == r["id"]), None)
+            if it and it["dist_km"] / res_km < dd:
+                src, dd = "取水点", it["dist_km"] / res_km
+        r["water"] = {"source": src, "dist_km": round(dd * res_km, 2)}
+        if dd <= lim:
+            ok += 1
+    for d in docks:
+        sraster[d["cell"][0], d["cell"][1]] = 5
+    for bh in bridgeheads:
+        sraster[bh["cell"][0], bh["cell"][1]] = 6
+    for x in cisterns:
+        sraster[x["cell"][0], x["cell"][1]] = 7
+    for x in intakes:
+        sraster[x["cell"][0], x["cell"][1]] = 8
+    return {"docks": docks, "bridgeheads": bridgeheads, "channels": channels, "cisterns": cisterns, "intakes": intakes,
+            "has_river": has_river, "water_ok_share": round(ok / max(1, len(villages)), 3)}

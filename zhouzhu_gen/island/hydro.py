@@ -117,6 +117,7 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
                 stream[sl] = np.where(mk & (Akm >= float(hc["stream_min_km2"])), 1, stream[sl]).astype(np.uint8)
             # 集水盆地：主岛按出口分水岭；出口 = 流向虚空的格；沿岸线把出口聚成段（相邻 basin_merge_cells 内的出口算同一盆地）
             basin_info = _basins(hf, mk, ri, rj, Akm, cell_km2, hc)
+            basin_info["mouths"] = [[m_[0] + int(r0), m_[1] + int(c0), m_[2]] for m_ in basin_info.get("mouths", [])]   # 转成群栅格坐标
         else:
             stream[sl] = np.where(mk & (Akm >= float(hc["stream_min_km2"])), 1, stream[sl]).astype(np.uint8)
         J["n_lakes"] = n_lakes
@@ -239,7 +240,9 @@ def _basins(hf, mk, ri, rj, Akm, cell_km2, hc) -> dict:
     mouths = np.where(mk.ravel() & (Akm.ravel() >= thr) & (recv < 0))[0]
     sizes = np.array([float(Akm.ravel()[m]) for m in mouths])
     large = np.where(sizes >= float(hc["basin_large_frac"]) * total)[0]
+    order = np.argsort(-sizes, kind="stable") if mouths.size else np.zeros(0, dtype=int)
     return {"n_basins": int(mouths.size), "n_large": int(large.size),
+            "mouths": [[int(mouths[i] // W), int(mouths[i] % W), round(float(sizes[i]), 1)] for i in order[:12]],
             "basin_km2": [round(float(x), 1) for x in sorted(sizes.tolist(), reverse=True)[:8]],
             "large_km2": [round(float(sizes[i]), 1) for i in sorted(large, key=lambda i: -sizes[i])],
             "largest_frac": round(float(sizes.max() / total), 3) if mouths.size else 0.0}

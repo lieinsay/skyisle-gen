@@ -608,3 +608,8 @@ village_min_sep_km = 1.0      # 同岛村与村的最小间距（不够就退而
 water_near_cells = 10         # 「近水」评分的距离尺度（格）
 shore_near_cells = 20         # 「近岸」评分的距离尺度（格）
 site_weights = { field = 1.0, water = 0.8, slope = 0.5, lee = 0.3, shore = 0.3 }   # 村址评分权重
+dock_village_weight = 0.3     # 码头选点：岸缘格的「离对岸距离 + 此权重 × 离本岛最大村距离」最小者
+dock_merge_km = 2.0           # 同岛 2 km 内的码头合并（一个码头服务几条短渡）
+cistern_basin_min_frac = 0.05 # 无河之群：主岛集水区 ≥ 岛面积此比例的盆地才落蓄水池
+cistern_catch_coef = 0.3      # 蓄水池容量 = 盆地 km² × 年降水 mm × 系数（千 m³，只是数字）
+village_water_km = 1.0        # SET-water：村在此距离内有水源（河 / 湖 / 溪涧 / 取水点 / 蓄水池）
