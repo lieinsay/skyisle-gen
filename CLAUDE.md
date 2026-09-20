@@ -1,8 +1,9 @@
-# generator/ 工作约定（Claude 上下文）
+# 工作约定（Claude 上下文）
 
-这是 `docs/12-扩散模型.md` 的实现：行星地形与文明生成器。**先读本文件，再读 `docs/DESIGN-NOTES.md`（决策与踩坑全记录）。**
-上游规格：`../docs/12-扩散模型.md`（规格书）、`../docs/01-设计铁律.md`（硬约束）、`../docs/02-世界与地理.md` §3–5、
-`../docs/11-世界总图.md`（骨架定稿）、`../docs/08-地区设计规程.md`（九格表格式）、`../docs/04-社会与变迁.md` §3（四模式）。
+这是 `docs/spec/12-扩散模型.md` 的实现：行星地形与文明生成器。**先读本文件，再读 `docs/DESIGN-NOTES.md`（决策与踩坑全记录）。**
+上游规格随仓库带了两份快照：`docs/spec/12-扩散模型.md`（规格书）、`docs/spec/11-世界总图.md`（骨架定稿）。
+其余上游文档（`01-设计铁律` 硬约束、`02-世界与地理` §3–5、`08-地区设计规程` 九格表格式、`04-社会与变迁` §3 四模式）
+留在原 Zhouzhu 设计仓里，本仓库不含副本；下文与 `docs/` 里凡写 `docs/0X-…` 的，都指那边的文档。
 
 ## 环境与命令
 
@@ -10,7 +11,7 @@
 - **ME Pro（Debian，无显示器）**：依赖装在 `~/.venvs/zhouzhu`（`~/.local/bin/zhouzhu` 是软链，直接敲 `zhouzhu …`）；
   `~/.bashrc` 的 ZHOUZHU-DEV-ENV 段里已 `export MPLBACKEND=Agg`。中文图标需 `fonts-noto-cjk`（已装，字体回退表里列了 Linux 三个名字）。
   `pipeline` 与 `serve` 不要同时跑；操作台绝不绑 `0.0.0.0`。
-- 一律在 `generator/` 下执行：
+- 一律在仓库根下执行：
   ```
   $py -m zhouzhu_gen.cli run --seed 42            # 十步全跑（约 2 分钟；只改 [s08] 约 15 s；只改 [s09.polity] 约 1 分钟，大头是 ⑩ 的图）
   $py -m zhouzhu_gen.cli stage 6 --seed 42        # 从第 6 步强制重算

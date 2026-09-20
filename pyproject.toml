@@ -1,7 +1,7 @@
 [project]
 name = "zhouzhu-gen"
 version = "0.1.0"
-description = "行星地形与文明生成器 —— Hägerstrand Model III 变体的文化连续场生成（规格：docs/12-扩散模型.md）"
+description = "行星地形与文明生成器 —— Hägerstrand Model III 变体的文化连续场生成（规格：docs/spec/12-扩散模型.md）"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26", "matplotlib>=3.8"]
 
