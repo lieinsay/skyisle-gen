@@ -1,4 +1,8 @@
-# 行星地形与文明生成器
+# 空岛行星生成器（skyisle-gen）
+
+一颗浮空岛行星的地形、气候与文明生成器。
+原先是 Zhouzhu 游戏项目的 `generator/`，2026-09-20 独立成库并改名；
+它依赖的两份规格快照在 `docs/spec/`。
 
 `docs/spec/12-扩散模型.md` 的实现：按十步管线生成行星风系、岛屿分布、气候、障碍、
 航线网络、文明中心、政治层（诸邦与兼并史），并用 **Hägerstrand (1968) Model III 变体**把文化特征扩散成
@@ -18,8 +22,8 @@ strength(t, j) = reach(t, o→j) × adopt(t, j)
 pip install numpy matplotlib pytest
 
 cd generator
-python -m zhouzhu_gen.cli run --seed 42          # 全十步，约 2–4 分钟
-python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
+python -m skyisle_gen.cli run --seed 42          # 全十步，约 2–4 分钟
+python -m skyisle_gen.cli check --run out/seed42 # 单独重跑验收
 ```
 
 同一 seed 必产出同一世界（`tests/test_pipeline.py` 逐字节校验）。
@@ -28,7 +32,7 @@ python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
 | 目录 | 内容 |
 |---|---|
 | `s01_planet … s08_diffusion/` | 各阶段中间产物（npz + json + `_meta.json`），全部可单独可视化 |
-| `s09_polity/polity.npz` · `polities.json` · `history.md` | ⑨ 政治层：人口场、诸邦（邦 = 若干邑）、采邑树、宗主 / 附庸、变法之国与兼并纪年（`zhouzhu polity` 看摘要） |
+| `s09_polity/polity.npz` · `polities.json` · `history.md` | ⑨ 政治层：人口场、诸邦（邦 = 若干邑）、采邑树、宗主 / 附庸、变法之国与兼并纪年（`skyisle polity` 看摘要） |
 | `s10_output/world.json` | 世界汇总（行星、风带、障碍、中心、地区、政体） |
 | `s10_output/fig/*.png` | 全套图层（见下） |
 | `s10_output/ninegrid/*.md` | 各地区九格表草稿（docs/08 格式）+ 溯源 json；①③④ 邑级，⑤⑥⑧ 邦级 |
@@ -42,7 +46,7 @@ python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
 ```
 
 每步产物是下一步输入，带缓存 key 链：只改 `[s08]` 参数重跑时 ①–⑦ 直接命中缓存
-（`zhouzhu run --explain` 查看命中情况；`zhouzhu stage 6` 强制从第 6 步重算）。
+（`skyisle run --explain` 查看命中情况；`skyisle stage 6` 强制从第 6 步重算）。
 
 要点实现（与规格的对应）：
 
@@ -79,13 +83,13 @@ python -m zhouzhu_gen.cli check --run out/seed42 # 单独重跑验收
 ## 可视化（调试全靠看中间层）
 
 ```bash
-python -m zhouzhu_gen.cli viz wind|islands|scale|climate|barriers|routes|centers|iso --run out/seed42
-python -m zhouzhu_gen.cli viz scale                     # 岛群陆地 + 集雨容量（log 着色）
-python -m zhouzhu_gen.cli viz perm --mode daily        # 某模式的通过率图
-python -m zhouzhu_gen.cli viz trait calendar@north_east # 单特征 reach/adopt/strength 三联图
-python -m zhouzhu_gen.cli viz slot white_hemp           # 槽位比例分布（每值一张）
-python -m zhouzhu_gen.cli viz isogloss [mode]           # 同言线 + 聚束热图
-python -m zhouzhu_gen.cli viz distance 6468             # 从某点出发的文化距离（按模式分面）
+python -m skyisle_gen.cli viz wind|islands|scale|climate|barriers|routes|centers|iso --run out/seed42
+python -m skyisle_gen.cli viz scale                     # 岛群陆地 + 集雨容量（log 着色）
+python -m skyisle_gen.cli viz perm --mode daily        # 某模式的通过率图
+python -m skyisle_gen.cli viz trait calendar@north_east # 单特征 reach/adopt/strength 三联图
+python -m skyisle_gen.cli viz slot white_hemp           # 槽位比例分布（每值一张）
+python -m skyisle_gen.cli viz isogloss [mode]           # 同言线 + 聚束热图
+python -m skyisle_gen.cli viz distance 6468             # 从某点出发的文化距离（按模式分面）
 ```
 
 每张图正常应长什么样：风带图应是木星式横条 + G 漩涡；航线图的干线应沿温带核心
@@ -97,11 +101,11 @@ python -m zhouzhu_gen.cli viz distance 6468             # 从某点出发的文�
 ## 3D 操作台（动态可视化）
 
 ```bash
-python -m zhouzhu_gen.cli serve            # 打开 http://127.0.0.1:8642/
-python -m zhouzhu_gen.cli viz web --run out/seed42   # 导出单文件 viewer.html（无需服务器，无重跑）
+python -m skyisle_gen.cli serve            # 打开 http://127.0.0.1:8642/
+python -m skyisle_gen.cli viz web --run out/seed42   # 导出单文件 viewer.html（无需服务器，无重跑）
 ```
 
-**完全离线**：globe.gl（MIT）随包内置于 `zhouzhu_gen/web/static/vendor/`，页面不加载任何远程资源；
+**完全离线**：globe.gl（MIT）随包内置于 `skyisle_gen/web/static/vendor/`，页面不加载任何远程资源；
 单文件导出把它内嵌进 HTML，拷到没有网络的机器上双击即可。
 
 浏览器里是一颗可旋转缩放的 3D 行星（globe.gl，贴图由风/风暴/降水场渲染），三栏操作：
@@ -120,10 +124,10 @@ python -m zhouzhu_gen.cli viz web --run out/seed42   # 导出单文件 viewer.ht
 ## 探针
 
 ```bash
-python -m zhouzhu_gen.cli probe node 6468        # 属性 + 出边通过率 + 各槽位强度表
-python -m zhouzhu_gen.cli probe edge 100 105     # 因子 × 模式分解
-python -m zhouzhu_gen.cli probe path 100 200 --mode daily   # 逐跳累计 reach
-python -m zhouzhu_gen.cli probe trait calendar@north_east --node 6468  # 谁砍掉了 reach
+python -m skyisle_gen.cli probe node 6468        # 属性 + 出边通过率 + 各槽位强度表
+python -m skyisle_gen.cli probe edge 100 105     # 因子 × 模式分解
+python -m skyisle_gen.cli probe path 100 200 --mode daily   # 逐跳累计 reach
+python -m skyisle_gen.cli probe trait calendar@north_east --node 6468  # 谁砍掉了 reach
 ```
 
 ## 调参
@@ -187,7 +191,7 @@ A/B/C/D 应基本吻合（D 只取紧贴 D 两缘、在文明核心纬度的节�
 
 ```
 config/           default.toml · slots.toml · production_templates.toml · (traits.toml)
-zhouzhu_gen/
+skyisle_gen/
   stages/         s01_planet … s10_output（十步；s09_polity 为第四批 R7 的政治层）
   polity.py       政治层产物的只读封装（邦名 / 状态 / 探针行 / 摘要）
   almanac.py      历法 ↔ 轨道自洽（4 季 × 28 太阳日 → 恒星质量 / 轨道半径 / 卫星；反向亦可），① 调用

@@ -91,7 +91,7 @@ class Polity:
 def print_summary(ctx, top: int = 15) -> None:
     pol = Polity(ctx)
     if not pol.available:
-        print("此 run 没有 ⑨ 政治层产物（旧版本）；请 `zhouzhu stage 9`。")
+        print("此 run 没有 ⑨ 政治层产物（旧版本）；请 `skyisle stage 9`。")
         return
     m = pol.meta
     states = [x for x in m["polities"] if x["kind"] == "state"]

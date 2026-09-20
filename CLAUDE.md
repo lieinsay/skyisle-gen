@@ -1,6 +1,7 @@
-# 工作约定（Claude 上下文）
+# 空岛行星生成器 —— 工作约定（Claude 上下文）
 
-这是 `docs/spec/12-扩散模型.md` 的实现：行星地形与文明生成器。**先读本文件，再读 `docs/DESIGN-NOTES.md`（决策与踩坑全记录）。**
+这是 `docs/spec/12-扩散模型.md` 的实现：一颗浮空岛行星的地形、气候与文明生成器。
+包名 `skyisle_gen`，命令 `skyisle`。**先读本文件，再读 `docs/DESIGN-NOTES.md`（决策与踩坑全记录）。**
 上游规格随仓库带了两份快照：`docs/spec/12-扩散模型.md`（规格书）、`docs/spec/11-世界总图.md`（骨架定稿）。
 其余上游文档（`01-设计铁律` 硬约束、`02-世界与地理` §3–5、`08-地区设计规程` 九格表格式、`04-社会与变迁` §3 四模式）
 留在原 Zhouzhu 设计仓里，本仓库不含副本；下文与 `docs/` 里凡写 `docs/0X-…` 的，都指那边的文档。
@@ -8,26 +9,26 @@
 ## 环境与命令
 
 - Python 3.12：`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`（不在 PATH；PowerShell 里用 `$py = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"`）。依赖仅 numpy + matplotlib（+ pytest）。**不引入 scipy/networkx/pandas。**
-- **ME Pro（Debian，无显示器）**：依赖装在 `~/.venvs/zhouzhu`（`~/.local/bin/zhouzhu` 是软链，直接敲 `zhouzhu …`）；
-  `~/.bashrc` 的 ZHOUZHU-DEV-ENV 段里已 `export MPLBACKEND=Agg`。中文图标需 `fonts-noto-cjk`（已装，字体回退表里列了 Linux 三个名字）。
+- **ME Pro（Debian，无显示器）**：⚠️ 那边是按旧名字装的（venv `~/.venvs/zhouzhu`、软链 `~/.local/bin/zhouzhu`、`~/.bashrc` 的 ZHOUZHU-DEV-ENV 段），
+  改名后**需要重装一遍**（venv 里装的是可编辑包，入口脚本名变了）。该段里已 `export MPLBACKEND=Agg`。中文图标需 `fonts-noto-cjk`（已装，字体回退表里列了 Linux 三个名字）。
   `pipeline` 与 `serve` 不要同时跑；操作台绝不绑 `0.0.0.0`。
 - 一律在仓库根下执行：
   ```
-  $py -m zhouzhu_gen.cli run --seed 42            # 十步全跑（约 2 分钟；只改 [s08] 约 15 s；只改 [s09.polity] 约 1 分钟，大头是 ⑩ 的图）
-  $py -m zhouzhu_gen.cli stage 6 --seed 42        # 从第 6 步强制重算
-  $py -m zhouzhu_gen.cli check --run out/seed42   # 八条验收（P1–P8）+ 气候 C1–C5（C5 四季分明）+ 铁律自检 + 骨架/历法校准（exit 0/1/2）
-  $py -m zhouzhu_gen.cli viz all|wind|islands|scale|routes|polity|isogloss|slot <id>|trait <id>|distance <node> --run out/seed42
-  $py -m zhouzhu_gen.cli polity --run out/seed42  # ⑨ 政治层摘要：宗主 / 变法之国 / 兼并纪年 / 最大诸邦 / 开局候选
-  $py -m zhouzhu_gen.cli probe node <id> | edge a b | path a b --mode m | trait <id> --node j
-  $py -m zhouzhu_gen.cli ninegrid --run out/seed42 [--region K]
-  $py -m zhouzhu_gen.cli island 1165 --run out/seed42 [--year 0] [--res 100] [--export DIR] [--set island.x.y=v]
+  $py -m skyisle_gen.cli run --seed 42            # 十步全跑（约 2 分钟；只改 [s08] 约 15 s；只改 [s09.polity] 约 1 分钟，大头是 ⑩ 的图）
+  $py -m skyisle_gen.cli stage 6 --seed 42        # 从第 6 步强制重算
+  $py -m skyisle_gen.cli check --run out/seed42   # 八条验收（P1–P8）+ 气候 C1–C5（C5 四季分明）+ 铁律自检 + 骨架/历法校准（exit 0/1/2）
+  $py -m skyisle_gen.cli viz all|wind|islands|scale|routes|polity|isogloss|slot <id>|trait <id>|distance <node> --run out/seed42
+  $py -m skyisle_gen.cli polity --run out/seed42  # ⑨ 政治层摘要：宗主 / 变法之国 / 兼并纪年 / 最大诸邦 / 开局候选
+  $py -m skyisle_gen.cli probe node <id> | edge a b | path a b --mode m | trait <id> --node j
+  $py -m skyisle_gen.cli ninegrid --run out/seed42 [--region K]
+  $py -m skyisle_gen.cli island 1165 --run out/seed42 [--year 0] [--res 100] [--export DIR] [--set island.x.y=v]
                                                   # 第三层岛群生成器：out/seed42/islands/1165/（约 5–15 s；不进管线、不回灌）
-  $py -m zhouzhu_gen.cli island check 1165 --run out/seed42   # IS-* 九条校验（含重跑比哈希）
-  $py -m zhouzhu_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
-  $py -m zhouzhu_gen.cli island stats --run out/seed42   # 全量季型统计（只算气候，8000 群 4 s）→ islands/season_stats.json；操作台气候视角「季型」着色读它
-  $py -m zhouzhu_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
-  zhouzhu serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
-  $py -m zhouzhu_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
+  $py -m skyisle_gen.cli island check 1165 --run out/seed42   # IS-* 九条校验（含重跑比哈希）
+  $py -m skyisle_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
+  $py -m skyisle_gen.cli island stats --run out/seed42   # 全量季型统计（只算气候，8000 群 4 s）→ islands/season_stats.json；操作台气候视角「季型」着色读它
+  $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
+  skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
+  $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
   $py -m pytest tests -q                          # 45 个测试，约 20 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
@@ -38,7 +39,7 @@
 ## 架构速查
 
 ```
-zhouzhu_gen/
+skyisle_gen/
   pipeline.py    阶段注册、缓存 key 链（config[s0k]+shared+skeleton+seed+STAGE_VERSION）、产物 IO
   config.py      TOML 加载/深合并/--set/校验（通过率∈[0,1]、r≤0.98、半衰序 daily≤trade≤migrate≤envoy、eps0>0）
   stages/s01…s10 十步；每步 run(ctx) 读上游产物、写 npz/json + _meta.json
@@ -62,7 +63,7 @@ zhouzhu_gen/
                  滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水 / 当日温度）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
                  「季相与水情」日图层（积雪 / 雪线、植被枯荣、作物阶段、溪涧断流、河道涨水漫滩、结冰、云海漫顶）与「天气特效」（雨雪风暴云雾风粒子）都在浏览器里按逐日天气推，不改产物（DESIGN-NOTES 四点十四）；
                  数据通道 /api/island/data（island.json + climate.json 含 weather.days）、/api/island/raster（terrain.npz 定型数组 base64，> 160 万格抽稀）、POST /api/island/regen
-  island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`zhouzhu island <节点>`，按需生成、不进十步管线、不回灌
+  island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`skyisle island <节点>`，按需生成、不进十步管线、不回灌
                  （stages/ 与 check/ninegrid/polity/culture 不得 import 它，pytest 与 IS-iso 有静态断言）
                  __init__  island_config（[island] 段：默认值 ← run 的 resolved ← --set，不进缓存 key）、_node_inputs、build_terrain、generate
                  grid      局部分形噪声（LatticeNoise / FractalNoise，特征尺度以 km 给）、行程并查集连通分量、形态学、块均值 / 双线性、PNG 写出
@@ -94,7 +95,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 6. 随机数只从 `rng.stage_rng / entity_rng` 取；列表排序后使用；不迭代 set。
 7. 新增参数：写进 `config/default.toml` 对应阶段段落并给注释；操作台参数面板（`index.html` 的 `PARAM_SPEC` 或矩阵区块）按需加。
 8. `slots.toml` / `traits.toml` / `production_templates.toml` 不在 `default.toml` 里，通过 `pipeline.STAGE_EXTRA_SECTIONS` 进 ⑧⑩ 的缓存 key（⑨ 政治层不读它们）。新增这类独立配置文件要同步登记，否则改了不会失效。
-9. **第三层不回灌**：`zhouzhu_gen/island/` 只读 ①③④ 的产物，`stages/`、check、ninegrid、polity、culture 不得 import 它（`test_stages_do_not_import_island` + IS-iso）。
+9. **第三层不回灌**：`skyisle_gen/island/` 只读 ①③④ 的产物，`stages/`、check、ninegrid、polity、culture 不得 import 它（`test_stages_do_not_import_island` + IS-iso）。
    岛内的湖、多盆地等「会改变故事」的情形只写进 `island.json`，不改任何场。它的随机数用 `entity_rng(seed, ISLAND_STREAM=21, "island:{node}:{部件}")`，天气另加 `weather:{year}`；
    `[island]` 段不进任何阶段的缓存 key，旧 run 没有这段时用 default.toml 的默认值。
 

@@ -1,6 +1,6 @@
 # 上游规格快照
 
-本目录是从 Zhouzhu 设计仓（`github.com/lieinsay/Zhouzhu`）复制进来的两份规格，
+本目录是从 Zhouzhu 设计仓（`github.com/lieinsay/Zhouzhu`）复制进来的两份规格（本仓库当时还叫 `zhouzhu-gen`），
 在 `7c499bc` 那一版的状态，随本仓库一起走，生成器的实现以它们为准：
 
 | 文件 | 作用 |

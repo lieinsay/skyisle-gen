@@ -331,7 +331,7 @@ def draw_climate_panels(fig, gs, g: dict) -> None:
             ax4.set_title("全年曲线（季节插值）", fontsize=9)
 
 
-# ---------------------------------------------------------------- 全量季型统计（`zhouzhu island stats`）
+# ---------------------------------------------------------------- 全量季型统计（`skyisle island stats`）
 TYPE_CODES = ["four", "two", "rain", "storm", "none_warm", "none_cold"]
 TYPE_CODE_ZH = [TYPE_ZH[k] for k in TYPE_CODES]
 

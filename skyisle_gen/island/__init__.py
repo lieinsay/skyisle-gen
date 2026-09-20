@@ -178,7 +178,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
             "age": inp["age"], "age_zh": {"young": "新岛", "mid": "中年", "old": "老岛"}[age_class(inp["age"], ter)],
             "layered": inp["layered"], "plate": inp["plate"], "boundary_type": ["汇聚", "离散", "走滑"][btype],
             "boundary_kernel": round(kernel, 3), "boundary_axis_deg": round(math.degrees(axis), 1), "res_m": res_m_eff,
-            "generator": "zhouzhu_gen.island", "layer": "第三层（按需生成，不回灌）"}
+            "generator": "skyisle_gen.island", "layer": "第三层（按需生成，不回灌）"}
     km_per_deg = 2 * math.pi * float(inp["planet"]["radius_km"]) / 360.0
     raster = {"res_m": res_m_eff, "rows": H, "cols": W, "origin_km": [round(x0, 3), round(y0, 3)],
               "origin_note": "origin_km = 栅格左上角相对群心（节点经纬度）的平面坐标（km，x 东 y 北）；行 r 列 c 的格心 = origin + ((c+0.5)·res, −(r+0.5)·res)",

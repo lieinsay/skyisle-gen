@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>州渚 · 行星操作台</title>
+<title>空岛 · 行星操作台</title>
 <!-- 完全离线：不加载任何远程资源；globe.gl 随包内置于 vendor/，单文件导出时内嵌 -->
 <style>
 /* 单一视觉世界：深空控制台（行星在黑底上；不随宿主主题切换，所有颜色显式） */
@@ -85,7 +85,7 @@ details.fold>summary{margin-bottom:4px}
 <body>
 <div id="app">
 <header>
-  <h1>州渚 · 行星操作台</h1>
+  <h1>空岛 · 行星操作台</h1>
   <span class="small" id="runinfo"></span>
   <span class="sp"></span>
   <label class="small">run</label><select id="runsel"></select>
@@ -479,7 +479,7 @@ function applyLensVisibility(){
 }
 // preset=false：只切换可见控件，不动当前的着色与图层（用于「以此为家」「九格表」这类跳转）
 function setLens(name, preset=true){
-  lens=name; try{ localStorage.setItem('zhouzhu.lens',name); }catch(e){} writeHash();
+  lens=name; try{ localStorage.setItem('skyisle.lens',name); }catch(e){} writeHash();
   if (preset){
     const L=LENS[name];
     for (const id of LAYER_IDS){ if(!$(id).disabled) $(id).checked=L.on.includes(id); }
@@ -897,7 +897,7 @@ function selectIsland(i){
   box.querySelectorAll('button[data-region]').forEach(b=>b.onclick=()=>{ $('regionSel').value=b.dataset.region; loadGrid(+b.dataset.region); showTab('grid'); });
 }
 async function drawPath(a,b,mode){
-  if (INLINE){ $('pathBox').textContent='单文件模式不支持路径计算（需 zhouzhu serve）'; return; }
+  if (INLINE){ $('pathBox').textContent='单文件模式不支持路径计算（需 skyisle serve）'; return; }
   setStatus('计算路径…');
   const j = await (await api(`/api/path?run=${currentRun}&a=${a}&b=${b}&mode=${mode}`)).json();
   if(!j.reachable){ $('pathBox').textContent='该模式下不可达（沿途有通过率为 0 的障碍）'; pathData=null; repaintEdges(); return; }
@@ -909,7 +909,7 @@ async function drawPath(a,b,mode){
 // ------------------------------------------------------------ 岛群生成器（第三层，PLAN-ISLAND 5.7）
 async function loadIsland(i,force){
   const box=$('islandBox'); if(!box) return;
-  if (INLINE){ box.textContent='单文件模式不支持岛群生成（需 zhouzhu serve）'; return; }
+  if (INLINE){ box.textContent='单文件模式不支持岛群生成（需 skyisle serve）'; return; }
   box.innerHTML='<span class="small">生成中…（约 5–15 s）</span>'; setStatus('生成岛群…');
   try{
     const j=await (await api(`/api/island?run=${currentRun}&node=${i}${force?'&force=1':''}`)).json();
@@ -1007,7 +1007,7 @@ function buildPolity(){
 }
 function buildParams(){
   const box=$('tab-params');
-  if (INLINE){ box.innerHTML='<div class="small">单文件模式不能重跑。用 <code>python -m zhouzhu_gen.cli serve</code> 打开完整操作台。</div>'; return; }
+  if (INLINE){ box.innerHTML='<div class="small">单文件模式不能重跑。用 <code>python -m skyisle_gen.cli serve</code> 打开完整操作台。</div>'; return; }
   let html=`<div class="row"><label>seed</label><input type="number" id="pSeed" value="${W.seed}"></div>
   <div class="row"><label>run id</label><input type="text" id="pRun" placeholder="留空自动"></div>`;
   html+=`<div class="sec"><h3>障碍通过率矩阵 [s05.barriers]</h3><div class="param-grid"><div></div>${MODES.map(m=>`<div class="h mode-${m}">${MODE_ZH[m]}</div>`).join('')}`;
@@ -1088,8 +1088,8 @@ $('btnView').onclick=()=>{ const g=W.bands.G; globe.pointOfView({lat:g.lat,lng:g
 $('btnRotate').onclick=()=>{ rotating=!rotating; globe.controls().autoRotate=rotating; $('btnRotate').textContent=rotating?'停止自转':'自转'; };
 
 (async()=>{ try{ const hr=hashGet('run'), hn=parseInt(hashGet('node'));   // 先读：setLens 会重写地址栏
-  let saved=(location.hash.match(/lens=(\w+)/)||[])[1]||null; if(!saved){ try{ saved=localStorage.getItem('zhouzhu.lens'); }catch(e){} } setLens(LENS[saved]?saved:'geo');
-  await loadRunList(); if(!currentRun){ $('loading').textContent='out/ 下没有可用 run，请先 zhouzhu run'; return; }
+  let saved=(location.hash.match(/lens=(\w+)/)||[])[1]||null; if(!saved){ try{ saved=localStorage.getItem('skyisle.lens'); }catch(e){} } setLens(LENS[saved]?saved:'geo');
+  await loadRunList(); if(!currentRun){ $('loading').textContent='out/ 下没有可用 run，请先 skyisle run'; return; }
   if(hr && [...$('runsel').options].some(o=>o.value===hr)){ $('runsel').value=hr; currentRun=hr; }
   await loadRun(currentRun);
   if(!isNaN(hn)) jumpTo(hn); else writeHash();

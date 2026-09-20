@@ -1,4 +1,4 @@
-"""第 5 步：抽样批跑（`zhouzhu island batch --run out/seed42 --sample 30`）：看分布与耗时，跑第六节的校验，写 islands/batch.json。
+"""第 5 步：抽样批跑（`skyisle island batch --run out/seed42 --sample 30`）：看分布与耗时，跑第六节的校验，写 islands/batch.json。
 
 抽样按 run 的 seed 确定（entity_rng 键 island:batch），分层：主岛面积四分位各取四分之一，保证大岛小岛都覆盖。
 前 3 个群另做 IS-det（重跑一次比哈希），其余只做单次生成的校验。

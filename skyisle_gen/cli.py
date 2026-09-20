@@ -1,13 +1,13 @@
 """命令行入口。
 
-zhouzhu run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 10] [--out out] [--explain]
-zhouzhu stage K --seed 42        # 强制从第 K 阶段重算（之前阶段用缓存）
-zhouzhu viz   <layer> --run out/seed42 [...]
-zhouzhu probe <node|path|edge|trait> ...
-zhouzhu check --run out/seed42 [--calibrate]
-zhouzhu ninegrid --run out/seed42 [--region K]
-zhouzhu island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
-zhouzhu island check <节点> | batch --sample 30 | stats
+skyisle run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 10] [--out out] [--explain]
+skyisle stage K --seed 42        # 强制从第 K 阶段重算（之前阶段用缓存）
+skyisle viz   <layer> --run out/seed42 [...]
+skyisle probe <node|path|edge|trait> ...
+skyisle check --run out/seed42 [--calibrate]
+skyisle ninegrid --run out/seed42 [--region K]
+skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
+skyisle island check <节点> | batch --sample 30 | stats
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def _ctx_from_run(run_dir: str) -> Context:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="zhouzhu", description="行星地形与文明生成器")
+    ap = argparse.ArgumentParser(prog="skyisle", description="行星地形与文明生成器")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_run = sub.add_parser("run", help="执行十步管线（①–⑧ 地理与文化、⑨ 政治层、⑩ 输出）")

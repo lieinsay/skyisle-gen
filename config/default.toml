@@ -469,7 +469,7 @@ p8_n_states_min = 100         # 全世界邦数区间（「诸侯数百」；三
 p8_n_states_max = 1500
 
 # ---------------- 岛群生成器（第三层，docs/PLAN-ISLAND.md；按需生成、不进管线、不回灌） ----------------
-# 不进任何阶段的缓存 key；`zhouzhu island <节点> --set island.x.y=v` 可临时改。旧 run 的 config.resolved.toml 没有本段时用这里的默认值。
+# 不进任何阶段的缓存 key；`skyisle island <节点> --set island.x.y=v` 可临时改。旧 run 的 config.resolved.toml 没有本段时用这里的默认值。
 [island]
 res_m = 100.0                 # 栅格分辨率（第八节 c 默认 100 m；50 m 文件 ×4、耗时 ×4）
 grid_max = 2048               # 群外框上限（格）；超出自动把分辨率加倍重做

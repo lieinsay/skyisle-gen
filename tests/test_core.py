@@ -8,10 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from zhouzhu_gen.graph import CSR, dijkstra, accumulate_along_tree, weak_components
-from zhouzhu_gen.stages.s08_diffusion import fixed_point_slot, conflict_argmax
-from zhouzhu_gen.sphere import latlon_to_xyz, angdist, knn, grid_axes, grid_interp
-from zhouzhu_gen.config import load_config
+from skyisle_gen.graph import CSR, dijkstra, accumulate_along_tree, weak_components
+from skyisle_gen.stages.s08_diffusion import fixed_point_slot, conflict_argmax
+from skyisle_gen.sphere import latlon_to_xyz, angdist, knn, grid_axes, grid_interp
+from skyisle_gen.config import load_config
 
 
 # ---------------- adopt 不动点 ----------------
@@ -121,8 +121,8 @@ def test_grid_interp_periodic():
 def test_moisture_uniform_balance():
     """无风、均匀源：稳态 q = E·τ/ε，P = E（质量守恒）。"""
     import numpy as np
-    from zhouzhu_gen.moisture import solve
-    from zhouzhu_gen.sphere import grid_axes
+    from skyisle_gen.moisture import solve
+    from skyisle_gen.sphere import grid_axes
     lats, lons = grid_axes(10.0)
     z = np.zeros((lats.size, lons.size))
     E = np.ones_like(z); eps = np.full_like(z, 2.0)
@@ -134,8 +134,8 @@ def test_moisture_uniform_balance():
 def test_moisture_advection_depletes_downwind():
     """纬向均匀东风 + 只在一处抬升（ε 大）：抬升点下风的水汽应低于上风。"""
     import numpy as np
-    from zhouzhu_gen.moisture import solve
-    from zhouzhu_gen.sphere import grid_axes
+    from skyisle_gen.moisture import solve
+    from skyisle_gen.sphere import grid_axes
     lats, lons = grid_axes(5.0)
     u = np.full((lats.size, lons.size), -8.0); v = np.zeros_like(u)
     E = np.ones_like(u); eps = np.ones_like(u)
@@ -150,8 +150,8 @@ def test_moisture_advection_depletes_downwind():
 
 def test_band_displacement_keeps_edges_ordered():
     import numpy as np
-    from zhouzhu_gen.localwind import band_displacement, edge_lats, EDGE_KEYS
-    from zhouzhu_gen.sphere import grid_axes
+    from skyisle_gen.localwind import band_displacement, edge_lats, EDGE_KEYS
+    from skyisle_gen.sphere import grid_axes
     lats, lons = grid_axes(1.0)
     rng = np.random.default_rng(3)
     O = np.clip(rng.uniform(0, 1, (lats.size, lons.size)) ** 3, 0, 1)
@@ -170,8 +170,8 @@ def test_band_displacement_keeps_edges_ordered():
 
 def test_band_id_local_reduces_to_global_when_flat():
     import numpy as np
-    from zhouzhu_gen.stages.s02_wind import band_id_of, band_id_of_lat
-    from zhouzhu_gen.localwind import edge_lats, EDGE_KEYS
+    from skyisle_gen.stages.s02_wind import band_id_of, band_id_of_lat
+    from skyisle_gen.localwind import edge_lats, EDGE_KEYS
     bands = {"eq_storm_top_deg": 8.0, "trades_top_deg": 28.0, "calm_top_deg": 36.0, "westerlies_top_deg": 62.0}
     lons = np.arange(-179.5, 180.0, 1.0)
     e = edge_lats(bands)
@@ -201,7 +201,7 @@ def test_resistance_clamped():
 def test_no_height_in_social_modules():
     """原则乙：s07/s08/ninegrid 不得读取 height_m。"""
     import re
-    pkg = Path(__file__).resolve().parent.parent / "zhouzhu_gen"
+    pkg = Path(__file__).resolve().parent.parent / "skyisle_gen"
     for f in ["stages/s07_centers.py", "stages/s08_diffusion.py", "ninegrid.py"]:
         text = (pkg / f).read_text(encoding="utf-8")
         assert not re.search(r"\[[\"']height_m[\"']\]", text), f"{f} 读取了 height_m"
@@ -210,7 +210,7 @@ def test_no_height_in_social_modules():
 def test_no_discrete_culture_assignment():
     """铁律五：不得从 share 的 argmax 派生地区/文化标签（文化是连续场）。"""
     import re
-    pkg = Path(__file__).resolve().parent.parent / "zhouzhu_gen"
+    pkg = Path(__file__).resolve().parent.parent / "skyisle_gen"
     for f in ["stages/s08_diffusion.py", "stages/s07_centers.py"]:
         text = (pkg / f).read_text(encoding="utf-8")
         assert "flood" not in text.lower()
@@ -251,7 +251,7 @@ def test_planet_default_is_earth_sized():
 
 def test_land_model_hits_target_and_respects_geometry():
     """陆地 = 势力范围 × 陆地占比：总量精确命中口径，f ≤ 上限，陆地 ≤ 势力范围，f 随密度上升。"""
-    from zhouzhu_gen.stages.s03_islands import _land, HEX_FACTOR
+    from skyisle_gen.stages.s03_islands import _land, HEX_FACTOR
     rng = np.random.default_rng(0)
     n = 5000
     dens = np.exp(rng.normal(0.0, 1.2, n))            # 局部密度（相对）
@@ -289,7 +289,7 @@ def test_area_exponent_zero_recovers_old_suitability():
 def test_template_change_invalidates_only_ninegrid_stage():
     """改生产模板只该让 ⑩ 输出失效，①–⑨（含政治层）必须继续命中缓存。"""
     import copy
-    from zhouzhu_gen.pipeline import _stage_key_chain
+    from skyisle_gen.pipeline import _stage_key_chain
     cfg = load_config()
     base = _stage_key_chain(cfg, 42)
     c2 = copy.deepcopy(cfg)
@@ -302,7 +302,7 @@ def test_template_change_invalidates_only_ninegrid_stage():
 def test_polity_param_change_invalidates_only_polity_and_output():
     """改 [s09.polity] 只该让 ⑨⑩ 失效，①–⑧ 继续命中（政治层不回写地理与文化）。"""
     import copy
-    from zhouzhu_gen.pipeline import _stage_key_chain
+    from skyisle_gen.pipeline import _stage_key_chain
     cfg = load_config()
     base = _stage_key_chain(cfg, 42)
     c2 = copy.deepcopy(cfg)
@@ -314,7 +314,7 @@ def test_polity_param_change_invalidates_only_polity_and_output():
 def test_slots_change_invalidates_diffusion_stage():
     """改槽位表必须让 ⑧⑨ 失效（否则旧特征场会被当成命中）。"""
     import copy
-    from zhouzhu_gen.pipeline import _stage_key_chain
+    from skyisle_gen.pipeline import _stage_key_chain
     cfg = load_config()
     base = _stage_key_chain(cfg, 42)
     c2 = copy.deepcopy(cfg)
@@ -328,7 +328,7 @@ def test_slots_change_invalidates_diffusion_stage():
 def test_calendar_orbit_roundtrip():
     """calendar_to_orbit 推出的 (M★, a) 喂回 orbit_to_calendar 必须复现同一年长与日照；默认历法 = 4 季 × 84 太阳日 = 336（骨架第二版）。"""
     import copy
-    from zhouzhu_gen.almanac import derive
+    from skyisle_gen.almanac import derive
     cfg = load_config()
     fwd = derive(cfg)
     assert abs(fwd["year_days_solar"] - 336.0) < 1e-9
@@ -349,7 +349,7 @@ def test_calendar_orbit_roundtrip():
 def test_calendar_longer_year_relaxes_tidal_lock():
     """年越长 → 轨道越远 → 潮汐锁定时标越长（a⁶ 压过 M★²）。"""
     import copy
-    from zhouzhu_gen.almanac import derive
+    from skyisle_gen.almanac import derive
     cfg = load_config()
     t4 = derive(cfg)["tidal_lock_gyr"]
     c2 = copy.deepcopy(cfg)
@@ -361,7 +361,7 @@ def test_calendar_longer_year_relaxes_tidal_lock():
 # ---------------- 骨架第二版：季节强度与纬度密度剖面 ----------------
 def test_season_range_earth_calibration():
     """季节强度公式在地球参数下（倾角 23.44°、365 日）复现郑州 / 石家庄 / 香港的全年温差（±3 °C）。"""
-    from zhouzhu_gen.skeleton import season_range
+    from skyisle_gen.skeleton import season_range
     c = load_config()["s04"]["climate"]
     for lat, cont, observed in ((34.7, 0.6, 26.0), (38.0, 0.7, 29.0), (22.3, 0.4, 13.0)):
         got = float(season_range(np.array([lat]), cont, 23.44, 365.0, c)[0])
@@ -370,7 +370,7 @@ def test_season_range_earth_calibration():
 
 def test_season_range_short_year_damps_ocean():
     """一年越短，海洋性地区的季节被热惯性削得越多；陆地性地区几乎不受影响（PLAN-SKELETON2 §一）。"""
-    from zhouzhu_gen.skeleton import season_range
+    from skyisle_gen.skeleton import season_range
     c = load_config()["s04"]["climate"]
     lat = np.array([35.0])
     ocean_short, ocean_long = (float(season_range(lat, 0.0, 30.0, d, c)[0]) for d in (112.0, 336.0))
@@ -381,7 +381,7 @@ def test_season_range_short_year_damps_ocean():
 
 def test_lat_density_core_is_densest():
     """③ 的纬度密度剖面：温带核心最密，信风带次之，45° 以北稀疏，南北对称。"""
-    from zhouzhu_gen.skeleton import lat_density
+    from skyisle_gen.skeleton import lat_density
     cfg = load_config()
     s = cfg["s03"]["islands"]
     planet = {"band_scale": 1.0}

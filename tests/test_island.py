@@ -10,10 +10,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from zhouzhu_gen.config import load_config
-from zhouzhu_gen.pipeline import Context, run
+from skyisle_gen.config import load_config
+from skyisle_gen.pipeline import Context, run
 
-PKG = Path(__file__).resolve().parent.parent / "zhouzhu_gen"
+PKG = Path(__file__).resolve().parent.parent / "skyisle_gen"
 SMALL = ["s03.islands.n_islands=1600"]
 STEPS = 5   # 开发中：已实现到第几步
 
@@ -22,7 +22,7 @@ STEPS = 5   # 开发中：已实现到第几步
 def test_stages_do_not_import_island():
     for f in sorted((PKG / "stages").glob("*.py")) + [PKG / "check.py", PKG / "ninegrid.py", PKG / "polity.py", PKG / "culture.py"]:
         text = f.read_text(encoding="utf-8")
-        assert not re.search(r"^\s*(from|import)\s+\.*\s*(zhouzhu_gen\.)?island\b", text, re.M), f"{f.name} import 了岛群生成器"
+        assert not re.search(r"^\s*(from|import)\s+\.*\s*(skyisle_gen\.)?island\b", text, re.M), f"{f.name} import 了岛群生成器"
         assert "island_config" not in text and "build_terrain" not in text, f"{f.name} 用了岛群生成器"
 
 
@@ -52,7 +52,7 @@ def _hash_dir(d: Path) -> dict:
 
 
 def test_island_deterministic_and_consistent(small_ctx):
-    from zhouzhu_gen import island as isl
+    from skyisle_gen import island as isl
     node = _pick_node(small_ctx)
     out = isl.generate(small_ctx, node, res_m=300.0, steps=STEPS, log=lambda *a: None)
     h1 = _hash_dir(out)
@@ -134,7 +134,7 @@ def test_island_deterministic_and_consistent(small_ctx):
     assert min(areas) >= 0.3 - 1e-6
     assert abs(sum(areas) - c["area_km2"]["target"]) < 1e-3
     # 连通：索桥 + 短渡把所有岛连成一片（IS-link）
-    from zhouzhu_gen.graph import weak_components
+    from skyisle_gen.graph import weak_components
     n = len(J1["islands"])
     src = np.array([e["a"] for e in J1["links"]], dtype=np.int64)
     dst = np.array([e["b"] for e in J1["links"]], dtype=np.int64)
@@ -142,8 +142,8 @@ def test_island_deterministic_and_consistent(small_ctx):
 
 
 def test_shape_area_and_single_component():
-    from zhouzhu_gen.island.terrain import island_shape
-    from zhouzhu_gen.island.grid import label_components
+    from skyisle_gen.island.terrain import island_shape
+    from skyisle_gen.island.grid import label_components
     cfg = load_config()["island"]["terrain"]
     rng = np.random.default_rng(3)
     for area in (0.5, 12.0, 400.0):
@@ -155,7 +155,7 @@ def test_shape_area_and_single_component():
 
 
 def test_label_components_runs():
-    from zhouzhu_gen.island.grid import label_components
+    from skyisle_gen.island.grid import label_components
     m = np.zeros((6, 6), dtype=bool)
     m[0, 0:3] = True
     m[1, 2] = True
@@ -170,7 +170,7 @@ def test_label_components_runs():
 
 def test_season_type_table():
     """5.4 的季型表：温差 ≥ 20 → 四季分明；雨季 ≥ 旱季 × 2.5 → 雨旱季；都不达标 → 常夏。"""
-    from zhouzhu_gen.island.climate import _season_names
+    from skyisle_gen.island.climate import _season_names
     n = _season_names("four", [5, 20, 25, 10], [1, 1, 1, 1], [0] * 4, [1] * 4, 4)
     assert n == ["冷季", "暖季", "热季", "凉季"]
     n = _season_names("rain", [20] * 4, [0.1, 0.5, 0.2, 0.15], [0] * 4, [1] * 4, 4)
@@ -181,13 +181,13 @@ def test_season_type_table():
 
 def test_daily_weather_returns_to_climate(small_ctx):
     """IS-daily：60 年逐日降水的平均回到气候值（< 5%），雨日比例落在设定 ±0.05（30 年时单季标准误约 5%，见 DESIGN-NOTES）。"""
-    from zhouzhu_gen import island as isl
-    from zhouzhu_gen.island.weather import multi_year_stats
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.weather import multi_year_stats
     node = _pick_node(small_ctx)
     c = isl.island_config(small_ctx)
     inp = isl._node_inputs(small_ctx, node)
     g = isl.build_terrain(small_ctx, node, c, inp, res_m=400.0, log=lambda *a: None)
-    from zhouzhu_gen.island.climate import build_climate, daily_curves
+    from skyisle_gen.island.climate import build_climate, daily_curves
     build_climate(small_ctx, node, c, g, log=lambda *a: None)
     g["daily"] = daily_curves(g["climate"], inp, small_ctx.cfg["s04"]["climate"])
     st = multi_year_stats(small_ctx, node, c, g, years=60)
@@ -197,8 +197,8 @@ def test_daily_weather_returns_to_climate(small_ctx):
 
 def test_classify_all_small_world(small_ctx):
     """全量季型统计：每群有一个类别，类别名与代码对应；西风带（36–62°）应几乎全是四季分明（骨架第二版 C5 的口径）。"""
-    from zhouzhu_gen import island as isl
-    from zhouzhu_gen.island.climate import classify_all
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.climate import classify_all
     st = classify_all(small_ctx, isl.island_config(small_ctx), log=lambda *a: None)
     assert st["n"] == len(st["codes"]) == len(st["names"])
     assert abs(sum(st["share"].values()) - 1.0) < 1e-6

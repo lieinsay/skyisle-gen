@@ -498,7 +498,7 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
                 "tv": round(info["tv"], 3),
                 "share_home": round(info["p_home"], 3), "share_there": round(info["p_there"], 3),
                 "barriers": ci["barriers"] if ci else [],
-                "probe": f"zhouzhu probe node {int(rd.seeds[t])}",
+                "probe": f"skyisle probe node {int(rd.seeds[t])}",
             })
         if stable_pick is not None:
             sid, info = stable_pick

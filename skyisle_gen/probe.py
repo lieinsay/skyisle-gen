@@ -1,9 +1,9 @@
 """探针：只读产物，逐节点/逐边/逐路径/逐特征分解。
 
-zhouzhu probe node 6468            # 节点全景：属性、出边通过率、各槽位强度表
-zhouzhu probe path 100 200 --mode daily
-zhouzhu probe edge 100 105         # 因子 × 模式分解
-zhouzhu probe trait calendar@north_east --node 6468   # 回溯：reach 在路上被谁砍掉
+skyisle probe node 6468            # 节点全景：属性、出边通过率、各槽位强度表
+skyisle probe path 100 200 --mode daily
+skyisle probe edge 100 105         # 因子 × 模式分解
+skyisle probe trait calendar@north_east --node 6468   # 回溯：reach 在路上被谁砍掉
 """
 from __future__ import annotations
 
@@ -216,5 +216,5 @@ def probe(ctx, what: str, args: list[str], mode: str = "trade", node: int | None
         return probe_path(ctx, int(args[0]), int(args[1]), mode)
     if what == "trait":
         return probe_trait(ctx, args[0], node)
-    print("用法见 zhouzhu probe --help")
+    print("用法见 skyisle probe --help")
     return 1

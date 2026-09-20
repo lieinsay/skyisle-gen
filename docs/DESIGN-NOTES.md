@@ -384,7 +384,7 @@ BACKLOG R7 的结论：尺度对得上春秋（一邑 = 一岛群），缺的是
 
 ## 四点十四、岛群生成器：第三层（2026-09-17，PLAN-ISLAND）
 
-- 一个新包 `zhouzhu_gen/island/`（grid / layout / terrain / hydro / climate / weather / output / check / batch），命令 `zhouzhu island <节点>`，
+- 一个新包 `skyisle_gen/island/`（grid / layout / terrain / hydro / climate / weather / output / check / batch），命令 `skyisle island <节点>`，
   按需生成、不进十步管线、不回灌：`stages/`、check、ninegrid、polity、culture 不 import 它（pytest `test_stages_do_not_import_island` + IS-iso）。
   随机流 `entity_rng(seed, 21, "island:{node}:{部件}")`，部件 = layout / place / shape:k / terrain:k / weather:{year}，改年份只动天气。
   `[island]` 段不进任何阶段的缓存 key；旧 run 的 config.resolved.toml 没有这段时用 default.toml 的默认值再叠 `--set`。
@@ -414,7 +414,7 @@ BACKLOG R7 的结论：尺度对得上春秋（一邑 = 一岛群），缺的是
   有湖的群 10% / 23% / 17%，≥ 2 个大盆地 23% / 23% / 20%；雾（云海漫顶）日中位 2 / 0 / 2（只在峰高 < 800 m 的群）、风暴日中位 20 / 16 / 17、可出航日中位 232 / 258 / 249；
   耗时中位 5.5 / 5.2 / 5.8 s、最长 17 s。修正前第一轮：IS-daily 各挂 3–4 个（噪声）、风暴季群挂 IS-season（乘性缩放顶格）、有湖 30–43%、大盆地 0%。
 - 性能：中位 6 s、最长 17 s（主岛 3,000 km² 级 < 10 s 达标）；大头是主岛全分辨率的优先泛洪与岛形二分（每步做连通分量）。
-- **全量季型统计**（`zhouzhu island stats`，2026-09-18）：只算气候不做地形，8000 群 4 s（网格产物一次读入；每群读盘时要一分钟）。
+- **全量季型统计**（`skyisle island stats`，2026-09-18）：只算气候不做地形，8000 群 4 s（网格产物一次读入；每群读盘时要一分钟）。
   三 seed：四季分明 56.7 / 60.1 / 59.9%，冷暖两季 23.1 / 19.1 / 19.2%，风暴季 18.0 / 17.9 / 17.8%，雨旱季 1.5 / 1.4 / 1.7%，常夏 0.8 / 1.4 / 1.5%；
   按带：赤道永暴带 风暴季 6–8 成、其余常夏；信风带 冷暖两季 42–49% / 风暴季 44–49% / 雨旱季 4–5%；无风带 四季分明 76–79%、其余冷暖两季；西风带与极地 100% 四季分明。
   岛上全年温差中位 21.8–22.4 °C，≥ 20 °C 占 57–60%（设计稿开工前按旧骨架估的「8% ≥ 16 °C」已作废：核心北移后过半的群四季分明）。

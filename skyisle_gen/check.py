@@ -61,7 +61,7 @@ def check_p1(w: World, cfg, rep: Report):
             {"median": round(med, 4), "p95": round(p95, 4), "n_edges": int(free.sum())},
             {"median<": c["adj_median_max"], "p95<": c["adj_p95_max"]},
             med < float(c["adj_median_max"]) and p95 < float(c["adj_p95_max"]),
-            viz="zhouzhu viz distance <节点>")
+            viz="skyisle viz distance <节点>")
 
     # P1b（硬项 = 铁律五的代码化）：任何边的差异必须由该边的成本与通过率解释
     E = src.size
@@ -80,7 +80,7 @@ def check_p1(w: World, cfg, rep: Report):
     rep.add("P1b", "连续场硬约束：D(e) ≤ a + b·(λ_max·cost + max_m L_m)【铁律五】",
             {"violations": int(viol.sum()), "max_excess": round(float((d_all - bound).max()), 4)},
             "违规数 = 0", int(viol.sum()) == 0, hard=True, worst=worst,
-            viz="zhouzhu probe edge <src> <dst>")
+            viz="skyisle probe edge <src> <dst>")
 
 
 # ---------------------------------------------------------------- P2
@@ -200,7 +200,7 @@ def check_p3(w: World, cfg, rep: Report):
              "n_pairs": len(jac)},
             {"jaccard<": c["jaccard_mean_max"], "free<": c["jaccard_free_mean_max"],
              "bundle_ratio>=": c["p3_bundle_ratio_min"]},
-            ok, viz="zhouzhu viz isogloss")
+            ok, viz="skyisle viz isogloss")
 
 
 # ---------------------------------------------------------------- P4
@@ -262,7 +262,7 @@ def check_p4(w: World, cfg, rep: Report):
              "D_envoy_median": round(float(np.median(d_envoy[guard])) if guard.any() else -1, 3)},
             {"pass_frac>": c["p4_pass_frac"]},
             (not np.isnan(frac)) and frac > float(c["p4_pass_frac"]),
-            worst=worst, viz="zhouzhu viz distance <西侧节点>")
+            worst=worst, viz="skyisle viz distance <西侧节点>")
 
 
 # ---------------------------------------------------------------- P5
@@ -338,7 +338,7 @@ def check_p6(w: World, cfg, rep: Report):
     hubs = [h for h in w.hubs["hubs"] if h["near_g"]]
     if not hubs:
         rep.add("P6", "改道产生贸易枢纽", "G 邻域无枢纽", "-", False,
-                viz="zhouzhu viz routes")
+                viz="skyisle viz routes")
         return
     H = np.array(sorted(h["node"] for h in hubs))
     # 起源圈份额：min/max 平衡度
@@ -411,7 +411,7 @@ def check_p6(w: World, cfg, rep: Report):
              "n_hub": int(H.size)},
             {"bal>=": c["p6_bal_min"], "collapse_frac>=": c["p6_collapse_frac"],
              "collapsed_hub_drop>=": c["p6_flow_drop"]},
-            ok, viz="zhouzhu viz routes")
+            ok, viz="skyisle viz routes")
 
 
 # ---------------------------------------------------------------- P7
@@ -474,7 +474,7 @@ def check_p7(w: World, cfg, rep: Report):
     rep.add("P7", "传到了但不要（reach 高而 adopt 低）",
             {"n_nodes": len(found_nodes), "region_coverage": region_cov},
             {"n_nodes>=": c["p7_min_nodes"], "某地区覆盖>=": c["p7_region_frac"]},
-            ok, worst=examples[:5], viz="zhouzhu probe trait <trait_id> --node <节点>")
+            ok, worst=examples[:5], viz="skyisle probe trait <trait_id> --node <节点>")
 
 
 # ---------------------------------------------------------------- C 二维气候（第三批，PLAN-BATCH3 六）
@@ -509,17 +509,17 @@ def check_climate(w: World, cfg, rep: Report):
     ok1 = (not np.isnan(ratio)) and ratio >= float(c["c_shadow_ratio_min"]) and frac >= float(c["c_shadow_frac_min"])
     rep.add("C1", "雨影：高墙岛群的迎风侧比背风侧湿（上风水汽追踪）",
             {"n_groups": int(ok_w.sum()), "updown_precip_ratio_median": round(ratio, 3), "windward_wetter_frac": round(frac, 3)},
-            {"ratio>=": c["c_shadow_ratio_min"], "frac>=": c["c_shadow_frac_min"]}, ok1, viz="zhouzhu viz climate")
+            {"ratio>=": c["c_shadow_ratio_min"], "frac>=": c["c_shadow_frac_min"]}, ok1, viz="skyisle viz climate")
     # C2：带界起伏幅度
     amp = float(np.max(np.abs(bl["dphi"])))
     ok2 = float(c["c_band_amp_min"]) <= amp <= float(c["c_band_amp_max"])
     rep.add("C2", "带界是波状线：位移幅度在「有变化但仍是条带」的范围内（R11）",
-            {"max_shift_deg": round(amp, 2)}, {"in": [c["c_band_amp_min"], c["c_band_amp_max"]]}, ok2, viz="zhouzhu viz wind")
+            {"max_shift_deg": round(amp, 2)}, {"in": [c["c_band_amp_min"], c["c_band_amp_max"]]}, ok2, viz="skyisle viz wind")
     # C3：干旱岛比例（九格表 arid 口径：降水 < check.arid_precip）
     arid = float((clim_i["precip"] < float(c.get("arid_precip", 0.3))).mean())
     ok3 = float(c["c_arid_min"]) <= arid <= float(c["c_arid_max"])
     rep.add("C3", "干旱岛比例在校准区间（副热带辐散 + 雨影，沙漠不需要大陆）",
-            {"arid_share": round(arid, 3)}, {"in": [c["c_arid_min"], c["c_arid_max"]]}, ok3, viz="zhouzhu viz climate")
+            {"arid_share": round(arid, 3)}, {"in": [c["c_arid_min"], c["c_arid_max"]]}, ok3, viz="skyisle viz climate")
     # C4：有河的群比例（决定 1：地球常见程度；只报告）
     rs = float(clim_i["has_river"].mean())
     ok4 = float(c["c_river_min"]) <= rs <= float(c["c_river_max"])
@@ -633,7 +633,7 @@ def check_polity(w: World, cfg, rep: Report):
              "suzerain_is_biggest": (suz == biggest)},
             {"dense_ratio>=": c["p8_dense_ratio_min"], "n_states": [c["p8_n_states_min"], c["p8_n_states_max"]],
              "reformer": "dense capital, not suzerain, annexed ≥1, fronts ≥1", "suzerain": "not the biggest in circle"},
-            ok, viz="zhouzhu polity")
+            ok, viz="skyisle polity")
 
 
 # ---------------------------------------------------------------- 骨架一致性（只报警）

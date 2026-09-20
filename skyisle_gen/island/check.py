@@ -1,4 +1,4 @@
-"""第六节：岛群生成器的一致性校验（`zhouzhu island check <节点>`）。
+"""第六节：岛群生成器的一致性校验（`skyisle island check <节点>`）。
 
 IS-area / IS-summit / IS-arable / IS-river / IS-season / IS-link / IS-det / IS-iso 为硬项，IS-daily 为软项；
 聚落 SET-pop / SET-field / SET-site / SET-dock / SET-home 为硬项，SET-water 为软项（PLAN-SETTLE 第六节）。
@@ -22,12 +22,12 @@ def hash_products(out: Path) -> dict:
 
 
 def static_isolation() -> tuple[bool, list[str]]:
-    """IS-iso：stages/、check、ninegrid、polity、culture 不得 import zhouzhu_gen.island。"""
+    """IS-iso：stages/、check、ninegrid、polity、culture 不得 import skyisle_gen.island。"""
     bad = []
     files = sorted((PKG / "stages").glob("*.py")) + [PKG / n for n in ("check.py", "ninegrid.py", "polity.py", "culture.py", "pipeline.py")]
     for f in files:
         text = f.read_text(encoding="utf-8")
-        if re.search(r"^\s*(from|import)\s+\.*\s*(zhouzhu_gen\.)?island\b", text, re.M):
+        if re.search(r"^\s*(from|import)\s+\.*\s*(skyisle_gen\.)?island\b", text, re.M):
             bad.append(f.name)
     return not bad, bad
 
@@ -117,7 +117,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
         diff = sorted(k for k in set(h1) | set(h2) if h1.get(k) != h2.get(k))
         add("IS-det", "同输入重跑两次，产物哈希一致", {"differ": diff}, "无差异", not diff)
     ok, bad = static_isolation()
-    add("IS-iso", "stages/ 不 import zhouzhu_gen.island（第三层不回灌）", {"offenders": bad}, "无", ok)
+    add("IS-iso", "stages/ 不 import skyisle_gen.island（第三层不回灌）", {"offenders": bad}, "无", ok)
     return items
 
 
@@ -143,7 +143,7 @@ def print_report(items: list[dict], node: int) -> None:
 def run_island_check(ctx, node: int | None, year: int = 0, sets: list[str] | None = None) -> int:
     from . import generate
     if node is None:
-        print("用法：zhouzhu island check <节点>")
+        print("用法：skyisle island check <节点>")
         return 2
     out, g = generate(ctx, node, year=year, sets=sets, return_state=True)
     h1 = hash_products(out)
