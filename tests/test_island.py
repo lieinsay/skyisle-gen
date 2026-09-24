@@ -72,6 +72,32 @@ def test_island_deterministic_and_consistent(small_ctx):
         land = z["island_id"] >= 0
         assert np.isnan(z["height"][~land]).all() and not np.isnan(z["height"][land]).any()
         assert (z["landcover"][land] > 0).all() and (z["landcover"][~land] == 0).all()
+        # 河道成形：常年河 / 溪涧每格有河宽水深；河道下切（主岛有河时至少一条入虚空、带瀑布落差）
+        rv = z["river"] > 0
+        assert (z["river_width_m"][rv] > 0).all() and (z["river_depth_m"][rv] > 0).all()
+        assert (z["river_width_m"][~land] == 0).all() and not (z["floodplain"] & (rv | z["lake"])).any()
+        if c["has_river"]["actual"]:
+            r0 = J1["hydro"]["rivers"][0]
+            assert J1["hydro"]["n_rivers"] >= 1 and r0["width_m"] > 0 and r0["depth_m"] > 0 and r0["waterfall_m"] > 0
+        # 河道中心线（矢量渲染）：每条 ≥ 2 点、落在栅格内；常年河的线河宽 > 0；主岛有河时至少一条常年河线
+        RV = json.loads((out / "rivers.json").read_text(encoding="utf-8"))
+        Hh, Ww = z["height"].shape
+        for L in RV["lines"]:
+            P = np.array(L["pts"])
+            assert P.shape[0] >= 2 and (P[:, 0] >= -1).all() and (P[:, 0] <= Hh + 1).all() and (P[:, 1] >= -1).all() and (P[:, 1] <= Ww + 1).all()
+            assert (P[P[:, 3] > 0, 2] > 0).all()
+        if c["has_river"]["actual"]:
+            assert any(max(q[3] for q in L["pts"]) > 0 and L["island"] == 0 for L in RV["lines"])
+        # 资源：地形区覆盖全部陆地；矿点在所属岛的陆地、不在水面，资源栅格上有标记
+        Rj = json.loads((out / "resources.json").read_text(encoding="utf-8"))
+        assert (z["terrain_zone"][land] > 0).all() and (z["terrain_zone"][~land] == 0).all()
+        assert abs(sum(Rj["zones"]["share"].values()) - 1.0) < 1e-3
+        for d in Rj["deposits"]:
+            if d.get("cleared"):
+                continue
+            i, j = d["cell"]
+            assert z["island_id"][i, j] == d["island"] and z["river"][i, j] == 0 and not z["lake"][i, j] and z["resource"][i, j] > 0
+        assert any(d["kind"] == "quarry" and d["island"] == 0 for d in Rj["deposits"])
     if STEPS >= 3:
         C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
         a, m = C["annual"], C["means_check"]                                                 # IS-season
@@ -94,11 +120,14 @@ def test_island_deterministic_and_consistent(small_ctx):
     if STEPS >= 5:
         S = json.loads((out / "settlements.json").read_text(encoding="utf-8"))
         z = np.load(out / "terrain.npz")
-        # SET-pop：户数之和 = 人口 / 户均；SET-field：田块面积之和 = 可耕地；SET-site：村不在崖缘 / 水面 / 漫滩，且村之间 ≥ 1 km
-        assert S["households_in_villages"] + S["households_in_hamlets"] == S["households"] == round(S["population"] / S["household_size"])
+        # SET-pop：村农户 + 散户 + 镇非农户 + 专业聚落户 = 人口 / 户均，镇 + 专业 = 非农户；SET-field：田块面积之和 = 可耕地；SET-site：村不在崖缘 / 水面 / 漫滩，且村之间 ≥ 1 km
+        parts = S["households_in_villages"] + S["households_in_hamlets"] + S["households_in_towns_market"] + S["households_in_specials"]
+        assert parts == S["households"] == round(S["population"] / S["household_size"])
+        if S["villages"]:
+            assert S["households_in_towns_market"] + S["households_in_specials"] == S["nonfarm_households"] == round(S["households"] * S["nonfarm_share"])
         assert abs(sum(f["area_km2"] for f in S["fields"]) - float((z["arable"] > 0).sum()) * (J1["raster"]["res_m"] / 1000) ** 2) < 1e-3
         assert all(f["households"] >= 8 for f in S["fields"] if f["village"] and f["village"] > 0)
-        for v in S["villages"]:
+        for v in S["villages"] + S["specials"]:
             i, j = v["cell"]
             assert not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0 and z["island_id"][i, j] == v["island"]
         cells = np.array([v["cell"] for v in S["villages"]], dtype=float)
@@ -108,26 +137,34 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert d.min() > 0.05, d.min()                       # 不同村不同格（1 km 间距是软项：放不下时退而求其次）
             assert (d.min(axis=1) >= 1.0 - 1e-9).mean() >= 0.8    # 八成以上的村满足 1 km 间距
         assert any(v.get("seat") for v in S["villages"]) and S["villages"][0]["island"] == 0 or S["n_villages"] == 0
-        # SET-dock：每座有短渡的岛有码头，每条索桥两端各一桥头；SET-water：八成以上的村 1 km 内有水源
-        ferry_isl = {e["a"] for e in J1["links"] if e["kind"] == "ferry"} | {e["b"] for e in J1["links"] if e["kind"] == "ferry"}
-        dock_isl = {d["island"] for d in S["docks"]}
-        assert ferry_isl <= dock_isl, ferry_isl - dock_isl
+        # SET-land：飞船随处可停——没有码头；每个村 / 专业聚落一块同岛、非水非崖的泊场；每条索桥两端各一桥头
+        assert "docks" not in S
+        lands = {L["id"]: L for L in S["landings"]}
+        assert len(lands) == len(S["villages"]) + len(S["specials"])
+        for v in S["villages"] + S["specials"]:
+            L = lands[v["landing"]]
+            i, j = L["cell"]
+            assert z["island_id"][i, j] == v["island"] and not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0
         n_bridge = sum(1 for e in J1["links"] if e["kind"] == "bridge")
         assert len(S["bridgeheads"]) == 2 * n_bridge
-        for d in S["docks"] + S["bridgeheads"]:
+        for d in S["bridgeheads"]:
             assert z["cliff"][d["cell"][0], d["cell"][1]] and z["island_id"][d["cell"][0], d["cell"][1]] == d["island"]
+        # SET-town：邑治是镇，每个村归一个镇；开垦只减林地（林地占比不升）
+        if S["villages"]:
+            assert any(t["seat"] for t in S["towns"]) and all(v.get("market_town") for v in S["villages"])
+        assert S["clearing"]["forest_share_after"] <= S["clearing"]["forest_share_before"]
         assert S["water_ok_share"] >= 0.8, S["water_ok_share"]
         if S["has_river"]:
             assert len(S["intakes"]) == sum(1 for v in S["villages"] if v["island"] == 0)
         else:
             assert len(S["cisterns"]) >= 1
-        # SET-home：三个主家候选类型各不同，都落在陆地上；前哨都在有码头的小岛
+        # SET-home：三个主家候选类型各不同，都落在陆地上；前哨都在有泊场（有村）的小岛
         kinds = [h["kind"] for h in S["home_candidates"]]
         assert len(kinds) == len(set(kinds)) and 2 <= len(kinds) <= 3, kinds
         for h in S["home_candidates"]:
             assert z["island_id"][h["cell"][0], h["cell"][1]] == h["island"]
-        dock_isl = {d["island"] for d in S["docks"]}
-        assert all(o["island"] in dock_isl and o["island"] != 0 for o in S["outposts"])
+        land_isl = {L["island"] for L in S["landings"]}
+        assert all(o["island"] in land_isl and o["island"] != 0 for o in S["outposts"])
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)

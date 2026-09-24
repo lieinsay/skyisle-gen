@@ -1,5 +1,6 @@
 """聚落生成器（docs/PLAN-SETTLE.md）：给一个已生成的岛群，按人口与地形落下田块、村落与散户（第 1 步），
-码头 / 桥头 / 水设施（第 2 步），主家候选 / 前哨 / 都与城（第 3 步）。
+专业聚落 / 集镇 / 飞船泊场（tiers.py，DESIGN-NOTES 四点十八）、桥头 / 水设施（第 2 步），主家候选 / 前哨 / 都与城（第 3 步），最后村周开垦。
+飞船取代车船、可在任意平地停靠：没有码头，交通不绑岸线。
 
 第三层，不回灌：人口只读 ⑨ 的 pop（没有 ⑨ 时按可耕地 × 100 人/km²）；不输出任何社会属性（原则乙、铁律五）。
 随机数：entity_rng(seed, ISLAND_STREAM, f"settle:{node}:{部件}")。坐标：格 (row, col) 与 km（x 东 y 北，相对群心）。
@@ -92,15 +93,18 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     hh_total = int(round(pop / float(sc["household_size"])))
     n_isl = len(J["islands"])
     ar_isl = np.array([float((arable & (island_id == k)).sum()) for k in range(n_isl)]) * cell_km2
+    # 非农户（专业聚落 + 集镇）先拿出来；农户按田分
+    nonfarm_hh = int(round(hh_total * float(sc["nonfarm_share"]))) if ar_isl.sum() > 0 else 0
+    farm_total = hh_total - nonfarm_hh
     share = ar_isl / max(1e-9, ar_isl.sum()) if ar_isl.sum() > 0 else np.eye(1, n_isl)[0]
-    hh_isl = np.floor(share * hh_total).astype(int)
+    hh_isl = np.floor(share * farm_total).astype(int)
     richest = int(np.argmax(ar_isl))                    # 可耕地最多的岛（通常是主岛，但主岛可能一块田都没有）
-    hh_isl[richest] += hh_total - int(hh_isl.sum())     # 取整的零头
+    hh_isl[richest] += farm_total - int(hh_isl.sum())   # 取整的零头
     for k in range(n_isl):                              # 没有田的岛不能有户：挪到可耕地最多的岛
         if ar_isl[k] <= 0 and hh_isl[k] > 0 and k != richest:
             hh_isl[richest] += hh_isl[k]
             hh_isl[k] = 0
-    land_per_hh = arable_km2 / max(1, hh_total)         # 户均地量 km²
+    land_per_hh = arable_km2 / max(1, farm_total)       # 户均地量 km²（农户）
 
     # ---------- 田块：可耕地 8 邻域连通块；小块并入散户田；大块按 80 户切分 ----------
     lab, n_lab = label_components(arable, 8)
@@ -247,41 +251,71 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     seat = next((r for r in villages if r["island"] == 0), villages[0] if villages else None)
     if seat:
         seat["seat"] = True
-    # 栅格：1 田 / 2 梯田 / 3 村 / 4 散户
+    # ---------- 聚落层级（tiers.py）：专业聚落 → 集镇（非农户余量）→ 泊场 ----------
+    from .tiers import clear_forest, landings, market_towns, special_settlements
+    specials = special_settlements(g, sc, villages, nonfarm_hh, ok_site, km, res_km)
+    rest = nonfarm_hh - sum(x["households"] for x in specials)
+    towns = market_towns(villages, seat, rest, sc, res_km)
+    if not villages and rest > 0:            # 没有村（极小的群）：非农户并进最大的散户
+        tgt = max(hamlets, key=lambda r: r["households"]) if hamlets else None
+        if tgt is not None:
+            tgt["households"] += rest
+        rest = 0
+    lst = [("主泊场（仓场）" if v.get("seat") else ("镇泊场" if v.get("town") else "村泊场"), v) for v in villages] + [(f"{x['kind']}泊场", x) for x in specials]
+    lands = landings(g, sc, lst, km, res_km)
+    for (kind, s_), L in zip(lst, lands):
+        s_["landing"] = L["id"]
+    # 栅格：1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 6 桥头 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落
     sraster = np.zeros((H, W), dtype=np.uint8)
     sraster[fields_raster > 0] = 1
     sraster[(fields_raster > 0) & (g["arable"] == 2)] = 2
+    for L in lands:
+        sraster[L["cell"][0], L["cell"][1]] = 5
     for r in villages:
-        sraster[r["cell"][0], r["cell"][1]] = 3
+        sraster[r["cell"][0], r["cell"][1]] = 9 if r.get("town") else 3
     for r in hamlets:
         sraster[r["cell"][0], r["cell"][1]] = 4
-    # ---------- 第 2 步：码头 / 桥头 / 导水槽 / 水设施 ----------
+    for x in specials:
+        sraster[x["cell"][0], x["cell"][1]] = 10
+    # ---------- 第 2 步：桥头 / 导水槽 / 水设施 ----------
     links_out = build_links_water(ctx, g, sc, villages, hamlets, sraster, km, res_km, dist_water)
+    links_out["landings"] = lands
     step3 = build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links_out, ok_site, score_base, dist_water, km, res_km)
+    clearing = clear_forest(g, sc, villages, hamlets, specials, res_km)
     g["settle_raster"] = sraster
     g["settle_fields"] = fields_raster
     hh_v = sum(r["households"] for r in villages)
     hh_h = sum(r["households"] for r in hamlets)
+    hh_m = sum(r.get("households_market", 0) for r in villages)
+    hh_s = sum(x["households"] for x in specials)
     S = {"population": round(pop, 0), "population_source": pop_src, "household_size": float(sc["household_size"]), "households": hh_total,
          "households_by_island": hh_isl.tolist(), "land_per_household_km2": round(land_per_hh, 4),
+         "nonfarm_share": float(sc["nonfarm_share"]), "nonfarm_households": nonfarm_hh,
          "n_fields": len(fields), "n_villages": len(villages), "n_hamlets": len(hamlets), "households_in_villages": hh_v, "households_in_hamlets": hh_h,
+         "households_in_towns_market": hh_m, "households_in_specials": hh_s,
          "seat": seat["id"] if seat else None, "seat_households": seat["households"] if seat else 0,
          "village_hh_median": int(np.median([r["households"] for r in villages])) if villages else 0,
-         "fields": fields, "villages": villages, "hamlets": hamlets, **links_out, **step3,
-         "raster_codes": {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "码头", "6": "桥头", "7": "蓄水池", "8": "取水点"},
-         "note": "第三层，人口只读 ⑨；村只有位置与户数，无等级（原则乙）。村名是 村NNN 占位。"}
+         "fields": fields, "villages": villages, "hamlets": hamlets, "towns": towns, "specials": specials, **links_out, **step3,
+         "clearing": clearing,
+         "raster_codes": {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "泊场", "6": "桥头", "7": "蓄水池", "8": "取水点", "9": "镇", "10": "专业聚落"},
+         "note": "第三层，人口只读 ⑨；村 / 镇 / 专业聚落只有位置与户数（原则乙）。名字是 村NNN / 镇NN 占位。"
+                 "飞船随处可停：没有码头，每个聚落旁一块泊场；households = 村农户 + 散户 + 镇的非农户 + 专业聚落户。"}
     g["settle"] = S
-    J["settlements"] = {k: S[k] for k in ("population", "households", "n_fields", "n_villages", "n_hamlets", "seat_households", "village_hh_median")}
-    J["settlements"].update({"n_docks": len(S["docks"]), "n_bridgeheads": len(S["bridgeheads"]), "n_cisterns": len(S["cisterns"]), "n_intakes": len(S["intakes"]),
+    J["settlements"] = {k: S[k] for k in ("population", "households", "n_fields", "n_villages", "n_hamlets", "seat_households", "village_hh_median", "nonfarm_households")}
+    J["settlements"].update({"n_towns": len(towns), "n_specials": len(specials), "specials": sorted({x["kind"] for x in specials}),
+                             "n_landings": len(lands), "n_bridgeheads": len(S["bridgeheads"]), "n_cisterns": len(S["cisterns"]), "n_intakes": len(S["intakes"]),
+                             "forest_share_after_clearing": clearing["forest_share_after"],
                              "n_outposts": len(S["outposts"]), "home_candidates": [h["kind"] for h in S["home_candidates"]],
                              "city": ({k: S["city"][k] for k in ("role", "households", "population", "n_guo_islands")} if S.get("city") else None)})
     log(f"  聚落：人口 {pop:.0f}（{pop_src}）→ {hh_total} 户；田块 {len(fields)}，村 {len(villages)}（邑治 {S['seat_households']} 户，中位 {S['village_hh_median']}），散户 {len(hamlets)}；"
-        f"村户 {hh_v} + 散户 {hh_h} = {hh_v + hh_h}；码头 {len(S['docks'])}，桥头 {len(S['bridgeheads'])}，蓄水池 {len(S['cisterns'])}，取水点 {len(S['intakes'])}，"
+        f"镇 {len(towns)}（非农 {hh_m} 户），专业聚落 {len(specials)}（{hh_s} 户：{'、'.join(sorted({x['kind'] for x in specials}))}）；"
+        f"村农户 {hh_v} + 散户 {hh_h} + 镇 {hh_m} + 专业 {hh_s} = {hh_v + hh_h + hh_m + hh_s}；泊场 {len(lands)}，桥头 {len(S['bridgeheads'])}，蓄水池 {len(S['cisterns'])}，取水点 {len(S['intakes'])}，"
+        f"林地 {clearing['forest_share_before']:.0%} → {clearing['forest_share_after']:.0%}，"
         f"村 1 km 内有水源 {S['water_ok_share']:.0%}；前哨 {len(S['outposts'])}，主家候选 {[h['kind'] for h in S['home_candidates']]}"
         + (f"；{S['city']['role']} {S['city']['households']} 户（城 {S['city']['inner_households']} + 郭 {S['city']['guo_households']}，{S['city']['n_guo_islands']} 岛）" if S.get("city") else ""))
 
 
-# ---------------------------------------------------------------- 第 2 步：码头、桥头、导水槽、水设施
+# ---------------------------------------------------------------- 第 2 步：桥头、导水槽、水设施
 def _cliff_pts(g, k: int) -> np.ndarray:
     m = g["cliff"] & (g["island_id"] == k)
     ii, jj = np.where(m)
@@ -308,56 +342,15 @@ def build_links_water(ctx, g, sc, villages, hamlets, sraster, km, res_km, dist_w
     H, W = island_id.shape
     n_isl = len(J["islands"])
     cliffs = {k: _cliff_pts(g, k) for k in range(n_isl)}
-    # 每岛最大的村（没有村就用散户、再没有就用岛心）
-    big = {}
-    for r in sorted(villages + hamlets, key=lambda r: -r["households"]):
-        big.setdefault(r["island"], r["cell"])
-    for k, isl in enumerate(J["islands"]):
-        if k not in big:
-            r0, c0, m, _ = isl["bbox_cells"]
-            ii, jj = np.where(island_id[max(0, r0):r0 + m, max(0, c0):c0 + m] == k)
-            big[k] = [int(ii.mean()) + max(0, r0), int(jj.mean()) + max(0, c0)] if ii.size else [0, 0]
-    docks, bridgeheads = [], []
-    w_v = float(sc["dock_village_weight"])
-    merge_of = {k: max(float(sc["dock_merge_km"]), float(sc["dock_merge_rel"]) * math.sqrt(isl["area_km2"])) / res_km for k, isl in enumerate(J["islands"])}
+    bridgeheads = []
     for e in J["links"]:
         a, b = int(e["a"]), int(e["b"])
-        if cliffs[a].shape[0] == 0 or cliffs[b].shape[0] == 0:
-            continue
-        if e["kind"] == "bridge":
-            ia, ib, d = _nearest_pair(cliffs[a], cliffs[b], sub=1)
-            for k, idx in ((a, ia), (b, ib)):
-                cell = [int(cliffs[k][idx][0]), int(cliffs[k][idx][1])]
-                bridgeheads.append({"island": k, "to": b if k == a else a, "cell": cell, "km": km(*cell), "gap_km": e["gap_km"]})
-            continue
-        for k, other in ((a, b), (b, a)):
-            # 岸缘格抽稀到 ≤ 600 / ≤ 300 个点：码头落点精度 1–2 格足够，全量算 99 条短渡要 4 s
-            pts = cliffs[k][::max(1, cliffs[k].shape[0] // 600)]
-            ob = cliffs[other][::max(1, cliffs[other].shape[0] // 300)]
-            # 联合评分：离对岸近 + 离本岛最大村近
-            d_other = np.sqrt(((pts[:, None, :] - ob[None, :, :]) ** 2).sum(-1)).min(axis=1)
-            v = np.array(big[k], dtype=float)
-            d_vill = np.sqrt(((pts - v) ** 2).sum(-1))
-            score = d_other + w_v * d_vill
-            idx = int(np.argmin(score))
-            cell = [int(pts[idx][0]), int(pts[idx][1])]
-            # 同岛 2 km 内已有码头就并入
-            merged = False
-            for dk in docks:
-                if dk["island"] == k and math.hypot(dk["cell"][0] - cell[0], dk["cell"][1] - cell[1]) <= merge_of[k]:
-                    dk["serves"].append(other)
-                    merged = True
-                    break
-            if not merged:
-                docks.append({"island": k, "cell": cell, "km": km(*cell), "serves": [other], "gap_km": e["gap_km"],
-                              "village_dist_km": round(float(d_vill[idx]) * res_km, 2)})
-    for i, d in enumerate(docks):
-        d["id"] = i + 1
-        d["serves"] = sorted(set(d["serves"]))
-        d["main"] = False
-    main_docks = [d for d in docks if d["island"] == 0]
-    if main_docks:
-        max(main_docks, key=lambda d: (len(d["serves"]), -d["village_dist_km"]))["main"] = True
+        if e["kind"] != "bridge" or cliffs[a].shape[0] == 0 or cliffs[b].shape[0] == 0:
+            continue    # 短渡是飞船航线：随处可停，不设码头（泊场见 tiers.landings）
+        ia, ib, d = _nearest_pair(cliffs[a], cliffs[b], sub=1)
+        for k, idx in ((a, ia), (b, ib)):
+            cell = [int(cliffs[k][idx][0]), int(cliffs[k][idx][1])]
+            bridgeheads.append({"island": k, "to": b if k == a else a, "cell": cell, "km": km(*cell), "gap_km": e["gap_km"]})
     for i, bh in enumerate(bridgeheads):
         bh["id"] = i + 1
     channels = [{"a": int(a), "b": int(b), "a_km": J["islands"][a]["center_km"], "b_km": J["islands"][b]["center_km"]} for a, b in J["channels"]]
@@ -435,15 +428,13 @@ def build_links_water(ctx, g, sc, villages, hamlets, sraster, km, res_km, dist_w
         r["water"] = {"source": src, "dist_km": round(dd * res_km, 2)}
         if dd <= lim:
             ok += 1
-    for d in docks:
-        sraster[d["cell"][0], d["cell"][1]] = 5
     for bh in bridgeheads:
         sraster[bh["cell"][0], bh["cell"][1]] = 6
     for x in cisterns:
         sraster[x["cell"][0], x["cell"][1]] = 7
     for x in intakes:
         sraster[x["cell"][0], x["cell"][1]] = 8
-    return {"docks": docks, "bridgeheads": bridgeheads, "channels": channels, "cisterns": cisterns, "intakes": intakes,
+    return {"bridgeheads": bridgeheads, "channels": channels, "cisterns": cisterns, "intakes": intakes,
             "has_river": has_river, "water_ok_share": round(ok / max(1, len(villages)), 3)}
 
 
@@ -475,9 +466,9 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
     height = np.where(island_id >= 0, g["height"], -1.0)
     C = g.get("climate", {})
     seat = next((v for v in villages if v.get("seat")), None)
-    main_dock = next((d for d in links["docks"] if d.get("main")), None)
+    main_dock = next((d for d in links["landings"] if d.get("main")), None)     # 主泊场（仓场）
     docks_of = {}
-    for d in links["docks"]:
+    for d in links["landings"]:
         docks_of.setdefault(d["island"], d)
     biggest = {}
     for r in sorted(villages + hamlets, key=lambda r: -r["households"]):
@@ -486,13 +477,13 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
     for f in fields:
         field_km2[f["island"]] = field_km2.get(f["island"], 0.0) + f["area_km2"]
 
-    # ---- 前哨：有田有码头的小岛各一个，落在该岛最大的村 / 散户
+    # ---- 前哨：有田有泊场（= 有村）的小岛各一个，落在该岛最大的村
     outposts = []
     for k in range(1, len(J["islands"])):
         if k in docks_of and field_km2.get(k, 0) > 0 and k in biggest:
             r = biggest[k]
             outposts.append({"id": len(outposts) + 1, "island": k, "cell": r["cell"], "km": r["km"], "households": r["households"],
-                             "field_km2": round(field_km2[k], 3), "dock": docks_of[k]["id"], "settlement": r["name"]})
+                             "field_km2": round(field_km2[k], 3), "landing": docks_of[k]["id"], "settlement": r["name"]})
 
     def info(cell, kind, note):
         i, j = cell
@@ -503,7 +494,7 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
         wsum = C.get("weather", {})
         return {"kind": kind, "note": note, "island": k, "cell": [int(i), int(j)], "km": km(i, j), "elev_m": round(float(g["height"][i, j]), 0),
                 "island_age": isl["age_zh"], "island_has_river": bool(isl.get("has_perennial_river", False)), "island_lakes": int(isl.get("n_lakes", 0)),
-                "dist_seat_km": None if d_seat is None else round(d_seat, 2), "dist_main_dock_km": None if d_dock is None else round(d_dock, 2),
+                "dist_seat_km": None if d_seat is None else round(d_seat, 2), "dist_main_landing_km": None if d_dock is None else round(d_dock, 2),
                 "season_type": C.get("season_type_zh"), "season_names": C.get("season_names"),
                 "snow_days": wsum.get("snow_days"), "storm_days": wsum.get("storm_days"), "sailable_days": wsum.get("sailable_days"),
                 "landcover": int(g["landcover"][i, j]), "water_dist_km": round(float(dist_water[i, j]) * res_km, 2)}
@@ -521,7 +512,7 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
             blk = pts[s0:s0 + 20000]
             d[s0:s0 + 20000] = np.sqrt(((blk[:, None, :] - vcells[None, :, :]) ** 2).sum(-1)).min(axis=1)
         return ii, jj, d
-    # 候选一：邑治旁（1–3 km 环内，近主码头）
+    # 候选一：邑治旁（1–3 km 环内，近主泊场）
     if seat:
         si, sj = seat["cell"]
         lo, hi = 1.0 / res_km, 3.0 / res_km
@@ -533,7 +524,7 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
             dd = np.hypot(ii - main_dock["cell"][0], jj - main_dock["cell"][1]) if main_dock else d
             sc_ = score_base[ii, jj] - 0.02 * dd
             b = int(np.argmax(sc_))
-            homes.append(info((ii[b], jj[b]), "邑治旁", "人多、近航线：邑治与主码头之间的一块地"))
+            homes.append(info((ii[b], jj[b]), "邑治旁", "人多、近航线：邑治与主泊场（仓场）之间的一块地"))
     # 候选二：河湖僻处（离任何村 ≥ 3 km、近水、坡缓）；没有就换「高台」
     far = 3.0 / res_km
     stride = np.zeros((H, W), dtype=bool); stride[::3, ::3] = True          # 候选格抽稀 3×3，够用且快
@@ -553,7 +544,7 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
     if outposts:
         c0 = np.array(J["islands"][0]["center_km"])
         o = max(outposts, key=lambda o: math.hypot(o["km"][0] - c0[0], o["km"][1] - c0[1]))
-        h = info(o["cell"], "小岛前哨", f"离主岛最远的小岛，一片田（{o['field_km2']} km²）和一个码头")
+        h = info(o["cell"], "小岛前哨", f"离主岛最远的小岛，一片田（{o['field_km2']} km²）和一块泊场")
         h["outpost"] = o["id"]
         homes.append(h)
     for i, h in enumerate(homes):
@@ -583,11 +574,11 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
         guo = [v for v in villages if v["island"] in reach and v["island"] != 0 and math.hypot(v["cell"][0] - seat["cell"][0], v["cell"][1] - seat["cell"][1]) <= lim]
         guo += [v for v in villages if v["island"] == 0 and v is not seat and math.hypot(v["cell"][0] - seat["cell"][0], v["cell"][1] - seat["cell"][1]) <= lim]
         guo_hh = sum(v["households"] for v in guo)
-        inner_hh = max(seat["households"], city_hh - guo_hh)
+        inner_hh = max(seat["households"] + seat.get("households_market", 0), city_hh - guo_hh)
         for v in guo:
             v["guo"] = True
         seat["city"] = True
-        # 仓城 = 主码头；祭台：无河 → 最大蓄水池周围 5 格内最高处；有河 → 城 2 km 内能落脚的最高处
+        # 仓城 = 主泊场（仓场）；祭台：无河 → 最大蓄水池周围 5 格内最高处；有河 → 城 2 km 内能落脚的最高处
         altar = None
         if not links["has_river"] and links["cisterns"]:
             cz = max(links["cisterns"], key=lambda x: x["basin_km2"])
@@ -604,7 +595,7 @@ def build_homes_city(ctx, node, g, sc, villages, hamlets, fields, links, ok_site
         city = {"role": "变法之国的都" if role["reformer"] else "邦都", "state": role["state"], "state_pop": round(role["state_pop"], 0),
                 "population": round(city_pop, 0), "households": city_hh, "inner_households": int(inner_hh), "guo_households": int(guo_hh),
                 "guo_villages": [v["id"] for v in guo], "n_guo_islands": len({v["island"] for v in guo}),
-                "seat_village": seat["id"], "granary_dock": main_dock["id"] if main_dock else None,
+                "seat_village": seat["id"], "granary_landing": main_dock["id"] if main_dock else None,
                 "altar_cell": altar, "altar_km": km(*altar) if altar else None,
                 "gather_rate": rate, "urban_rate": float(sc["city_urban_rate"]),
                 "note": "城居人口 = 本邑人口 × 城居率 + 邦人口 × 集聚率，只在聚落层算，不进 ⑨；郭 = 索桥可达且离城 ≤ city_guo_km 的村；崖缘即城墙、桥头即城门"}

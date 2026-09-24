@@ -23,13 +23,13 @@
   $py -m skyisle_gen.cli ninegrid --run out/seed42 [--region K]
   $py -m skyisle_gen.cli island 1165 --run out/seed42 [--year 0] [--res 100] [--export DIR] [--set island.x.y=v]
                                                   # 第三层岛群生成器：out/seed42/islands/1165/（约 5–15 s；不进管线、不回灌）
-  $py -m skyisle_gen.cli island check 1165 --run out/seed42   # IS-* 九条校验（含重跑比哈希）
+  $py -m skyisle_gen.cli island check 1165 --run out/seed42   # IS-* / SET-* / RES-* 校验（含重跑比哈希）
   $py -m skyisle_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
   $py -m skyisle_gen.cli island stats --run out/seed42   # 全量季型统计（只算气候，8000 群 4 s）→ islands/season_stats.json；操作台气候视角「季型」着色读它
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 45 个测试，约 20 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
+  $py -m pytest tests -q                          # 46 个测试，约 25 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
@@ -59,8 +59,8 @@ skyisle_gen/
   viz.py / probe.py / web/(server.py bundle.py static/index.html static/vendor/globe.gl.min.js)
                  操作台数据通道：/api/world、/api/fields、/api/grid（② 风 / ④ 气候的 1° 网格场，R2）、/api/texture；单文件版全部内嵌于 INLINE
                  /api/island?run=&node= 按需生成岛群并返回摘要，/api/island/preview 取总览图（探针折叠区「岛群生成器」；单文件版不支持）
-                 **岛群调试台** `static/island.html`（`/island.html?run=&node=[&year=]`，探针里有链接）：2D canvas 图层（地形 / 晕渲 / 地表 / 坡度 / 汇流 / 岛号 / 当日海拔温度）、
-                 滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水 / 当日温度）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
+                 **岛群调试台** `static/island.html`（`/island.html?run=&node=[&year=]`，探针里有链接）：2D canvas 图层（地形 / 晕渲 / 地表 / 坡度 / 汇流 / 岛号 / 当日海拔温度 / 地形区 / 资源分布；`&base=zone|resource&res=1&fly=行,列,缩放&day=N` 可直接打开；拉远时季相层 / 河道矢量自动降级）、
+                 滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水与河宽水深 / 地形区 / 资源 / 当日温度）、资源点位与漫滩叠加层、主岛河流表（点按钮飞到河口）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
                  「季相与水情」日图层（积雪 / 雪线、植被枯荣、作物阶段、溪涧断流、河道涨水漫滩、结冰、云海漫顶）与「天气特效」（雨雪风暴云雾风粒子）都在浏览器里按逐日天气推，不改产物（DESIGN-NOTES 四点十四）；
                  数据通道 /api/island/data（island.json + climate.json 含 weather.days）、/api/island/raster（terrain.npz 定型数组 base64，> 160 万格抽稀）、POST /api/island/regen
   island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`skyisle island <节点>`，按需生成、不进十步管线、不回灌
@@ -69,13 +69,22 @@ skyisle_gen/
                  grid      局部分形噪声（LatticeNoise / FractalNoise，特征尺度以 km 给）、行程并查集连通分量、形态学、块均值 / 双线性、PNG 写出
                  layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、峰高、索桥 / 短渡 / 导水槽 MST
                  terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（锥 / 脊 / 台地）、粗网格侵蚀（fill_iter 保持排水、无量纲冲刷）、priority_fill / d8 / accumulate（5.3 共用）
-                 hydro     5.3 河（主岛按 has_river 调阈值）/ 溪涧 / 湖 / 河口盆地、地表 12 类、可耕地按适宜度分位取到 arable_frac
+                 hydro     5.3 河（主岛按 has_river 调阈值）/ 溪涧 / 湖 / 河口盆地、地表 12 类、可耕地按适宜度分位取到 arable_frac；
+                           流向在「路由面」上算（填平面 + 弯曲噪声 + 朝岸缘微倾：河在缓坡上蜿蜒、不贴崖边平行跑），湖与抬洼仍按原填平面
+                 river     5.3b 河道成形（DESIGN-NOTES 四点十六）：水力几何 w = 5·Q^0.5 × 8、d = 0.35·Q^0.4 × 3（夸张系数设 1 = 真实比例）→ 河宽 ≥ 2 格时加宽；
+                           河床下切并向下游单调、河口切豁口成瀑布；两岸压成「漫滩 + 谷坡」剖面（峡谷 32° → 宽谷 9°，随 log Q）；溪涧浅切、按比降接到干流上
+                 resources 5.3c 地形区（高山 / 山地 / 丘陵 / 台地平原 / 河谷 / 崖缘 / 水域）+ 13 类资源（林木、泉眼、黏土、泥炭芦苇、砂砾、砂金、采石场、露天矿、
+                           温泉、硫磺、洞穴、鸟粪石、浮石），按岛龄 / 板块边界类型与远近 / 叠层 / 坡度 / 地表 / 水系推（四点十七）：金属矿是矿化带、板块内部几乎没有；
+                           石坑 / 土坑按 4 km 块覆盖铺；浮石 = 岛体，崖面与峡谷壁按露头率露出、可开采不影响浮空；→ resources.json / png、terrain_zone.png、preview_resources.png
                  climate   5.4 四季：带界随太阳摆动（Δφ = k_shift·倾角·A_sea·cos）取样再缩放到年均；温度 = 年均 + season_range/2·cos(相位 − 滞后)；季型分类命名
                  weather   5.5 逐日：马尔可夫晴雨 + 伽马雨量（风暴日计入预算）、风暴事件、AR(1) 风温、云海漫顶、岸缘 ≤ 0.5 °C 记为雪（小雪 / 大雪 / 暴风雪）；multi_year_stats 供 IS-daily
-                 output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz / climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）
-                 settle    聚落（PLAN-SETTLE，DESIGN-NOTES 四点十五）：人口只读 ⑨ → 户；可耕地连通块切田块（k-means 按 80 户地量分）；村址评分；码头 / 桥头 / 导水槽；蓄水池 / 取水点；
-                           前哨、三个主家候选、都与城（城居人口 = 本邑 × 城居率 + 邦 × 集聚率，郭沿索桥，仓城 = 主码头，祭台）→ settlements.json / png
-                 check     第六节 IS-area/summit/arable/river/season/link/det/iso（硬）+ IS-daily（软，60 年）+ SET-pop/field/site/dock/home（硬）/ SET-water（软）；batch 分层抽样批跑
+                 output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz（含 river_width_m / river_depth_m / floodplain / terrain_zone / resource）/ climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）；
+                           water.png 值 6 = 漫滩；河道格的 height 是河床，水面 = 河床 + 水深；rivers.json = 河道中心线折线（调试台 / preview 按河宽画平滑矢量，栅格上河只有一两格宽）；调试台拉近后停手会「细化渲染」当前视口（连续量双线性、分类图扰动 + 加权投票，纯显示）
+                 settle    聚落（PLAN-SETTLE，DESIGN-NOTES 四点十五 / 四点十八）：人口只读 ⑨ → 户（10% 非农）；可耕地连通块切田块（k-means 按 80 户地量分）；村址评分；桥头 / 导水槽；蓄水池 / 取水点；
+                           前哨、三个主家候选、都与城（城居人口 = 本邑 × 城居率 + 邦 × 集聚率，郭沿索桥，仓城 = 主泊场，祭台）→ settlements.json / png
+                 tiers     聚落层级（四点十八）：**飞船取代车船、随处可停 → 没有码头**；专业聚落（矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地，按资源量、封顶非农 40%）、
+                           集镇（中心地：6 km 直线跨岛服务半径、镇距 ≥ 10 km、邑治必为镇）、每个聚落旁一块泊场、村周开垦（林地 → 草坡 / 灌丛薪炭林，同步林木资源）
+                 check     第六节 IS-area/summit/arable/river/channel/season/link/det/iso（硬）+ RES-site/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
@@ -137,12 +146,13 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 
 - **岛群生成器（2026-09-17，PLAN-ISLAND，`[island]`）**：栅格 100 m（群外框 > 2048 格自动加倍，38,000 km² 的最大群落到 400 m）；岛数 12–80、Zipf 1.1、最小岛 0.3 km²；
   岸距 1–15 km（beta(1.3, 2.2)）、索桥 ≤ 2 km 且岸缘高差 ≤ 250 m；侵蚀 30 / 8 轮在 ≤ 320 格的粗网格上；湖 = 填平深 ≥ 3 m 且 ≥ 0.5 km²（`pit_keep_m=2` 让它少见）；
-  河阈值 60 km²（不够则 0.35 × 主岛最大汇流），盆地 = 汇流 ≥ max(5 km², 2%) 的河口集水区，≥ 15% 岛面积算大盆地；
+  河阈值 25 km²（不够则 0.2 × 主岛最大汇流；旧 60 / 0.35 河网太稀），河宽 / 水深夸张 ×8 / ×3、干流下切 25 m、漫滩 = 10 × 河宽、河谷最远 2 km；
+  地形区的局地起伏按 4 km 方窗，山地 ≥ 300 m、丘陵 ≥ 100 m，外加相对高度判据（空岛整体低缓，只按起伏判 686 m 峰的岛一格山地都没有）；盆地 = 汇流 ≥ max(5 km², 2%) 的河口集水区，≥ 15% 岛面积算大盆地；
   相对降水 → mm：150 + 3850 × p^1.3（第八节 a）；带界摆动 k_shift 0.35（±5° 左右）；季型阈值：四季分明 ≥ 20 °C、冷暖两季 ≥ 8 °C、雨旱 2.5 倍、风暴 / 窗口季差 0.25；
   雨日比例 0.12 + 0.30 × (季雨量/1000)^0.7、湿→湿持续 0.45、伽马形状 0.8、风暴日比例 0.35 × 强度^1.2（布尔覆盖率反解事件数）、云海漫顶只在峰高 < 800 m 的群。
   IS-daily 用 60 年样本：30 年时单季标准误约 5%，和 5% 的阈值同量级（DESIGN-NOTES 四点十四）。
-  聚落 `[island.settle]`：5 人/户、村 8–80 户（邑治田块可到 300）、村址离田 ≤ 800 m、村间距 1 km（软）、码头合并半径 max(2 km, 0.35√岛面积)、蓄水池只给 ≥ 5% 岛面积的盆地、
-  都的城居率 0.3 / 集聚率 0.05（变法之国 0.10）、郭 5 km。
+  聚落 `[island.settle]`：5 人/户、村 8–80 户（邑治田块可到 300）、村址离田 ≤ 800 m、村间距 1 km（软）、蓄水池只给 ≥ 5% 岛面积的盆地、
+  都的城居率 0.3 / 集聚率 0.05（变法之国 0.10）、郭 5 km；非农 10%、镇距 10 km / 服务半径 6 km、泊场 6 格内坡 ≤ 4°、开垦半径 1.5 km × √(户/40)（1 km 时林地只降到 74%）。
   季型判定的分数 = 差异 / 该项门槛（温度按冷暖两季的 8 °C，不是 20），取 ≥ 1 的最大者；三 seed 全量：四季分明 57–60%、冷暖两季 19–23%、风暴季 18%、雨旱季 1.5%、常夏 1%，
   西风带以北 100% 四季分明，信风带一半冷暖两季一半风暴季。
 
@@ -150,7 +160,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 
 - Monte Carlo 引擎（`s08.engine="mc"` 只留接口）、软先到权重（`first_arrival_weight` 默认关未实现）
 - 季节窗口进模型（现只有 `seasonal` 标志与 ④ 的窗口比例；岛群生成器已给出每季窗口，但管线不读它）；政治性障碍只支持经纬矩形覆盖
-- 岛群生成器：聚落 / 田块 / 码头点位未做（第八节 e，留接口）；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四
+- 岛群生成器：资源不进聚落选址（采石村 / 矿村未做）、没有地下水与岩性栅格；河宽是夸张后的数，不是水文模型；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四
 - 九格表 ④ 特有种 / ⑦ 外观 标【待填】；⑨ 文本量词与归因还比较模板化。⑧ 的世仇 = 接壤且势均力敌、界边最多的邻邦（启发式）
 - 政治层：兼并史是静态快照 + 逐邦顺序（无年内事件、无分裂/复国）；附庸只一层；邦名是 `邦NNN` 占位；南圈与 NW 圈不发生变法（docs/11 §八）
 - 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图；气象层没有粒子动画（流线虚线已够用）；水汽 q / 抬升 uplift 已在网格通道里

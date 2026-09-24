@@ -55,8 +55,30 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     lake = np.zeros((H, W), dtype=bool)
     river = np.zeros((H, W), dtype=np.uint8)      # 0 无 / 1 小河 / 2 中河 / 3 大河（常年）
     stream = np.zeros((H, W), dtype=np.uint8)     # 1 = 季节性溪涧
+    width_m = np.zeros((H, W), dtype=np.float32)   # 河宽 / 水深（m）：常年河与溪涧（溪涧只在湿季有水）
+    depth_m = np.zeros((H, W), dtype=np.float32)
+    floodplain = np.zeros((H, W), dtype=bool)
+    cut_m = np.zeros((H, W), dtype=np.float32)       # 河道 / 河谷下切了多少米（资源层找峡谷壁用）
     basin_info = {}
+    rivers_info = []
+    river_lines = []                                 # 河道中心线折线（矢量渲染用，rivers.json）
+    n_falls = 0
+    max_cut = 0.0
     river_thr_km2 = None
+    cal = inp["planet"].get("calendar", {})
+    year_s = float(cal.get("year_days_solar", 336.0)) * float(cal.get("solar_day_hr", 24.0)) * 3600.0
+    from .river import carve_channels
+    # 汇流路由面：填平面 + 弯曲噪声 + 朝岸缘的微倾（只用来定流向；湖与抬洼仍按原填平面）。
+    # 否则 D8 在平缓面上走成网格直线，岸缘那圈被夹平的台面上河会贴着崖边平行跑
+    from . import _rng
+    from .grid import FractalNoise
+    x0_, y0_ = g["json"]["raster"]["origin_km"]
+    Xk_ = x0_ + (np.arange(W) + 0.5) * res_km
+    Yk_ = y0_ - (np.arange(H) + 0.5) * res_km
+    meander = FractalNoise(_rng(ctx, node, "meander"), Xk_[0], Yk_[-1], Xk_[-1], Yk_[0], feature_km=float(hc["meander_km"]),
+                           octaves=3, persistence=0.5).sample(*np.meshgrid(Xk_, Yk_)) * float(hc["meander_m"])
+    edge_km = distance_bands(~land, int(math.ceil(float(hc["edge_tilt_km"]) / res_km))).astype(np.float64) * res_km
+    tilt = float(hc["edge_tilt_m_per_km"]) * np.minimum(edge_km, float(hc["edge_tilt_km"]))
     for k, J in enumerate(g["json"]["islands"]):
         m = island_id == k
         if not m.any():
@@ -84,8 +106,9 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
         raised = mk & ~lk & (hf - h > float(hc["pit_keep_m"]))
         h = np.where(raised, hf - float(hc["pit_keep_m"]), h)
         height[sl][raised] = h[raised]
-        ri, rj, slope, _ = d8(hf, mk, res_m)
-        A = accumulate(hf, mk, ri, rj)
+        hr = priority_fill(np.where(mk, hf + meander[sl] + tilt[sl], np.nan), mk, eps=float(hc["fill_eps_m"]))
+        ri, rj, slope, _ = d8(hr, mk, res_m)
+        A = accumulate(hr, mk, ri, rj)
         Akm = A * cell_km2
         filled[sl][mk] = hf[mk]
         acc_km2[sl][mk] = Akm[mk]
@@ -116,10 +139,28 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
             else:
                 stream[sl] = np.where(mk & (Akm >= float(hc["stream_min_km2"])), 1, stream[sl]).astype(np.uint8)
             # 集水盆地：主岛按出口分水岭；出口 = 流向虚空的格；沿岸线把出口聚成段（相邻 basin_merge_cells 内的出口算同一盆地）
-            basin_info = _basins(hf, mk, ri, rj, Akm, cell_km2, hc)
+            basin_info = _basins(hr, mk, ri, rj, Akm, cell_km2, hc)
             basin_info["mouths"] = [[m_[0] + int(r0), m_[1] + int(c0), m_[2]] for m_ in basin_info.get("mouths", [])]   # 转成群栅格坐标
         else:
             stream[sl] = np.where(mk & (Akm >= float(hc["stream_min_km2"])), 1, stream[sl]).astype(np.uint8)
+        # 河道成形（river.py）：河宽 / 水深、下切的河床、河谷与漫滩、河口瀑布
+        h_now = np.where(mk, height[sl], np.nan)
+        h_new, lvl_w, wd, dp, fp, rinfo = carve_channels(
+            h_now, hr, mk, lk, ri, rj, Akm, np.where(mk, river[sl], 0).astype(np.uint8), np.where(mk, stream[sl], 0),
+            P_mm, float(J["rim_m"]), float(J["keel_m"]), res_m, year_s, hc, k == 0)
+        cut_m[sl] = np.where(mk, np.nan_to_num(h_now - h_new), cut_m[sl])
+        height[sl] = np.where(mk, h_new, height[sl])
+        river[sl] = np.where(mk, lvl_w, river[sl]).astype(np.uint8)
+        stream[sl] = np.where(mk & (lvl_w > 0), 0, stream[sl]).astype(np.uint8)
+        width_m[sl] = np.where(mk, wd, width_m[sl])
+        depth_m[sl] = np.where(mk, dp, depth_m[sl])
+        floodplain[sl] |= fp & mk
+        n_falls += rinfo["n_stream_falls"] + len(rinfo["rivers"])
+        max_cut = max(max_cut, rinfo.get("max_cut_m", 0.0))
+        for L in rinfo.get("lines", []):
+            river_lines.append({"island": k, "pts": [[round(q[0] + r0, 2), round(q[1] + c0, 2), q[2], q[3]] for q in L]})
+        if k == 0:
+            rivers_info = rinfo["rivers"]
         J["n_lakes"] = n_lakes
         J["lake_km2"] = round(float(lk.sum()) * cell_km2, 3)
         J["max_flowacc_km2"] = round(float(Akm.max()), 2)
@@ -200,6 +241,9 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     cover[river > 0] = LC_RIVER
     cover[lake] = LC_LAKE
 
+    g["river_lines"] = river_lines
+    g.update({"river_width_m": np.where(land, width_m, 0).astype(np.float32), "river_depth_m": np.where(land, depth_m, 0).astype(np.float32),
+              "floodplain": floodplain & land & (river == 0) & ~lake, "cut_m": np.where(land, np.maximum(cut_m, 0), 0).astype(np.float32)})
     g.update({"flowacc_km2": acc_km2.astype(np.float32), "river": river, "stream": stream, "lake": lake,
               "landcover": cover, "arable": arable, "slope_deg": slope.astype(np.float32), "filled": filled})
     from .output import LANDCOVER_CLASSES
@@ -214,6 +258,13 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
                   "n_lakes": int(sum(i["n_lakes"] for i in J["islands"])),
                   "lake_km2": round(float(lake.sum()) * cell_km2, 3),
                   "main_basins": basin_info,
+                  "rivers": rivers_info[:12],
+                  "n_rivers": len(rivers_info),
+                  "n_waterfalls": n_falls,
+                  "river_km2": round(float((river > 0).sum()) * cell_km2, 3),
+                  "floodplain_km2": round(float(g["floodplain"].sum()) * cell_km2, 3),
+                  "max_incision_m": round(max_cut, 1),
+                  "channel_note": "河宽 / 水深见 terrain.npz 的 river_width_m / river_depth_m（溪涧为湿季值）；height 在河道格是河床，水面 = 河床 + 水深；rivers[].waterfall_m = 河口跌下崖缘的落差",
                   "wind_ms": [round(u, 2), round(v, 2)],
                   "river_levels": {"1": "小河", "2": "中河", "3": "大河", "stream": "季节性溪涧（water.png 值 1）"}}
     J["constraints"]["arable_frac"]["actual"] = round(float((arable > 0).sum()) / max(1, n_land), 4)

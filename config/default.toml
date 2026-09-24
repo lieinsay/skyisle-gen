@@ -530,13 +530,38 @@ lake_max_per_island = 2       # 主岛最多几个湖；其余岛 lake_max_per_i
 lake_max_per_islet = 1
 pit_keep_m = 2.0
 stream_min_km2 = 1.0          # 汇流面积 ≥ 此值即有季节性溪涧（小岛一律只有溪涧）
-river_min_km2 = 60.0          # 常年河（只在主岛、has_river 为真时）：汇流面积门槛；若主岛最大汇流不足，降到 river_reach_frac × 最大汇流
-river_reach_frac = 0.35
+river_min_km2 = 25.0          # 常年河（只在主岛、has_river 为真时）：汇流面积门槛；若主岛最大汇流不足，降到 river_reach_frac × 最大汇流（旧 60 / 0.35：河网太稀）
+river_reach_frac = 0.2
 river_mid_size = 400.0        # 行星层 river_size（主岛 km² × 相对降水）达此值 → 最大的河为中河；river_big_size → 大河
 river_big_size = 1500.0
 basin_mouth_km2 = 5.0         # 主岛集水盆地：汇流 ≥ max(此值, basin_mouth_frac × 岛面积) 的出口算河口，其集水区为一个盆地
 basin_mouth_frac = 0.02
 basin_large_frac = 0.10       # 「大盆地」= 集水区 ≥ 岛面积的此比例（R9 推论 2 的素材，≥ 2 个时标出；0.15 时三 seed 没有一个群达标，0.10 约两成）
+# 河道成形（river.py）：水力几何 w = a·Q^b × width_scale、d = c·Q^f × depth_scale，Q = 汇流 × 年降水 × 径流系数 / 一年
+meander_m = 6.0               # 汇流路由面的弯曲噪声幅度（m）与特征尺度（km）：河在缓坡上蜿蜒，不走网格直线；0 = 关
+meander_km = 0.8
+edge_tilt_m_per_km = 1.5      # 路由面朝岸缘的微倾（m/km，最远算到 edge_tilt_km）：岸缘夹平的台面向外排水
+edge_tilt_km = 4.0
+runoff_coef = 0.45            # 年径流 / 年降水
+width_a = 5.0                 # Leopold–Maddock：w ≈ 5·Q^0.5 m、d ≈ 0.35·Q^0.4 m（Q 以 m³/s 计）
+width_b = 0.5
+depth_c = 0.35
+depth_f = 0.4
+width_scale = 8.0             # 夸张倍数：1 = 真实比例（10 m³/s 的河 16 m 宽，100 m 格上看不出是河）；8 时 4000 km² 主岛的干流约 120 m、最大的群 300–400 m
+depth_scale = 3.0
+stream_width_mult = 0.5       # 季节性溪涧按同式 × 此值（湿季的宽 / 深）
+incise_m = 25.0               # 河床下切：干流河口 incise_m，上游按 (汇流 / 主岛最大汇流)^0.5 递减
+stream_incise_m = 3.0         # 溪涧切沟深度
+stream_grade_max = 0.12       # 溪涧河床从汇入处往上游的最大比降（接到下切的干流上，不留悬沟）
+notch_m = 12.0                # 河口最多切进岸缘多少米（崖缘上的豁口；河从这里跌下成瀑布）
+floodplain_mult = 10.0        # 漫滩全宽 = 河宽 × 此值（上限 floodplain_max_m）；漫滩高程 = 河床 + 水深（涨水即漫）
+floodplain_max_m = 2500.0
+gorge_deg = 32.0              # 谷坡：小流量（≤ q_gorge m³/s）为峡谷坡，按 log Q 过渡到大流量（≥ q_wide）的宽谷坡
+wide_deg = 9.0
+q_gorge = 0.5
+q_wide = 40.0
+valley_max_km = 2.0           # 河谷剖面最远作用到离河床多远（算力上限：100 m 格 = 20 圈扩张）
+stream_valley_cells = 3       # 溪涧沟只影响几格
 
 [island.landcover]            # 5.3 地表分类与可耕地
 rock_temp_c = -6.0            # 海拔温度（海面年均 − 6 °C/km × 高程）低于此 → 裸岩；低于 alpine_temp_c → 高山草甸
@@ -555,6 +580,66 @@ arable_temp_min_c = 2.0
 terrace_slope_deg = 8.0       # 可耕且坡度 ≥ 此值 → 梯田
 arable_patch_km = 2.0         # 适宜度乘的斑块噪声：特征尺度与幅度（田块成团；0 = 关）
 arable_patch_amp = 0.35
+
+[island.resources]            # 5.3c 地形区与资源分布（resources.py；第三层叙事 / 场景素材，不进管线）
+relief_km = 2.0               # 局地起伏的方窗半宽（km）：起伏 = 窗内最高 − 最低
+mountain_relief_m = 300.0     # 山地：起伏 ≥ 此值或坡 ≥ mountain_slope_deg，或高于岸缘→峰的 mountain_peak_frac 且起伏 ≥ hill_relief_m 的一半
+mountain_slope_deg = 25.0     # 丘陵：起伏 ≥ hill_relief_m 或坡 ≥ hill_slope_deg 或高于 hill_peak_frac；其余台地平原
+mountain_peak_frac = 0.65
+hill_relief_m = 100.0
+hill_slope_deg = 8.0
+hill_peak_frac = 0.45
+high_peak_frac = 0.85         # 高山：山地且（海拔温度低于高山草甸线，或高出岸缘到峰高的此比例）
+valley_slope_deg = 5.0        # 河谷：漫滩 + 河道两格内坡度 < 此值
+min_island_km2 = 3.0          # 小于此面积的岛不放露天矿 / 硫磺
+patch_km = 1.5                # 斑块噪声特征尺度（矿点成团、品位起伏）
+patch_sep_km = 1.5            # 同类斑块状矿点的最小间距
+density_per_100km2 = { spring = 1.5, peat = 0.6, gravel = 1.5, ore = 0.25, hotspring = 0.8, sulfur = 0.4, lava_tube = 1.0, karst = 1.2, gorge_cave = 1.0, fracture_cave = 0.3, cliff_cave = 0.25, underside_cave = 0.1 }
+                              # 每 100 km² 陆地的期望个数（泊松）；cliff_cave / underside_cave 是每 10 km 岸崖。采石场 / 黏土不在这里：按覆盖铺（bulk_block_km）
+ore_gain = { "汇聚" = 4.0, "走滑" = 2.0, "离散" = 1.2 }   # 露天矿倍率 = max(ore_floor, 增益 × 边界核) × 叠层 ore_layered_gain × 岛龄（新 0.6 / 中 1 / 老 1.2）
+ore_floor = 0.03              # 板块内部（核 ≈ 0）的岛：现实的热点岛（夏威夷、冰岛）没有可采金属矿，岛弧（日本、菲律宾）才多
+ore_layered_gain = 1.5
+ore_elongation = 3.0          # 矿化带顺板块走向的长短轴比
+ore_pits_max = 5              # 每条矿化带里的矿坑数上限（1 + 泊松(面积 km²)）
+ore_slope_min_deg = 15.0      # 「裸露基岩」：裸岩 / 高山草甸 / 灌丛，或坡 ≥ 此值；且坡 ≤ ore_slope_max_deg（崖面开不了露天矿）
+ore_slope_max_deg = 40.0
+ore_km2 = 2.0                 # 矿化带面积中位数（对数正态 σ 0.6）：现实里一个矿区 1–5 km²，真正开挖的是带里几个坑
+ore_sep_km = 3.0
+bulk_block_km = 4.0           # 散装建材按覆盖铺：可居住的地（坡 < habitable_slope_deg）切成此边长的块，每块一处石坑、一处土坑（前工业时代每个村附近都有）
+habitable_slope_deg = 15.0
+quarry_slope_min_deg = 8.0    # 采石场：中陡坡非耕地（块里没有就退到块里最陡的非耕地）；岩性按岛龄（新岛玄武岩 / 中年安山岩凝灰岩 / 老岛石灰岩或砂岩）
+quarry_slope_max_deg = 40.0
+quarry_km2 = 0.03             # 村级石坑：零点零几 km²
+floatstone_expose = 0.35      # 浮石露头率（崖面 / 峡谷壁里露出的比例）× (1 + 汇聚增益 × 边界核) × 叠层 × 岛龄（新 1.2 / 中 1 / 老 0.6），夹 [0.02, 0.95]
+floatstone_convergent_gain = 1.0
+floatstone_layered_gain = 1.4
+floatstone_patch_km = 1.0     # 露头成段的噪声尺度
+floatstone_min_cells = 2      # 连通段 ≥ 此格数才算一处
+gorge_cut_m = 10.0            # 峡谷壁：河道 / 河谷下切 ≥ 此值且坡 ≥ gorge_slope_deg（浮石峡谷露头、峡谷岩洞）
+gorge_slope_deg = 15.0
+lava_tube_mid_mult = 0.4      # 中年岛熔岩管 = 新岛 × 此值（多处塌成天窗）；老岛没有
+waterfall_cave_p = 0.5        # 主岛每条常年河的河口有「瀑布后洞」的概率
+old_limestone_p = 0.6         # 老岛岩性为石灰岩（才有溶洞 / 落水洞 / 地下河）的概率，一群抽一次
+clay_slope_max_deg = 5.0      # 黏土：按覆盖铺；先找漫滩 / 湖滨 / 湿地边，没有就退到溪边 clay_stream_cells 格内的缓坡
+clay_stream_cells = 3
+clay_km2 = 0.05
+peat_km2 = 0.4
+peat_temp_max_c = 12.0        # 年均温低于此值的湿地成泥炭，否则芦苇荡
+gravel_acc_km2 = 10.0         # 汇流 ≥ 此值的溪涧也算（常年河一律算）
+gravel_slope_max_deg = 6.0
+gravel_km2 = 0.12
+placer_p = 0.25               # 本岛有金 / 铜露天矿时，每处砂砾成砂金的概率
+mid_hot_mult = 0.2            # 中年岛的温泉期望 = 新岛 × 此值；老岛没有
+sulfur_peak_frac = 0.8        # 硫磺：新岛近峰（高出岸缘到峰高的此比例以上）
+sulfur_km2 = 0.1
+spring_sep_km = 1.0
+cave_sep_km = 1.0
+timber_min_km2 = 2.0          # 林木：连通林地 ≥ 此面积算一片林场，每岛最多 timber_max_per_island 片；年均温 < conifer_temp_c 为针叶林
+timber_max_per_island = 6
+conifer_temp_c = 8.0
+guano_max_island_km2 = 5.0    # 鸟粪石：小岛崖顶，出现概率 guano_p
+guano_p = 0.35
+guano_km2 = 0.3
 
 [island.climate]              # 5.4 季节气候
 precip_mm_min = 150.0         # 第八节 a：相对降水 0 → 150 mm，1 → 4,000 mm，中间按 p^1.3
@@ -607,13 +692,36 @@ site_slope_max_deg = 15.0     # 村址坡度上限
 village_min_sep_km = 1.0      # 同岛村与村的最小间距（不够就退而求其次）
 water_near_cells = 10         # 「近水」评分的距离尺度（格）
 shore_near_cells = 20         # 「近岸」评分的距离尺度（格）
-site_weights = { field = 1.0, water = 0.8, slope = 0.5, lee = 0.3, shore = 0.3 }   # 村址评分权重
-dock_village_weight = 0.3     # 码头选点：岸缘格的「离对岸距离 + 此权重 × 离本岛最大村距离」最小者
-dock_merge_km = 2.0           # 同岛 2 km 内的码头合并（一个码头服务几条短渡）
+site_weights = { field = 1.0, water = 0.8, slope = 0.5, lee = 0.3, shore = 0.0 }   # 村址评分权重（shore 旧 0.3 = 为了近码头；飞船随处可停后不再偏向岸边）
 cistern_basin_min_frac = 0.05 # 无河之群：主岛集水区 ≥ 岛面积此比例的盆地才落蓄水池
 cistern_catch_coef = 0.3      # 蓄水池容量 = 盆地 km² × 年降水 mm × 系数（千 m³，只是数字）
 village_water_km = 1.0        # SET-water：村在此距离内有水源（河 / 湖 / 溪涧 / 取水点 / 蓄水池）
-dock_merge_rel = 0.35         # 码头合并半径 = max(dock_merge_km, 此系数 × √岛面积)：小岛只留一个码头
+# 飞船取代车船、可在任意平地停靠：没有码头，每个村 / 镇 / 专业聚落旁一块泊场（DESIGN-NOTES 四点十八）
+landing_reach_cells = 6       # 泊场离聚落 ≤ 此格数；坡 ≤ landing_slope_max_deg、非水非崖，非田非林优先
+landing_slope_max_deg = 4.0
+# 聚落层级（中心地）：总户数的 nonfarm_share 是非农户，先给专业聚落（封顶 special_cap_frac），余下按服务户数分给集镇
+nonfarm_share = 0.10          # 前工业社会非农人口约 10–20%；从同一份 ⑨ 人口里出，不加人
+market_radius_km = 6.0        # 集镇服务半径（直线，跨岛——飞船）；按半径内户数贪心挑村升为镇，邑治必为镇
+town_spacing_km = 10.0        # 镇距下限（当天往返的赶集距离 10–15 km）
+town_min_served_hh = 150      # 半径内不足此户数的村不升镇（孤悬小岛只归最近的镇）
+special_cap_frac = 0.4        # 专业聚落最多占非农户的比例（超了等比缩）
+special_min_hh = 3            # 缩完不足此户数的专业聚落不设
+ore_hh_per_km2 = 25.0         # 矿镇 / 矿村：矿化带面积 × 此值 × 品位（上 1.5 / 中 1 / 下 0.5）；≥ mine_town_hh 叫矿镇
+mine_town_hh = 80
+floatstone_hh_per_km2 = 15.0  # 浮石采石村：每岛最大的几段露头（主岛 floatstone_sites_main，小岛 1），面积 ≥ floatstone_site_min_km2，每处 ≤ 60 户
+floatstone_sites_main = 3
+floatstone_site_min_km2 = 0.1
+kiln_hh = 15                  # 窑村：上等黏土且 kiln_forest_km 内有林（燃料）；主岛 ≤ 2 处、小岛 ≤ 1
+kiln_forest_km = 2.0
+charcoal_min_km2 = 8.0        # 伐木烧炭营：林场 ≥ 此面积且离最近的村 > charcoal_far_km；户数 = clip(面积 × 0.5, 5, 30)，每岛 ≤ 3
+charcoal_far_km = 3.0
+hotspring_hh = 8              # 温泉地（汤治 / 寺社）：每处温泉一个
+# 村周开垦：林地在聚落半径内改成草坡（内圈，田边牧场 / 草场）与灌丛（外圈，薪炭林）
+clear_base_km = 1.5           # 半径 = clear_base_km × √(户数 / 40)，夹 [clear_min_km, clear_max_km]；镇 × town_clear_mult
+clear_min_km = 0.3
+clear_max_km = 2.5
+clear_inner_frac = 0.6
+town_clear_mult = 1.5
 city_urban_rate = 0.3         # 都（5.7）：城居人口 = 本邑人口 × 城居率 + 邦人口 × 集聚率（普通邦 / 变法之国）；「帝国拨盘」
 city_gather_rate = 0.05
 city_gather_rate_reformer = 0.10

@@ -76,9 +76,13 @@ a{color:var(--acc2)}
       <option value="slope">坡度</option>
       <option value="flowacc">汇流面积（log）</option>
       <option value="island">岛号</option>
+      <option value="zone">地形区（山区 / 丘陵 / 台地 / 河谷）</option>
+      <option value="resource">资源分布（矿 / 石 / 土 / 林…）</option>
       <option value="temp">当日海拔温度</option>
     </select></div>
     <label class="chk"><input type="checkbox" id="ovWater" checked> 河 / 溪涧 / 湖</label>
+    <label class="chk" title="河道按中心线画成平滑曲线，线宽 = 真实河宽 × 缩放（小 / 中 / 大河最细 1.8 / 2.4 / 3 px）；关掉则按栅格逐格涂色"><input type="checkbox" id="ovVec" checked> 河道矢量（平滑、按河宽）</label>
+    <label class="chk" title="河谷底的漫滩：高程 = 河床 + 水深，涨水即漫"><input type="checkbox" id="ovFlood"> 漫滩</label>
     <label class="chk"><input type="checkbox" id="ovArable" checked> 可耕地 / 梯田轮廓</label>
     <label class="chk"><input type="checkbox" id="ovCliff"> 崖缘</label>
     <label class="chk"><input type="checkbox" id="ovLinks" checked> 索桥 / 短渡 / 导水槽</label>
@@ -86,7 +90,8 @@ a{color:var(--acc2)}
     <label class="chk"><input type="checkbox" id="ovContour"> 等高线（100 m）</label>
     <label class="chk" title="随日期变化：积雪与雪线、植被枯荣与作物、溪涧断流 / 河道涨水漫滩 / 结冰、云海漫顶"><input type="checkbox" id="ovLive" checked> 季相与水情（随日期变）</label>
     <label class="chk" title="雨丝 / 雪花 / 风暴 / 多云 / 云雾 / 风的粒子"><input type="checkbox" id="ovFx" checked> 天气特效</label>
-    <label class="chk" title="村（圆的大小 = 户数）、散户、码头 / 桥头 / 蓄水池"><input type="checkbox" id="ovSettle" checked> 聚落</label>
+    <label class="chk" title="村（圆的大小 = 户数）、镇（橙圈，管几个村）、专业聚落（紫菱：矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地）、散户、泊场（拉近才画）/ 桥头 / 蓄水池"><input type="checkbox" id="ovSettle" checked> 聚落</label>
+    <label class="chk" title="露天矿 / 采石场 / 洞穴 / 泉眼 / 温泉 / 砂金 / 黏土 / 泥炭 / 浮石矿脉…（林木只在「资源分布」底图上）"><input type="checkbox" id="ovRes"> 资源点位</label>
     <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="4"><span id="exagV" class="small">4</span></div>
     <div id="legend" class="legend"></div>
   </div>
@@ -96,6 +101,8 @@ a{color:var(--acc2)}
   </div>
   <div class="sec"><h3>约束对照</h3><table class="kv" id="cons"></table></div>
   <div class="sec"><h3>水系 / 地表</h3><table class="kv" id="hydro"></table></div>
+  <div class="sec"><h3>河流（主岛，按流域）</h3><table class="kv" id="rivers"></table></div>
+  <div class="sec"><h3>地形区 / 资源</h3><div id="resSum" class="small"></div></div>
   <div class="sec small">滚轮缩放，拖动平移，悬停读格子。</div>
 </aside>
 
@@ -139,6 +146,7 @@ const q = new URLSearchParams(location.search);
 let run = q.get('run') || 'seed42', node = +(q.get('node') || 0), year = +(q.get('year') || 0);
 let D = null, R = null;            // 数据包 / 栅格
 let base = null;                   // 底图 ImageData 缓存（按图层）
+let layerVersion = 0;              // 底图 / 季相层每重建一次 +1（细化渲染的缓存键）
 let view = { s: 1, tx: 0, ty: 0 };  // 屏幕 = 格 × s + t
 let day = 0, playing = false, playTimer = null;
 const LC_NAMES = ["虚空","崖缘","裸岩","高山草甸","林地","灌丛","草坡","可耕地","梯田","湿地","河道","湖"];
@@ -168,11 +176,21 @@ async function load(force = false, sets = null){
       lc: rr.landcover_u8 ? b64(rr.landcover_u8, Uint8Array) : null, river: rr.river_u8 ? b64(rr.river_u8, Uint8Array) : null,
       stream: rr.stream_u8 ? b64(rr.stream_u8, Uint8Array) : null, lake: rr.lake_u8 ? b64(rr.lake_u8, Uint8Array) : null,
       arable: rr.arable_u8 ? b64(rr.arable_u8, Uint8Array) : null, cliff: rr.cliff_u8 ? b64(rr.cliff_u8, Uint8Array) : null,
-      slope: rr.slope_u8 ? b64(rr.slope_u8, Uint8Array) : null, fa: rr.flowacc_log_u8 ? b64(rr.flowacc_log_u8, Uint8Array) : null };
+      slope: rr.slope_u8 ? b64(rr.slope_u8, Uint8Array) : null, fa: rr.flowacc_log_u8 ? b64(rr.flowacc_log_u8, Uint8Array) : null,
+      flood: rr.floodplain_u8 ? b64(rr.floodplain_u8, Uint8Array) : null, zone: rr.terrain_zone_u8 ? b64(rr.terrain_zone_u8, Uint8Array) : null,
+      res: rr.resource_u8 ? b64(rr.resource_u8, Uint8Array) : null, rw: rr.river_width_u8 ? b64(rr.river_width_u8, Uint8Array) : null,
+      rd: rr.river_depth_u8 ? b64(rr.river_depth_u8, Uint8Array) : null };
     R.res_m = D.island.raster.res_m * R.step;
+    buildWarp(); refined = null;
+    R.lines = D.rivers ? D.rivers.lines.map(L => { const pts = chaikin(chaikin(relax(L.pts, 4)));
+        let i0 = 1e9, i1 = -1e9, j0 = 1e9, j1 = -1e9, ws = 0; for (const q of pts) { i0 = Math.min(i0, q[0]); i1 = Math.max(i1, q[0]); j0 = Math.min(j0, q[1]); j1 = Math.max(j1, q[1]); ws += q[2]; }
+        return { island: L.island, lvl: Math.max(...L.pts.map(q => q[3])), pts, bb: [i0, i1, j0, j1], wMean: ws / pts.length }; })
+      .sort((a, b) => a.lvl - b.lvl) : null;
     history.replaceState(null, '', `?run=${run}&node=${node}&year=${year}`);
     base = null; dayLayer = null; dayTab = null; day = Math.min(day, 335);
     renderSide(); buildDayTables(); fitView(); draw(); renderClimate(); renderWeather();
+    if (q.get('fly')) { const [fi, fj, fs] = q.get('fly').split(',').map(Number); q.delete('fly'); flyToCell(fi, fj, fs || 8); }   // &fly=行,列[,缩放]：打开就飞到某格（只第一次）
+    if (q.get('day')) { day = Math.max(0, Math.min(335, +q.get('day'))); q.delete('day'); $('daySl').value = day; renderDay(); draw(); }   // &day=N：打开就停在第 N 日
     setStatus(`就绪：${run} #${node} · ${R.rows}×${R.cols} @ ${R.res_m} m${R.step > 1 ? '（抽稀 ' + R.step + '×）' : ''} · 生成 ${D.island.meta.seconds} s`);
   } catch (e) { setStatus('出错：' + e); console.error(e); }
   $('loading').style.display = 'none';
@@ -198,14 +216,26 @@ function renderSide(){
     <tr><td>湖</td><td>${hy.n_lakes} 个 · ${fmt(hy.lake_km2, 2)} km²</td></tr><tr><td>盆地</td><td>${hy.main_basins ? hy.main_basins.n_basins + ' 个，大盆地 ' + hy.main_basins.n_large + '（最大占 ' + fmt(hy.main_basins.largest_frac * 100, 0) + '%）' : '—'}</td></tr>
     <tr><td>索桥/短渡</td><td>${J.layout.n_bridges} / ${J.layout.n_ferries}，导水槽联通 ${J.layout.channel_islands} 岛，岸距中位 ${J.layout.gap_median_km} km</td></tr><tr><td>地表</td><td>${lcs}</td></tr>`;
   const S = D.settlements;
-  if (S) { $('hydro').innerHTML += `<tr><td>聚落</td><td>人口 ${fmt(S.population, 0)}（${S.population_source}）· ${S.households} 户 · 村 ${S.n_villages}（邑治 ${S.seat_households} 户，中位 ${S.village_hh_median}）· 散户 ${S.n_hamlets} · 田块 ${S.n_fields}，户均地 ${fmt(S.land_per_household_km2 * 100, 1)} ha<br>码头 ${(S.docks||[]).length} · 桥头 ${(S.bridgeheads||[]).length} · 蓄水池 ${(S.cisterns||[]).length} · 取水点 ${(S.intakes||[]).length} · 前哨 ${(S.outposts||[]).length} · 村 1 km 内有水 ${fmt((S.water_ok_share||0)*100,0)}%</td></tr>`
+  if (S) { $('hydro').innerHTML += `<tr><td>聚落</td><td>人口 ${fmt(S.population, 0)}（${S.population_source}）· ${S.households} 户 · 村 ${S.n_villages}（邑治 ${S.seat_households} 户，中位 ${S.village_hh_median}）· 散户 ${S.n_hamlets} · 田块 ${S.n_fields}，户均地 ${fmt(S.land_per_household_km2 * 100, 1)} ha<br>镇 ${(S.towns||[]).length}（非农 ${S.households_in_towns_market ?? 0} 户）· 专业聚落 ${(S.specials||[]).length}（${S.households_in_specials ?? 0} 户：${[...new Set((S.specials||[]).map(x => x.kind))].join('、') || '—'}）· 非农共 ${S.nonfarm_households ?? 0} 户（${fmt((S.nonfarm_share||0) * 100, 0)}%）
+      <br>泊场 ${(S.landings||[]).length}（飞船随处可停，无码头）· 桥头 ${(S.bridgeheads||[]).length} · 蓄水池 ${(S.cisterns||[]).length} · 取水点 ${(S.intakes||[]).length} · 前哨 ${(S.outposts||[]).length} · 村 1 km 内有水 ${fmt((S.water_ok_share||0)*100,0)}%${S.clearing ? ` · 村周开垦 ${fmt(S.clearing.cleared_km2, 0)} km²，林地 ${fmt(S.clearing.forest_share_before * 100, 0)}% → ${fmt(S.clearing.forest_share_after * 100, 0)}%` : ''}</td></tr>`
       + (S.city ? `<tr><td>都</td><td><b style="color:#ffd75a">${S.city.role}</b> ${S.city.households} 户（城 ${S.city.inner_households} + 郭 ${S.city.guo_households}，郭 ${S.city.n_guo_islands} 岛）· 邦人口 ${fmt(S.city.state_pop, 0)} × 集聚率 ${S.city.gather_rate}<div class="small">${S.city.note}</div></td></tr>` : '')
-      + `<tr><td>主家候选</td><td>${(S.home_candidates||[]).map(h => `<div><b>${h.id}·${h.kind}</b>（岛 ${h.island}，${fmt(h.elev_m,0)} m，离邑治 ${h.dist_seat_km ?? '—'} km，离主码头 ${h.dist_main_dock_km ?? '—'} km）：${h.note}；${h.season_type}，雪 ${h.snow_days} 日 / 风暴 ${h.storm_days} 日 / 可出航 ${h.sailable_days} 日${h.island_has_river ? '，岛上有河' : ''}${h.island_lakes ? '，湖 ' + h.island_lakes : ''}</div>`).join('')}</td></tr>`; }
+      + `<tr><td>主家候选</td><td>${(S.home_candidates||[]).map(h => `<div><b>${h.id}·${h.kind}</b>（岛 ${h.island}，${fmt(h.elev_m,0)} m，离邑治 ${h.dist_seat_km ?? '—'} km，离主泊场 ${h.dist_main_landing_km ?? h.dist_main_dock_km ?? '—'} km）：${h.note}；${h.season_type}，雪 ${h.snow_days} 日 / 风暴 ${h.storm_days} 日 / 可出航 ${h.sailable_days} 日${h.island_has_river ? '，岛上有河' : ''}${h.island_lakes ? '，湖 ' + h.island_lakes : ''}</div>`).join('')}</td></tr>`; }
+  const rv = hy.rivers || [];
+  $('rivers').innerHTML = rv.length ? `<tr><th>#</th><th>流域</th><th>长</th><th>流量</th><th>宽 / 深</th><th>下切</th><th>瀑布</th></tr>` + rv.slice(0, 8).map((r, k) =>
+      `<tr><td><button class="mini" data-rc="${r.mouth_cell.join(',')}">${k + 1}${['','小','中','大'][r.level]}</button></td><td>${fmt(r.basin_km2, 0)} km²</td><td>${fmt(r.length_km, 0)} km</td><td>${fmt(r.discharge_m3s, 1)} m³/s</td><td>${fmt(r.width_m, 0)} m / ${fmt(r.depth_m, 1)} m</td><td>${fmt(r.incision_m, 0)} m</td><td>${fmt(r.waterfall_m, 0)} m</td></tr>`).join('')
+      + `<tr><td colspan="7" class="small">常年河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
+    : `<tr><td class="small">无常年河${hy.n_waterfalls ? '（溪涧跌落 ' + hy.n_waterfalls + ' 处）' : ''}</td></tr>`;
+  $('rivers').querySelectorAll('button[data-rc]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.rc.split(',').map(Number); flyToCell(i, j, 8); });
+  const RS = D.resources;
+  $('resSum').innerHTML = RS ? `<div>${Object.entries(RS.zones.share).filter(([k, v]) => v >= 0.002).map(([k, v]) => `<span class="pill"><span class="sw" style="background:rgb(${RS.zones.palette[RS.zones.classes.indexOf(k)].join(',')})"></span>${k} ${fmt(v * 100, 0)}%</span>`).join('')}</div>
+    <div style="margin-top:4px">${Object.entries(RS.counts).map(([k, v]) => `<span class="pill"><span class="sw" style="background:rgb(${RS.resources.palette[RS.resources.classes.indexOf(k)].join(',')})"></span>${k} ${v}</span>`).join('')}</div>
+    <div style="margin-top:4px">最近板块边界：${RS.geology.boundary_type}（核 ${fmt(RS.geology.boundary_kernel, 2)}）${RS.geology.layered ? ' · 叠层' : ''} · 老岛岩性 ${RS.geology.old_island_lithology} · 露天矿倍率 ×${fmt(RS.geology.ore_multiplier, 2)}</div>` : '（旧产物没有资源层：重新生成）';
   $('islandList').innerHTML = J.islands.map(i => `<button class="mini" data-i="${i.id}" title="${i.area_km2} km² · 峰 ${i.peak_m} m · 岸缘 ${i.rim_m} m · ${i.age_zh}${i.n_lakes ? ' · 湖 ' + i.n_lakes : ''}${i.has_perennial_river ? ' · 有河' : ''}">${i.id}</button>`).join('');
   $('islandList').querySelectorAll('button').forEach(b => b.onclick = () => zoomIsland(+b.dataset.i));
   const f = `/api/island/preview?run=${run}&node=${node}`;
   $('files').innerHTML = `<div>${D.island.meta.run}/islands/${node}/：island.json · height.png · landcover.png · water.png · arable.png · terrain.npz · climate.json · weather_y${year}.csv</div>
-    <div><a href="${D.preview}" target="_blank">preview.png</a> · <a href="${D.preview_main}" target="_blank">preview_main.png</a></div>`;
+    <div>resources.json · resources.png · terrain_zone.png（terrain.npz 另有 river_width_m / river_depth_m / floodplain / terrain_zone / resource）</div>
+    <div><a href="${D.preview}" target="_blank">preview.png</a> · <a href="${D.preview_main}" target="_blank">preview_main.png</a>${D.preview_res ? ` · <a href="${D.preview_res}" target="_blank">preview_resources.png</a>` : ''}</div>`;
 }
 
 // ------------------------------------------------------------ 地图
@@ -214,6 +244,137 @@ function fitView(){
   const cv = $('map'); const W = cv.clientWidth, H = cv.clientHeight;
   const s = Math.min(W / R.cols, H / R.rows) * 0.96;
   view = { s, tx: (W - R.cols * s) / 2, ty: (H - R.rows * s) / 2 };
+}
+// 拉普拉斯松弛（首尾 = 源头 / 汇流点 / 出口不动）：先抹掉 D8 的 45° 台阶，再 Chaikin 切角
+function relax(P, n){
+  let Q = P.map(q => q.slice());
+  for (let t = 0; t < n; t++) { const R2 = Q.map(q => q.slice());
+    for (let k = 1; k < Q.length - 1; k++) { R2[k][0] = 0.25 * Q[k - 1][0] + 0.5 * Q[k][0] + 0.25 * Q[k + 1][0]; R2[k][1] = 0.25 * Q[k - 1][1] + 0.5 * Q[k][1] + 0.25 * Q[k + 1][1]; }
+    Q = R2; }
+  return Q;
+}
+// ------------------------------------------------------------ 细化渲染：放大后（一格 ≥ REFINE_MIN_S 像素）停手约 0.14 s，按屏幕像素重采样当前视口。
+// 连续量底图双线性；分类图层（地表 / 田 / 地形区 / 资源 / 季相植被）在采样点上加一个 < 1 格的平滑扰动再取最近格 → 边界成自然曲线而不是直角台阶。
+// 纯显示：数据一格不改。拖动 / 播放时仍用缩放的格子图，停下再细化。
+const REFINE_MIN_S = 1.5, CONT_MODES = ['terrain', 'hill', 'slope', 'temp', 'flowacc'];
+let refined = null, refineTimer = null, warpX = null, warpY = null;
+function rng32(a){ return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function buildWarp(){
+  const { rows, cols } = R; warpX = new Float32Array(rows * cols); warpY = new Float32Array(rows * cols);
+  for (const [span, amp, salt] of [[4, 0.42, 1], [2, 0.22, 2]]) {
+    const lr = Math.ceil(rows / span) + 2, lc = Math.ceil(cols / span) + 2, rnd = rng32(node * 7919 + salt);
+    const gx = new Float32Array(lr * lc), gy = new Float32Array(lr * lc);
+    for (let k = 0; k < gx.length; k++) { gx[k] = rnd() * 2 - 1; gy[k] = rnd() * 2 - 1; }
+    for (let i = 0; i < rows; i++) { const y = i / span, i0 = y | 0, fy = y - i0, sy = fy * fy * (3 - 2 * fy);
+      for (let j = 0; j < cols; j++) { const x = j / span, j0 = x | 0, fx = x - j0, sx = fx * fx * (3 - 2 * fx);
+        const a = i0 * lc + j0, b = a + 1, c = a + lc, d = c + 1, p = i * cols + j;
+        warpX[p] += amp * ((gx[a] * (1 - sx) + gx[b] * sx) * (1 - sy) + (gx[c] * (1 - sx) + gx[d] * sx) * sy);
+        warpY[p] += amp * ((gy[a] * (1 - sx) + gy[b] * sx) * (1 - sy) + (gy[c] * (1 - sx) + gy[d] * sx) * sy); } }
+  }
+}
+function refineKey(){ const cv = $('map'); return [view.s, view.tx, view.ty, cv.width, cv.height, base ? base._v : 0, liveDraw() && dayLayer ? dayLayer._v : -1].join(','); }
+function scheduleRefine(){ clearTimeout(refineTimer); refineTimer = setTimeout(() => { if (!R || !base || playing) return; refined = { key: refineKey(), img: renderRefined() }; draw(); }, 140); }
+// 4 邻格按双线性权重投票（RGBA 相同的算同一类），返回胜出格的 RGBA 下标
+function vote(A, u, v, rows, cols){
+  const a = Math.min(cols - 1.001, Math.max(0, u)), c = Math.min(rows - 1.001, Math.max(0, v));
+  const j = a | 0, i = c | 0, fx = a - j, fy = c - i, t0 = (i * cols + j) * 4, t1 = t0 + 4, t2 = t0 + cols * 4, t3 = t2 + 4;
+  const w0 = (1 - fx) * (1 - fy), w1 = fx * (1 - fy), w2 = (1 - fx) * fy, w3 = fx * fy;
+  const k0 = (A[t0] << 24) ^ (A[t0 + 1] << 16) ^ (A[t0 + 2] << 8) ^ A[t0 + 3], k1 = (A[t1] << 24) ^ (A[t1 + 1] << 16) ^ (A[t1 + 2] << 8) ^ A[t1 + 3];
+  const k2 = (A[t2] << 24) ^ (A[t2 + 1] << 16) ^ (A[t2 + 2] << 8) ^ A[t2 + 3], k3 = (A[t3] << 24) ^ (A[t3 + 1] << 16) ^ (A[t3 + 2] << 8) ^ A[t3 + 3];
+  const s0 = w0 + (k1 === k0 ? w1 : 0) + (k2 === k0 ? w2 : 0) + (k3 === k0 ? w3 : 0);
+  const s1 = w1 + (k0 === k1 ? w0 : 0) + (k2 === k1 ? w2 : 0) + (k3 === k1 ? w3 : 0);
+  const s2 = w2 + (k0 === k2 ? w0 : 0) + (k1 === k2 ? w1 : 0) + (k3 === k2 ? w3 : 0);
+  const s3 = w3 + (k0 === k3 ? w0 : 0) + (k1 === k3 ? w1 : 0) + (k2 === k3 ? w2 : 0);
+  let t = t0, b = s0; if (s1 > b) { b = s1; t = t1; } if (s2 > b) { b = s2; t = t2; } if (s3 > b) { t = t3; }
+  return t;
+}
+function renderRefined(){
+  const cv = $('map'), W = cv.width, H = cv.height, out = new ImageData(W, H), o = out.data;
+  const { rows, cols } = R, B = base.img.data, DL = liveDraw() && dayLayer && dayLayer.lod === 1 ? dayLayer.img.data : null;
+  const cont = CONT_MODES.includes($('baseSel').value), s = view.s, tx = view.tx, ty = view.ty;
+  for (let y = 0; y < H; y++) {
+    const v = (y + 0.5 - ty) / s - 0.5;
+    for (let x = 0; x < W; x++) {
+      const q = (y * W + x) * 4, u = (x + 0.5 - tx) / s - 0.5;
+      if (u < -1 || v < -1 || u > cols || v > rows) { o[q] = 5; o[q + 1] = 7; o[q + 2] = 13; o[q + 3] = 255; continue; }
+      // 扰动场本身按格双线性
+      const cu = Math.min(cols - 1.001, Math.max(0, u)), cvv = Math.min(rows - 1.001, Math.max(0, v));
+      const j0 = cu | 0, i0 = cvv | 0, fx = cu - j0, fy = cvv - i0, p00 = i0 * cols + j0;
+      const w00 = (1 - fx) * (1 - fy), w01 = fx * (1 - fy), w10 = (1 - fx) * fy, w11 = fx * fy;
+      const uu = u + warpX[p00] * w00 + warpX[p00 + 1] * w01 + warpX[p00 + cols] * w10 + warpX[p00 + cols + 1] * w11;
+      const vv = v + warpY[p00] * w00 + warpY[p00 + 1] * w01 + warpY[p00 + cols] * w10 + warpY[p00 + cols + 1] * w11;
+      let r, g, b;
+      if (cont) {
+        const a = Math.min(cols - 1.001, Math.max(0, uu)), c = Math.min(rows - 1.001, Math.max(0, vv));
+        const ja = a | 0, ia = c | 0, gx = a - ja, gy = c - ia, t = (ia * cols + ja) * 4, t2 = t + cols * 4;
+        const k00 = (1 - gx) * (1 - gy), k01 = gx * (1 - gy), k10 = (1 - gx) * gy, k11 = gx * gy;
+        r = B[t] * k00 + B[t + 4] * k01 + B[t2] * k10 + B[t2 + 4] * k11;
+        g = B[t + 1] * k00 + B[t + 5] * k01 + B[t2 + 1] * k10 + B[t2 + 5] * k11;
+        b = B[t + 2] * k00 + B[t + 6] * k01 + B[t2 + 2] * k10 + B[t2 + 6] * k11;
+      } else {
+        const t = vote(B, uu, vv, rows, cols); r = B[t]; g = B[t + 1]; b = B[t + 2];
+      }
+      if (DL) {
+        const t = vote(DL, uu, vv, rows, cols), al = DL[t + 3] / 255;
+        if (al > 0) { r = r * (1 - al) + DL[t] * al; g = g * (1 - al) + DL[t + 1] * al; b = b * (1 - al) + DL[t + 2] * al; }
+      }
+      o[q] = r; o[q + 1] = g; o[q + 2] = b; o[q + 3] = 255;
+    }
+  }
+  return out;
+}
+// Chaikin 切角平滑（首尾不动）；点 = [行, 列, 河宽 m, 级别]
+function chaikin(P){
+  if (P.length < 3) return P; const out = [P[0]];
+  for (let k = 0; k < P.length - 1; k++) { const a = P[k], b = P[k + 1];
+    out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1], 0.75 * a[2] + 0.25 * b[2], Math.max(a[3], b[3])]);
+    out.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1], 0.25 * a[2] + 0.75 * b[2], Math.max(a[3], b[3])]); }
+  out.push(P[P.length - 1]); return out;
+}
+function lcFill(p){   // 河道格的替身：八邻里最多的非河非虚空地表类（没有就草坡）
+  const cols = R.cols, cnt = {}; let best = 6, bn = 0;
+  for (const d of [-cols - 1, -cols, -cols + 1, -1, 1, cols - 1, cols, cols + 1]) { const k = R.lc[p + d]; if (k === undefined || k === 0 || k === 10) continue; cnt[k] = (cnt[k] || 0) + 1; if (cnt[k] > bn) { bn = cnt[k]; best = k; } }
+  return best;
+}
+function vecOn(){ return $('ovWater').checked && $('ovVec').checked && !!(R && R.lines); }
+function drawRivers(ctx){
+  const X = q => (q[1] / R.step) * view.s + view.tx, Y = q => (q[0] / R.step) * view.s + view.ty;
+  const live = liveDraw() && dayTab, T = dayTab;
+  const frozen = live && T.frozen[day], high = live && T.high[day], flow = live ? T.flow[day] : 1;
+  const W = ctx.canvas.width, H = ctx.canvas.height, pxPerM = view.s / R.res_m;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // 分级：一格 ≥ 2 px 逐段按河宽画；更远时抽点（每 m 点取一）、整条一笔（线宽取该线平均河宽）；一格 < 0.35 px 时不画溪涧
+  const cs = view.s / R.step, m = cs >= 2 ? 1 : (cs >= 1 ? 2 : (cs >= 0.5 ? 4 : 8)), coarse = cs < 2;
+  for (const L of R.lines) {
+    const stream = L.lvl === 0;
+    if (stream && (flow < 0.5 || cs < 0.35)) continue;                 // 溪涧断流 / 太远
+    const [bi0, bi1, bj0, bj1] = L.bb;
+    if ((bj1 / R.step) * view.s + view.tx < -20 || (bj0 / R.step) * view.s + view.tx > W + 20 || (bi1 / R.step) * view.s + view.ty < -20 || (bi0 / R.step) * view.s + view.ty > H + 20) continue;
+    if (coarse) {
+      ctx.strokeStyle = frozen ? 'rgb(215,230,250)' : (stream ? `rgba(120,170,255,${0.35 + 0.4 * Math.min(1, flow)})` : ['', '#3f7fe8', '#2a64d8', '#1848c0'][Math.min(3, L.lvl + (high ? 1 : 0))]);
+      ctx.lineWidth = Math.max(stream ? 0.8 : 1.2 + 0.6 * L.lvl, L.wMean * pxPerM * (high && !stream ? 1.4 : 1));
+      const P = L.pts; ctx.beginPath(); ctx.moveTo(X(P[0]), Y(P[0]));
+      for (let k = m; k < P.length - 1; k += m) ctx.lineTo(X(P[k]), Y(P[k]));
+      ctx.lineTo(X(P[P.length - 1]), Y(P[P.length - 1])); ctx.stroke();
+      continue;
+    }
+    let col = frozen ? 'rgb(215,230,250)' : (stream ? `rgba(120,170,255,${0.35 + 0.4 * Math.min(1, flow)})` : ['', '#3f7fe8', '#2a64d8', '#1848c0'][Math.min(3, L.lvl + (high ? 1 : 0))]);
+    ctx.strokeStyle = col;
+    const P = L.pts; let x0 = X(P[0]), y0 = Y(P[0]);
+    for (let k = 1; k < P.length; k++) {
+      const x1 = X(P[k]), y1 = Y(P[k]);
+      if (!((x0 < -20 && x1 < -20) || (y0 < -20 && y1 < -20) || (x0 > W + 20 && x1 > W + 20) || (y0 > H + 20 && y1 > H + 20))) {
+        const wm = 0.5 * (P[k - 1][2] + P[k][2]) * (high && !stream ? 1.4 : 1);
+        ctx.lineWidth = Math.max(stream ? 0.8 : 1.2 + 0.6 * L.lvl, wm * pxPerM);
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      }
+      x0 = x1; y0 = y1;
+    }
+  }
+}
+function flyToCell(i, j, s){
+  const cv = $('map'); const x = (j + 0.5) / R.step, y = (i + 0.5) / R.step; s = s || Math.max(view.s, 4);
+  view = { s, tx: cv.clientWidth / 2 - x * s, ty: cv.clientHeight / 2 - y * s }; draw();
 }
 function zoomIsland(i){
   const isl = D.island.islands[i]; const [bx, by, m] = isl.bbox_cells; const cv = $('map');
@@ -245,6 +406,7 @@ function viridis(t){ const s = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[
 function buildBase(){
   const { rows, cols, h, id } = R; const img = new ImageData(cols, rows); const d = img.data; const mode = $('baseSel').value;
   const sh = (mode === 'landcover' || mode === 'island') ? null : hillshade();
+  const RS = D.resources, TIMBER = RS ? RS.resources.classes.indexOf('林木') : -1;
   let hmin = 1e9, hmax = -1e9; for (let p = 0; p < h.length; p++) if (h[p]) { if (h[p] < hmin) hmin = h[p]; if (h[p] > hmax) hmax = h[p]; }
   const dayT = D.climate.weather && D.climate.weather.days ? D.climate.weather.days[day].temp_c : D.climate.annual.temp_c;
   const lapse = 6.0; const tsea = D.climate.annual.temp_sea_c + (dayT - D.climate.annual.temp_c);
@@ -253,20 +415,25 @@ function buildBase(){
     let c; const hv = h[p] - 1;
     if (mode === 'terrain') { c = terrainColor((hv - hmin) / Math.max(1, hmax - hmin)); const s = 0.35 + 0.75 * sh[p]; c = c.map(x => x * s); }
     else if (mode === 'hill') { const s = 0.15 + 0.85 * sh[p]; c = [230 * s, 225 * s, 215 * s]; }
-    else if (mode === 'landcover') { c = LC_PAL[R.lc ? R.lc[p] : 6]; }
+    else if (mode === 'landcover') { let k = R.lc ? R.lc[p] : 6; if (k === 10 && vecOn()) k = lcFill(p); c = LC_PAL[k]; }
     else if (mode === 'slope') { const s = R.slope ? R.slope[p] / 4 : 0; c = viridis(s / 35); const l = 0.5 + 0.5 * sh[p]; c = c.map(x => x * l); }
     else if (mode === 'flowacc') { const v = R.fa ? (R.fa[p] - 100) / 40 : -2; c = viridis((v + 2) / 5); const l = 0.5 + 0.5 * sh[p]; c = c.map(x => x * l); }
     else if (mode === 'island') { const k = id[p]; const col = ISL_COLORS[(k + 12) % 12]; c = [parseInt(col.slice(1,3),16), parseInt(col.slice(3,5),16), parseInt(col.slice(5,7),16)]; }
     else if (mode === 'temp') { const T = tsea - lapse * hv / 1000; c = tempColor(T); const l = 0.5 + 0.5 * sh[p]; c = c.map(x => x * l); }
+    else if (mode === 'zone') { const z = R.zone && RS ? RS.zones.palette[R.zone[p]] : [128,128,128]; const l = 0.45 + 0.65 * sh[p]; c = z.map(x => x * l); }
+    else if (mode === 'resource') { const l = 0.2 + 0.7 * sh[p]; c = [200 * l, 200 * l, 200 * l]; const k = R.res ? R.res[p] : 0;
+      if (k && RS) { const q = RS.resources.palette[k]; const a = k === TIMBER ? 0.3 : 0.85; c = c.map((x, t) => x * (1 - a) + q[t] * a); } }
     d[o] = c[0]; d[o+1] = c[1]; d[o+2] = c[2]; d[o+3] = 255;
   }
   // 叠加层直接画进 base（栅格级）
-  if ($('ovWater').checked && R.river && !liveOn()) for (let p = 0; p < rows * cols; p++) { const o = p * 4; if (R.lake && R.lake[p]) { d[o]=30; d[o+1]=80; d[o+2]=200; } else if (R.river[p]) { const v = R.river[p]; d[o]=40; d[o+1]=90+20*v; d[o+2]=200+15*v; } else if (R.stream && R.stream[p]) { d[o]=(d[o]+120)/2; d[o+1]=(d[o+1]+170)/2; d[o+2]=(d[o+2]+255)/2; } }
-  if ($('ovArable').checked && R.arable) for (let p = 0; p < rows * cols; p++) { const a = R.arable[p]; if (!a) continue; const o = p * 4; const c = a === 2 ? [210,150,40] : [240,205,80]; d[o]=(d[o]+c[0]*2)/3; d[o+1]=(d[o+1]+c[1]*2)/3; d[o+2]=(d[o+2]+c[2]*2)/3; }
+  const vec = vecOn();
+  if ($('ovWater').checked && R.river && !liveDraw()) for (let p = 0; p < rows * cols; p++) { const o = p * 4; if (vec && !(R.lake && R.lake[p])) continue; if (R.lake && R.lake[p]) { d[o]=30; d[o+1]=80; d[o+2]=200; } else if (R.river[p]) { const v = R.river[p]; d[o]=40; d[o+1]=90+20*v; d[o+2]=200+15*v; } else if (R.stream && R.stream[p]) { d[o]=(d[o]+120)/2; d[o+1]=(d[o+1]+170)/2; d[o+2]=(d[o+2]+255)/2; } }
+  if ($('ovFlood').checked && R.flood && !liveDraw()) for (let p = 0; p < rows * cols; p++) if (R.flood[p]) { const o = p * 4; d[o]=(d[o]+110)/2; d[o+1]=(d[o+1]+200)/2; d[o+2]=(d[o+2]+190)/2; }
+  if ($('ovArable').checked && R.arable && mode !== 'resource') for (let p = 0; p < rows * cols; p++) { const a = R.arable[p]; if (!a) continue; const o = p * 4; const c = a === 2 ? [210,150,40] : [240,205,80]; d[o]=(d[o]+c[0]*2)/3; d[o+1]=(d[o+1]+c[1]*2)/3; d[o+2]=(d[o+2]+c[2]*2)/3; }
   if ($('ovCliff').checked && R.cliff) for (let p = 0; p < rows * cols; p++) if (R.cliff[p]) { const o = p * 4; d[o]=150; d[o+1]=60; d[o+2]=60; }
   if ($('ovContour').checked) { const step = 100; for (let i = 1; i < rows; i++) for (let j = 1; j < cols; j++) { const p = i * cols + j; if (!h[p] || !h[p-1] || !h[p-cols]) continue; const a = ((h[p]-1)/step)|0; if (a !== (((h[p-1]-1)/step)|0) || a !== (((h[p-cols]-1)/step)|0)) { const o = p*4; d[o]*=0.45; d[o+1]*=0.45; d[o+2]*=0.45; } } }
   const cv = document.createElement('canvas'); cv.width = cols; cv.height = rows; cv.getContext('2d').putImageData(img, 0, 0);
-  base = cv; renderLegend(mode, hmin - 1, hmax - 1);
+  base = cv; base.img = img; base._v = ++layerVersion; renderLegend(mode, hmin - 1, hmax - 1);
 }
 function tempColor(T){ const t = Math.max(0, Math.min(1, (T + 20) / 55)); const s = [[40,60,180],[80,160,220],[200,220,200],[240,170,60],[200,40,40]]; const u = t * 4, i = Math.min(3, u | 0), f = u - i; return [0,1,2].map(c => s[i][c] + (s[i+1][c] - s[i][c]) * f); }
 function renderLegend(mode, hmin, hmax){
@@ -274,7 +441,9 @@ function renderLegend(mode, hmin, hmax){
   if (mode === 'terrain') html = `高程 ${fmt(hmin,0)}–${fmt(hmax,0)} m（云带顶以上）`;
   else if (mode === 'landcover') html = LC_NAMES.slice(1).map((n, k) => `<span><span class="sw" style="background:rgb(${LC_PAL[k+1].join(',')})"></span>${n}</span>`).join('');
   else if (mode === 'slope') html = '坡度 0–35°（viridis）'; else if (mode === 'flowacc') html = '汇流面积 0.01–1000 km²（log）';
-  else if (mode === 'island') html = '每岛一色（0 = 主岛）'; else if (mode === 'temp') html = `当日海拔温度：海面 ${fmt(D.climate.annual.temp_sea_c + ((D.climate.weather?.days?.[day]?.temp_c ?? D.climate.annual.temp_c) - D.climate.annual.temp_c), 1)} °C 减 6 °C/km`;
+  else if (mode === 'island') html = '每岛一色（0 = 主岛）';
+  else if ((mode === 'zone' || mode === 'resource') && D.resources) { const C = mode === 'zone' ? D.resources.zones : D.resources.resources;
+    html = C.classes.slice(1).map((n, k) => `<span><span class="sw" style="background:rgb(${C.palette[k + 1].join(',')})"></span>${n}</span>`).join(''); } else if (mode === 'temp') html = `当日海拔温度：海面 ${fmt(D.climate.annual.temp_sea_c + ((D.climate.weather?.days?.[day]?.temp_c ?? D.climate.annual.temp_c) - D.climate.annual.temp_c), 1)} °C 减 6 °C/km`;
   html += `<span>河 <span class="sw" style="background:#3c78d8"></span> 溪涧 <span class="sw" style="background:#9ac"></span> 湖 <span class="sw" style="background:#1e50c8"></span> 可耕 <span class="sw" style="background:#f0cd50"></span> 梯田 <span class="sw" style="background:#d29628"></span></span>`;
   $('legend').innerHTML = html;
 }
@@ -283,15 +452,24 @@ function draw(){
   if (cv.width !== cv.clientWidth || cv.height !== cv.clientHeight) { cv.width = cv.clientWidth; cv.height = cv.clientHeight; }
   if (!base) buildBase();
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.imageSmoothingEnabled = view.s < 1;
-  ctx.setTransform(view.s, 0, 0, view.s, view.tx, view.ty); ctx.drawImage(base, 0, 0);
-  if (liveOn()) { if (!dayLayer || dayLayerDay !== day) buildDayLayer(day); ctx.drawImage(dayLayer, 0, 0); }
+  ctx.imageSmoothingEnabled = view.s < 1 || ['terrain', 'hill', 'slope', 'temp', 'flowacc'].includes($('baseSel').value);   // 连续量底图拉近时双线性，分类图（地表 / 地形区 / 资源 / 岛号）保持格子
+  const lk = lodK();
+  if (liveDraw() && (!dayLayer || dayLayerDay !== day || dayLayer.lod !== lk)) buildDayLayer(day, lk);
+  const rkey = refineKey();
+  if (view.s >= REFINE_MIN_S && refined && refined.key === rkey) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.putImageData(refined.img, 0, 0); }
+  else {
+    ctx.setTransform(view.s, 0, 0, view.s, view.tx, view.ty); ctx.drawImage(base, 0, 0);
+    if (liveDraw()) ctx.drawImage(dayLayer, 0, 0, dayLayer.width * dayLayer.lod, dayLayer.height * dayLayer.lod);
+    if (view.s >= REFINE_MIN_S && !playing) scheduleRefine();
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (vecOn()) drawRivers(ctx);
   const J = D.island; const pos = i => { const [x, y] = cellXY(i.center_km[0], i.center_km[1]); return [x * view.s + view.tx, y * view.s + view.ty]; };
   if ($('ovLinks').checked) {
     for (const e of J.links) { const a = pos(J.islands[e.a]), b = pos(J.islands[e.b]); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); if (e.kind === 'bridge') { ctx.strokeStyle = 'rgba(255,221,85,.9)'; ctx.lineWidth = 1.5; ctx.setLineDash([]); } else { ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 0.8; ctx.setLineDash([4, 4]); } ctx.stroke(); }
     ctx.setLineDash([]); for (const [a, b] of J.channels) { const p = pos(J.islands[a]), r = pos(J.islands[b]); ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(r[0], r[1]); ctx.strokeStyle = 'rgba(51,204,255,.85)'; ctx.lineWidth = 2.5; ctx.stroke(); }
   }
+  if ($('ovRes').checked && D.resources) drawResources(ctx);
   if ($('ovSettle').checked && D.settlements) drawSettlements(ctx);
   if ($('ovLabels').checked) { ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const i of J.islands) { const p = pos(i); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(p[0] - 9, p[1] - 7, 18, 14); ctx.fillStyle = '#fff'; ctx.fillText(i.id, p[0], p[1]); } }
   // 比例尺
@@ -311,16 +489,19 @@ function draw(){
     const isl = D.island.islands[R.id[p]]; const hv = R.h[p] - 1;
     const dayT = D.climate.weather && D.climate.weather.days ? D.climate.weather.days[day].temp_c : D.climate.annual.temp_c;
     const T = D.climate.annual.temp_sea_c + (dayT - D.climate.annual.temp_c) - 6 * hv / 1000;
-    const water = R.lake && R.lake[p] ? '湖' : (R.river && R.river[p] ? ['','小河','中河','大河'][R.river[p]] : (R.stream && R.stream[p] ? '溪涧' : ''));
-    tip.innerHTML = `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? (R.arable[p] === 2 ? '（梯田）' : '（可耕）') : ''}${water ? ' · ' + water : ''}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
+    let water = R.lake && R.lake[p] ? '湖' : (R.river && R.river[p] ? ['','小河','中河','大河'][R.river[p]] : (R.stream && R.stream[p] ? '溪涧' : ''));
+    if (water && water !== '湖' && R.rw && R.rw[p]) water += `（宽 ${R.rw[p] * 4} m · 深 ${fmt(R.rd[p] / 10, 1)} m${R.stream && R.stream[p] ? '，湿季' : ''}）`;
+    if (!water && R.flood && R.flood[p]) water = liveOn() && dayTab && dayTab.flood[day] ? '漫滩（今日被淹：暴雨 / 风暴）' : '漫滩';
+    const RS = D.resources; const zr = RS && R.zone ? RS.zones.classes[R.zone[p]] : ''; const rs = RS && R.res && R.res[p] ? RS.resources.classes[R.res[p]] : '';
+    tip.innerHTML = `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? (R.arable[p] === 2 ? '（梯田）' : '（可耕）') : ''}${water ? ' · ' + water : ''}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${rs ? ' · 资源 <b>' + rs + '</b>' : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
     tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 14) + 'px';
     $('coords').textContent = `x ${fmt(kmx, 2)} km, y ${fmt(kmy, 2)} km · 格 (${i}, ${j})`;
   });
   cv.addEventListener('mouseleave', () => $('tip').style.display = 'none');
   window.addEventListener('resize', () => draw());
-  ['baseSel','ovWater','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
+  ['baseSel','ovWater','ovVec','ovFlood','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
   $('ovFx').addEventListener('change', () => { if (!$('ovFx').checked) { const f = $('fx'); f.getContext('2d').clearRect(0, 0, f.width, f.height); } });
-  ['ovLinks','ovLabels','ovSettle'].forEach(id => $(id).addEventListener('change', draw));
+  ['ovLinks','ovLabels','ovSettle','ovRes'].forEach(id => $(id).addEventListener('change', draw));
   $('exag').addEventListener('input', () => { $('exagV').textContent = $('exag').value; base = null; draw(); });
   $('btnFit').onclick = () => { fitView(); draw(); }; $('btnMain').onclick = () => zoomIsland(0);
   $('btnGo').onclick = () => { run = $('runIn').value.trim(); node = +$('nodeIn').value; load(); };
@@ -334,11 +515,38 @@ function draw(){
 })();
 
 // ------------------------------------------------------------ 聚落叠加层（settlements.json）
+const RES_MARK = { ore: 's', quarry: 'd', cave: 't', spring: 'o', hotspring: '*', sulfur: 'x', placer: 'p', gravel: '.', clay: '.', peat: '.', guano: '.', floatstone: 'h' };
+const ZOOM_ONLY = new Set(['quarry', 'floatstone', 'spring']);   // 数以百计的小坑 / 露头：拉近才画点（远看靠「资源分布」底图的面）
+function drawResources(ctx){
+  const RS = D.resources; const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];
+  const pal = k => `rgb(${RS.resources.palette[RS.resources.classes.indexOf(k)].join(',')})`;
+  const zoomed = view.s * (10 / R.step) > 14;
+  for (const d of RS.deposits) {
+    if (d.kind === 'timber') continue; const m = RES_MARK[d.kind] || '.'; if ((m === '.' || ZOOM_ONLY.has(d.kind)) && !zoomed) continue;
+    for (const pc of (d.pits || [])) { const [px, py] = cellPos(pc); ctx.fillStyle = pal(d.kind_zh); ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.fillRect(px - 3.5, py - 3.5, 7, 7); ctx.strokeRect(px - 3.5, py - 3.5, 7, 7); }
+    if (d.pits && d.pits.length) { if (zoomed) { const [px, py] = cellPos(d.pits[0]); ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`${d.kind_zh}·${d.subtype}（${d.pits.length} 坑，带 ${fmt(d.area_km2, 1)} km²）`, px + 6, py + 3); } continue; }
+    const [x, y] = cellPos(d.cell); const r = m === '.' ? 3 : 4.5; ctx.fillStyle = pal(d.kind_zh); ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.beginPath();
+    if (m === 's') ctx.rect(x - r, y - r, 2 * r, 2 * r);
+    else if (m === 'd') { ctx.moveTo(x, y - r - 1); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r + 1); ctx.lineTo(x - r, y); ctx.closePath(); }
+    else if (m === 't') { ctx.moveTo(x, y - r - 1); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
+    else if (m === '*' || m === 'h') { for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? r * 0.5 : r + 1; ctx.lineTo(x + rr * Math.cos(a), y + rr * Math.sin(a)); } ctx.closePath(); }
+    else if (m === 'x') { ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.lineWidth = 2.5; ctx.strokeStyle = pal(d.kind_zh); ctx.stroke(); continue; }
+    else ctx.arc(x, y, r, 0, 7);
+    ctx.fill(); ctx.stroke();
+    if (zoomed && m !== '.') { ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(d.subtype ? `${d.kind_zh}·${d.subtype}` : d.kind_zh, x + r + 3, y + 3); }
+  }
+}
 function drawSettlements(ctx){
   const S = D.settlements; const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];
   for (const h of S.hamlets || []) { const p = cellPos(h.cell); ctx.fillStyle = 'rgba(255,200,200,0.9)'; ctx.beginPath(); ctx.arc(p[0], p[1], 2, 0, 7); ctx.fill(); }
   for (const v of S.villages || []) { const p = cellPos(v.cell); const r = 2.5 + Math.sqrt(v.households) * 0.6; ctx.fillStyle = v.seat ? 'rgba(255,215,90,0.95)' : 'rgba(255,255,255,0.9)'; ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.fill(); ctx.stroke(); if (view.s * (10 / R.step) > 14 || v.seat) { ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`${v.name} ${v.households}户`, p[0] + r + 2, p[1] + 3); } }
-  for (const d of S.docks || []) { const p = cellPos(d.cell); ctx.fillStyle = '#3cc8ff'; ctx.fillRect(p[0] - 3, p[1] - 3, 6, 6); }
+  const zoomedS = view.s * (10 / R.step) > 14;
+  if (zoomedS) for (const d of S.landings || []) { const p = cellPos(d.cell); ctx.strokeStyle = d.flat ? '#3cc8ff' : '#ff8c5a'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(p[0], p[1], 3.5, 0, 7); ctx.moveTo(p[0] - 2, p[1] - 2); ctx.lineTo(p[0] - 2, p[1] + 2); ctx.moveTo(p[0] + 2, p[1] - 2); ctx.lineTo(p[0] + 2, p[1] + 2); ctx.moveTo(p[0] - 2, p[1]); ctx.lineTo(p[0] + 2, p[1]); ctx.stroke(); }   // Ⓗ：泊场（橙 = 附近没平地）
+  for (const t of S.towns || []) { const v = S.villages.find(x => x.id === t.village); if (!v) continue; const p = cellPos(v.cell); const r = 4 + Math.sqrt(t.households) * 0.6;
+    ctx.strokeStyle = '#ff9628'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p[0], p[1], r + 2, 0, 7); ctx.stroke();
+    if (zoomedS || t.seat) { ctx.fillStyle = '#ffb45a'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`${t.name} ${t.households}户（管 ${t.served_villages} 村）`, p[0] + r + 4, p[1] - 6); } }
+  for (const x of S.specials || []) { const p = cellPos(x.cell); ctx.fillStyle = '#c85adc'; ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(p[0], p[1] - 5); ctx.lineTo(p[0] + 5, p[1]); ctx.lineTo(p[0], p[1] + 5); ctx.lineTo(p[0] - 5, p[1]); ctx.closePath(); ctx.fill(); ctx.stroke();
+    if (zoomedS || x.kind === '矿镇') { ctx.fillStyle = '#e8b8f0'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`${x.name} ${x.households}户`, p[0] + 7, p[1] + 3); } }
   for (const b of S.bridgeheads || []) { const p = cellPos(b.cell); ctx.fillStyle = '#ffe650'; ctx.fillRect(p[0] - 2, p[1] - 2, 4, 4); }
   for (const w of (S.cisterns || []).concat(S.intakes || [])) { const p = cellPos(w.cell); ctx.fillStyle = '#5078ff'; ctx.beginPath(); ctx.moveTo(p[0], p[1] - 4); ctx.lineTo(p[0] + 4, p[1] + 3); ctx.lineTo(p[0] - 4, p[1] + 3); ctx.closePath(); ctx.fill(); }
   for (const o of S.outposts || []) { const p = cellPos(o.cell); ctx.strokeStyle = '#7fe0a0'; ctx.lineWidth = 1.5; ctx.strokeRect(p[0] - 5, p[1] - 5, 10, 10); }
@@ -347,7 +555,7 @@ function drawSettlements(ctx){
   if (S.city) { const v = S.villages.find(x => x.id === S.city.seat_village); if (v) { const p = cellPos(v.cell); ctx.strokeStyle = '#ffd75a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(p[0], p[1], 6 + Math.sqrt(S.city.inner_households) * 0.35, 0, 7); ctx.stroke(); ctx.fillStyle = '#ffd75a'; ctx.font = 'bold 12px sans-serif'; ctx.fillText(`${S.city.role} ${S.city.households} 户`, p[0] + 14, p[1] - 10); }
     for (const gid of S.city.guo_villages || []) { const g2 = S.villages.find(x => x.id === gid); if (g2) { const p = cellPos(g2.cell); ctx.strokeStyle = '#ffd75a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p[0], p[1], 5 + Math.sqrt(g2.households) * 0.6, 0, 7); ctx.stroke(); } }
     if (S.city.altar_cell) { const p = cellPos(S.city.altar_cell); star(p[0], p[1], 7, '#e6c8ff'); ctx.fillStyle = '#e6c8ff'; ctx.font = '11px sans-serif'; ctx.fillText('祭台', p[0] + 9, p[1] + 4); }
-    const gd = S.docks.find(d => d.id === S.city.granary_dock); if (gd) { const p = cellPos(gd.cell); ctx.strokeStyle = '#ffd75a'; ctx.lineWidth = 2; ctx.strokeRect(p[0] - 6, p[1] - 6, 12, 12); ctx.fillStyle = '#ffd75a'; ctx.font = '11px sans-serif'; ctx.fillText('仓城·主码头', p[0] + 9, p[1] + 4); } }
+    const gd = (S.landings || []).find(d => d.id === S.city.granary_landing); if (gd) { const p = cellPos(gd.cell); ctx.strokeStyle = '#ffd75a'; ctx.lineWidth = 2; ctx.strokeRect(p[0] - 6, p[1] - 6, 12, 12); ctx.fillStyle = '#ffd75a'; ctx.font = '11px sans-serif'; ctx.fillText('仓城·主泊场', p[0] + 9, p[1] + 4); } }
 }
 
 // ------------------------------------------------------------ 季相与水情（随日期变化的地貌）
@@ -355,6 +563,7 @@ function drawSettlements(ctx){
 let dayTab = null, dayLayer = null, dayLayerDay = -1, dayStats = null, cellStatic = null;
 const NBIN = 24, LAPSE = 6.0;
 function liveOn(){ return $('ovLive').checked && !!(D && D.climate.weather && D.climate.weather.days); }
+function liveDraw(){ return liveOn() && !['zone', 'resource'].includes($('baseSel').value); }   // 地形区 / 资源底图上不盖季相层（河湖由底图自己画）
 function smooth(t){ t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
 function buildDayTables(){
   if (!D.climate.weather || !D.climate.weather.days) { dayTab = null; return; }
@@ -378,29 +587,35 @@ function buildDayTables(){
   }
   let gdd = 0; for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) { const T = Trim[d]; if (T < 3) gdd = Math.max(0, gdd - 20); else gdd += Math.max(0, T - 3) * (0.4 + 0.6 * Math.min(1, wet[d])); if (gdd >= 1200) gdd = 0; if (pass) crop[d] = gdd / 1200; }
   dayTab = { snow, api, Trim, green, wet, flow, snowLine, crop, frozen, high, flood, hmin, hmax, binH, fogH: 120 + 0.25 * Math.max(0, 800 - peak) };
-  // 每格的静态索引：高程箱、植被类、河岸漫滩（河两格内且坡 < 3°）
+  // 每格的静态索引：高程箱、植被类、河岸漫滩（有生成器的 floodplain 就用它；旧产物退回「河两格内且坡 < 3°」的估计）
   const { rows, cols } = R; const bin = new Uint8Array(rows * cols), veg = new Uint8Array(rows * cols), fp = new Uint8Array(rows * cols);
   for (let p = 0; p < rows * cols; p++) { if (!R.h[p]) continue; const hv = R.h[p] - 1; bin[p] = Math.max(0, Math.min(NBIN - 1, ((hv - hmin) / (hmax - hmin) * NBIN) | 0)); const lc = R.lc ? R.lc[p] : 0; veg[p] = lc === 4 ? 1 : (lc === 5 ? 2 : ((lc === 6 || lc === 3) ? 3 : ((lc === 7 || lc === 8) ? 4 : 0))); }
-  if (R.river && R.slope) for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) { const p = i * cols + j; if (!R.river[p]) continue; for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= rows || jj >= cols) continue; const q = ii * cols + jj; if (R.h[q] && R.slope[q] / 4 < 3 && !R.river[q]) fp[q] = 1; } }
+  if (R.flood) { for (let p = 0; p < rows * cols; p++) fp[p] = R.flood[p] ? 1 : 0; }
+  else if (R.river && R.slope) for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) { const p = i * cols + j; if (!R.river[p]) continue; for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= rows || jj >= cols) continue; const q = ii * cols + jj; if (R.h[q] && R.slope[q] / 4 < 3 && !R.river[q]) fp[q] = 1; } }
   cellStatic = { bin, veg, fp };
 }
 const VEG_DORMANT = [[0,0,0], [112,92,58], [150,130,80], [190,170,110]], VEG_LUSH = [[0,0,0], [36,118,44], [108,150,60], [150,200,90]];
-function buildDayLayer(d){
+// 分级：一格不到约 0.7 像素时隔 k 格取样（k = 2 的幂，≤ 8），画的时候再放大 k 倍——拉远时省 k² 的计算，播放不卡
+function lodK(){ return Math.max(1, Math.min(8, 2 ** Math.round(Math.log2(1 / Math.max(view.s, 1e-3))))); }   // 一格约 0.7 px 起降一级
+function buildDayLayer(d, k = 1){
   const { rows, cols, h } = R; if (!dayTab) return; const T = dayTab, S = cellStatic; const days = D.climate.weather.days; const w = days[d];
-  const img = new ImageData(cols, rows); const px = img.data;
+  const cw = Math.ceil(cols / k), ch = Math.ceil(rows / k);
+  const img = new ImageData(cw, ch); const px = img.data;
+  const vec = vecOn(), waterOn = $('ovWater').checked;
   const gr = T.green[d], crop = T.crop[d], flow = T.flow[d], frozen = T.frozen[d], high = T.high[d], flood = T.flood[d];
   const fog = w.type === '云海漫顶'; const rim = D.island.islands[0].rim_m; const fogTop = rim + T.fogH;
   const cropCol = crop < 0.15 ? [150, 120, 80] : (crop < 0.75 ? [60 + 40 * (1 - crop), 150 + 40 * Math.min(1, crop * 2), 50] : [225, 190, 70]);
   let snowCells = 0, land = 0;
-  for (let p = 0; p < rows * cols; p++) {
-    if (!h[p]) continue; land++; const o = p * 4; const hv = h[p] - 1;
+  for (let ci = 0; ci < ch; ci++) for (let cj = 0; cj < cw; cj++) {
+    const p = (ci * k) * cols + cj * k;
+    if (!h[p]) continue; land++; const o = (ci * cw + cj) * 4; const hv = h[p] - 1;
     let r = 0, g = 0, b = 0, al = 0;
     const isLake = R.lake && R.lake[p], rv = R.river ? R.river[p] : 0, st = R.stream ? R.stream[p] : 0;
-    if ($('ovWater').checked && (isLake || rv || (st && flow >= 0.5) || (flood && S.fp[p]))) {
+    if (waterOn && (isLake || (!vec && rv) || (!vec && st && flow >= 0.5) || (flood && S.fp[p]))) {
       if (frozen) { r = 215; g = 230; b = 250; al = 255; }
       else if (isLake) { r = 30; g = 80; b = 200; al = 255; }
-      else if (rv) { const lv = Math.min(3, rv + (high ? 1 : 0)); r = 40; g = 90 + 20 * lv; b = 200 + 15 * lv; al = 255; }
-      else if (flood && S.fp[p]) { r = 60; g = 110; b = 210; al = 200; }
+      else if (rv && !vec) { const lv = Math.min(3, rv + (high ? 1 : 0)); r = 40; g = 90 + 20 * lv; b = 200 + 15 * lv; al = 255; }
+      else if (flood && S.fp[p]) { r = 120; g = 150; b = 175; al = 120; }   // 漫滩被淹：半透明浑水，看得见底下的地，和河道的深蓝区分
       else { r = 120; g = 170; b = 255; al = 150 * Math.min(1, flow); }
     } else {
       const sp = T.snow[d * NBIN + S.bin[p]];
@@ -411,8 +626,8 @@ function buildDayLayer(d){
     if (fog && hv < fogTop) { const f = 0.8 * (1 - Math.max(0, hv - rim) / T.fogH); r = r * (1 - f) + 240 * f; g = g * (1 - f) + 240 * f; b = b * (1 - f) + 248 * f; al = Math.max(al, 255 * f); }
     px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = al;
   }
-  const cv = dayLayer && dayLayer.width === cols && dayLayer.height === rows ? dayLayer : document.createElement('canvas'); cv.width = cols; cv.height = rows; cv.getContext('2d').putImageData(img, 0, 0);
-  dayLayer = cv; dayLayerDay = d; dayStats = { snowFrac: land ? snowCells / land : 0 };
+  const cv = dayLayer && dayLayer.width === cw && dayLayer.height === ch ? dayLayer : document.createElement('canvas'); cv.width = cw; cv.height = ch; cv.getContext('2d').putImageData(img, 0, 0);
+  dayLayer = cv; dayLayer.img = img; dayLayer.lod = k; dayLayer._v = ++layerVersion; dayLayerDay = d; dayStats = { snowFrac: land ? snowCells / land : 0 };
 }
 // ---- 天气特效（屏幕空间，每帧）
 let particles = [], fogBlobs = [], fxLast = 0;
@@ -490,7 +705,7 @@ function drawDayChart(){
 }
 function renderDay(){
   const days = D.climate.weather.days; const d = days[day]; if (!d) return; drawDayChart();
-  if (dayTab && liveOn()) { if (!dayLayer || dayLayerDay !== day) buildDayLayer(day); const st = dayStats; const T = dayTab;
+  if (dayTab && liveOn()) { if (!dayLayer || dayLayerDay !== day) buildDayLayer(day, lodK()); const st = dayStats; const T = dayTab;
     const riverState = T.frozen[day] ? '结冰' : (T.flood[day] ? '<span style="color:#8fb8de">漫滩</span>' : (T.high[day] ? '涨水' : '平水'));
     $('dayState').innerHTML = `雪线 ${T.snowLine[day] > T.hmax ? '无雪' : fmt(T.snowLine[day], 0) + ' m'}${st ? `（积雪覆盖陆地 ${fmt(st.snowFrac * 100, 0)}%）` : ''} · 岸缘气温 ${fmt(T.Trim[day], 1)} °C · 土壤湿度 ${fmt(T.wet[day], 2)} · 植被 ${fmt(T.green[day], 2)} · 作物 ${['休耕', '出苗', '生长', '将熟', '待收'][Math.min(4, (T.crop[day] * 5) | 0)]} · 溪涧 ${T.flow[day] >= 0.5 ? '有水' : '<span style="color:#e0a060">断流</span>'} · 河 ${riverState}${d.type === '云海漫顶' ? ' · <span style="color:#e6e1f2">云海漫上岸缘 ' + fmt(T.fogH, 0) + ' m</span>' : ''}`;
   } else $('dayState').textContent = '';
@@ -501,6 +716,8 @@ function renderDay(){
     <div>${isSnow(d.type) ? '降雪（水当量）' : '降水'} ${fmt(d.precip_mm, 1)} mm · 气温 ${fmt(d.temp_c, 1)} °C（峰顶）/ ${fmt(d.temp_rim_c ?? (dayTab ? dayTab.Trim[day] : d.temp_c), 1)} °C（岸缘）· 风 ${fmt(d.wind_ms, 1)} m/s 自 ${d.wind_from_deg}° ${arrow} · ${d.sailable ? '<span style="color:#9be0b6">可出航</span>' : '<span style="color:#f0a2a2">禁航</span>'}</div>
     <div class="small">季中气候：${C.seasons[d.season].name} 温 ${fmt(C.seasons[d.season].temp_c, 1)} °C，季雨 ${fmt(C.seasons[d.season].precip_mm, 0)} mm，风暴 ${fmt(C.seasons[d.season].storm, 2)}，窗口 ${fmt(C.seasons[d.season].window, 2)}</div>`;
 }
+if (q.get('base')) $('baseSel').value = q.get('base');   // 可带 &base=zone|resource|… &res=1（资源点位）直接打开某图层
+if (q.get('res') === '1') $('ovRes').checked = true;
 load();
 </script>
 </body>

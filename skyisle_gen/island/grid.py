@@ -1,6 +1,7 @@
 """岛群生成器的栅格工具：局部（非周期）分形噪声、连通分量、形态学、重采样、PNG 写出。全部 numpy，不引入 scipy。"""
 from __future__ import annotations
 
+import math
 import struct
 import zlib
 from pathlib import Path
@@ -169,6 +170,44 @@ def distance_bands(mask: np.ndarray, max_iter: int) -> np.ndarray:
         if cur.all():
             break
     return d
+
+
+def nearest_propagate(seed: np.ndarray, max_iter: int, step_m: float = 1.0, within: np.ndarray | None = None):
+    """从种子格向外扩张 max_iter 圈：返回 (到最近种子的倒角距离（step_m 为单位，直 1 / 斜 √2；超出记 inf），最近种子的扁平下标（无则 −1）)。
+    `within` 限定只在其为真的格里扩张（例如只在本岛陆地上）。河谷剖面、河道加宽按它取最近河床的高程与河宽。"""
+    H, W = seed.shape
+    seed = np.asarray(seed, dtype=bool)
+    dist = np.where(seed, 0.0, np.inf)
+    src = np.where(seed, np.arange(H * W).reshape(H, W), -1)
+    ok = np.ones((H, W), dtype=bool) if within is None else np.asarray(within, dtype=bool) | seed
+    steps = [(di, dj, step_m * (math.sqrt(2.0) if di and dj else 1.0)) for di, dj in N8]
+    for _ in range(int(max_iter)):
+        changed = False
+        for di, dj, s in steps:
+            cand = shift(dist, di, dj, np.inf) + s
+            better = ok & (cand < dist - 1e-9)
+            if better.any():
+                changed = True
+                dist = np.where(better, cand, dist)
+                src = np.where(better, shift(src, di, dj, -1), src)
+        if not changed:
+            break
+    return dist, src
+
+
+def window_extrema(a: np.ndarray, r: int, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(2r+1)² 方窗内的最大 / 最小值（只看 mask 内的格；可分离：先行后列）。用于局地起伏 = 最大 − 最小。"""
+    hi = np.where(mask, a, -np.inf)
+    lo = np.where(mask, a, np.inf)
+    for axis in (0, 1):
+        h2, l2 = hi.copy(), lo.copy()
+        for k in range(1, int(r) + 1):
+            for s in (k, -k):
+                di, dj = (s, 0) if axis == 0 else (0, s)
+                h2 = np.maximum(h2, shift(hi, di, dj, -np.inf))
+                l2 = np.minimum(l2, shift(lo, di, dj, np.inf))
+        hi, lo = h2, l2
+    return hi, lo
 
 
 # ---------------------------------------------------------------- 重采样

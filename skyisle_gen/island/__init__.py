@@ -214,7 +214,9 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     g = build_terrain(ctx, node, c, inp, res_m=res_m, log=log)
     if steps >= 2:
         from .hydro import build_hydro
+        from .resources import build_resources
         build_hydro(ctx, node, c, g, log=log)
+        build_resources(ctx, node, c, g, log=log)
     if steps >= 3:
         from .climate import build_climate, daily_curves
         build_climate(ctx, node, c, g, log=log)
@@ -234,6 +236,10 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     if "settle" in g:
         from .output import write_settlements
         write_settlements(out, g)
+    if "resources" in g:
+        from .resources import write_preview_resources, write_resources
+        write_resources(out, g)
+        write_preview_resources(out, g)
     p = write_preview(out, g)
     write_preview_main(out, g)
     log(f"[island {node}] 完成 {time.perf_counter() - t0:.1f} s → {out}")

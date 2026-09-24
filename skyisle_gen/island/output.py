@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -9,16 +10,71 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.colors import LightSource  # noqa: E402
+from matplotlib.colors import LightSource, ListedColormap  # noqa: E402
 
 from .grid import write_png16, write_png8  # noqa: E402
 
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Zen Hei", "DejaVu Sans"]  # Windows 前两个，Linux 后三个
 plt.rcParams["axes.unicode_minus"] = False
 
+RIVER_CMAP = ListedColormap([(0.25, 0.5, 1.0), (0.1, 0.32, 0.9), (0.03, 0.15, 0.7)])   # 小 / 中 / 大河（出图用，深蓝，压得住可耕地的黄）
 LANDCOVER_CLASSES = ["虚空", "崖缘", "裸岩", "高山草甸", "林地", "灌丛", "草坡", "可耕地", "梯田", "湿地", "河道", "湖"]
 LANDCOVER_PALETTE = [(20, 24, 40), (90, 80, 75), (150, 150, 150), (170, 200, 120), (40, 110, 50), (120, 150, 70),
                      (190, 200, 110), (230, 200, 90), (210, 170, 60), (90, 160, 150), (40, 90, 200), (30, 60, 170)]
+
+
+def _smooth_line(P: np.ndarray, n: int = 4) -> np.ndarray:
+    """拉普拉斯松弛（首尾不动）+ 两次 Chaikin 切角：抹掉 D8 的 45° 台阶。P = [[行, 列, 宽], ...]。与调试台同口径。"""
+    Q = P.astype(float).copy()
+    for _ in range(n):
+        if Q.shape[0] > 2:
+            Q[1:-1, :2] = 0.25 * Q[:-2, :2] + 0.5 * Q[1:-1, :2] + 0.25 * Q[2:, :2]
+    for _ in range(2):
+        if Q.shape[0] < 3:
+            break
+        a, b = Q[:-1], Q[1:]
+        mid = np.empty((2 * a.shape[0], Q.shape[1]))
+        mid[0::2] = 0.75 * a + 0.25 * b
+        mid[1::2] = 0.25 * a + 0.75 * b
+        Q = np.vstack([Q[:1], mid, Q[-1:]])
+    return Q
+
+
+def _draw_rivers(ax, g: dict, to_xy, cell_px: float, sel_island: int | None = None, streams: bool = True) -> None:
+    """河道矢量（rivers 中心线）：平滑折线，线宽 = 河宽 × 显示比例（points），小 / 中 / 大河有最细线宽。
+    to_xy(行, 列) → 数据坐标；cell_px = 一格在图上多少 points。"""
+    from matplotlib.collections import LineCollection
+    lines = g.get("river_lines")
+    if not lines:
+        return
+    res_m = g["json"]["raster"]["res_m"]
+    cols = {0: (0.47, 0.67, 1.0, 0.55), 1: (0.25, 0.5, 0.91, 1.0), 2: (0.16, 0.39, 0.85, 1.0), 3: (0.09, 0.28, 0.75, 1.0)}
+    min_w = {0: 0.35, 1: 0.9, 2: 1.2, 3: 1.5}
+    for want_stream in ((True, False) if streams else (False,)):
+        segs, lws, cs = [], [], []
+        for L in lines:
+            if sel_island is not None and L["island"] != sel_island:
+                continue
+            P = np.array(L["pts"], dtype=float)
+            lvl = int(P[:, 3].max())
+            if (lvl == 0) != want_stream:
+                continue
+            Q = _smooth_line(P[:, :3])
+            x, y = to_xy(Q[:, 0], Q[:, 1])
+            xy = np.stack([x, y], axis=1)
+            w = 0.5 * (Q[:-1, 2] + Q[1:, 2]) / res_m * cell_px
+            segs.extend(np.stack([xy[:-1], xy[1:]], axis=1))
+            lws.extend(np.maximum(w, min_w[lvl]).tolist())
+            cs.extend([cols[lvl]] * (Q.shape[0] - 1))
+        if segs:
+            ax.add_collection(LineCollection(segs, linewidths=lws, colors=cs, capstyle="round", joinstyle="round", zorder=4))
+
+
+def _cell_points(ax, n_cols: float) -> float:
+    """当前轴上一格多少 points（按轴宽 / 显示的列数）。"""
+    fig = ax.figure
+    w_in = ax.get_position().width * fig.get_figwidth()
+    return w_in * 72.0 / max(1.0, n_cols)
 
 
 def write_terrain(out: Path, g: dict) -> None:
@@ -29,7 +85,8 @@ def write_terrain(out: Path, g: dict) -> None:
     write_png16(out / "height.png", np.round(hv * scale))
     g["json"]["raster"]["height_png_scale_m_per_unit"] = round(1.0 / scale, 6)
     arrays = {"height": h.astype(np.float32), "island_id": g["island_id"].astype(np.int16), "cliff": g["cliff"]}
-    for k in ("flowacc_km2", "river", "lake", "landcover", "arable", "slope_deg", "stream"):
+    for k in ("flowacc_km2", "river", "lake", "landcover", "arable", "slope_deg", "stream", "river_width_m", "river_depth_m", "floodplain",
+              "terrain_zone", "resource"):
         if k in g:
             arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)
@@ -38,9 +95,16 @@ def write_terrain(out: Path, g: dict) -> None:
         water = np.zeros_like(g["landcover"], dtype=np.uint8)
         water[g["stream"] > 0] = 1
         water[g["river"] > 0] = 1 + g["river"][g["river"] > 0]
+        if "floodplain" in g:
+            water[g["floodplain"]] = 6
         water[g["lake"]] = 5
-        write_png8(out / "water.png", water, [(0, 0, 0), (120, 170, 255), (80, 130, 240), (50, 100, 220), (20, 70, 200), (30, 60, 170)])
+        write_png8(out / "water.png", water, [(0, 0, 0), (120, 170, 255), (80, 130, 240), (50, 100, 220), (20, 70, 200), (30, 60, 170), (150, 200, 190)])
         write_png8(out / "arable.png", g["arable"] * 120, None)
+    if "river_lines" in g:
+        # 河道中心线（矢量）：点 = [行, 列, 河宽 m, 级别 0 溪涧 / 1–3 小中大河]，群栅格坐标（格心 = 整数 + 0.5）
+        (out / "rivers.json").write_text(json.dumps({"note": "河道中心线：每条从源头顺流到汇流点或出口；点 = [行, 列, 河宽 m, 级别（0 = 季节性溪涧）]，群栅格坐标",
+                                                     "res_m": g["json"]["raster"]["res_m"], "lines": g["river_lines"]},
+                                                    ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (out / "island.json").write_text(json.dumps(g["json"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
 
@@ -81,8 +145,12 @@ def _lens_panel(ax, g: dict):
         ar = np.where(g["arable"] > 0, 1.0, np.nan)
         ax.imshow(ar, extent=extent, origin="upper", cmap="autumn", alpha=0.55, vmin=0, vmax=1, interpolation="nearest")
     if "river" in g:
-        rv = np.where(g["river"] > 0, g["river"].astype(float), np.nan)
-        ax.imshow(rv, extent=extent, origin="upper", cmap="Blues", alpha=0.95, vmin=-1, vmax=3, interpolation="nearest")
+        if "river_lines" in g:
+            rk = res_m / 1000.0
+            _draw_rivers(ax, g, lambda i, j: (x0 + j * rk, y0 - i * rk), _cell_points(ax, W), streams=False)
+        else:
+            rv = np.where(g["river"] > 0, g["river"].astype(float), np.nan)
+            ax.imshow(rv, extent=extent, origin="upper", cmap=RIVER_CMAP, alpha=0.95, vmin=0.5, vmax=3.5, interpolation="nearest")
         lk = np.where(g["lake"], 1.0, np.nan)
         ax.imshow(lk, extent=extent, origin="upper", cmap="winter", alpha=0.9, vmin=0, vmax=1, interpolation="nearest")
     if "settle" in g:
@@ -91,6 +159,13 @@ def _lens_panel(ax, g: dict):
         vs = [6 + 0.25 * r["households"] for r in S["villages"]]
         ax.scatter(vx, vy, s=vs, c="white", edgecolors="black", linewidths=0.5, zorder=5)
         ax.scatter([r["km"][0] for r in S["hamlets"]], [r["km"][1] for r in S["hamlets"]], s=5, c="#ffc8c8", edgecolors="black", linewidths=0.3, zorder=5)
+        T = S.get("towns", [])
+        if T:
+            ax.scatter([t["km"][0] for t in T], [t["km"][1] for t in T], s=[30 + 0.4 * t["households"] for t in T], facecolors="none",
+                       edgecolors="#ff9628", linewidths=1.6, zorder=6)
+        X = S.get("specials", [])
+        if X:
+            ax.scatter([x["km"][0] for x in X], [x["km"][1] for x in X], s=18, marker="D", c="#c85adc", edgecolors="black", linewidths=0.4, zorder=6)
     isl = J["islands"]
     cx = {i["id"]: i["center_km"] for i in isl}
     for e in J["links"]:
@@ -190,8 +265,15 @@ def write_preview_main(out: Path, g: dict) -> Path:
     if "river" in g:
         rv = g["river"][sl][sub].astype(float)
         st = g["stream"][sl][sub].astype(float)
-        ax.imshow(np.where(st > 0, 1.0, np.nan), cmap="Blues", vmin=0, vmax=2, alpha=0.5, interpolation="nearest")
-        ax.imshow(np.where(rv > 0, rv, np.nan), cmap="Blues", vmin=-1, vmax=3, alpha=1.0, interpolation="nearest")
+        if "floodplain" in g:
+            ax.imshow(np.where(g["floodplain"][sl][sub], 1.0, np.nan), cmap="GnBu", vmin=0, vmax=2, alpha=0.45, interpolation="nearest")
+        if "river_lines" in g:
+            # 子图像素坐标 = 群栅格 (行, 列) − 左上角偏移（imshow 的格心在整数处，格子占 [−0.5, +0.5]）
+            oi, oj = sl[0].start + sub[0].start, sl[1].start + sub[1].start
+            _draw_rivers(ax, g, lambda i, j: (j - oj - 0.5, i - oi - 0.5), _cell_points(ax, h.shape[1]), sel_island=0)
+        else:
+            ax.imshow(np.where(st > 0, 1.0, np.nan), cmap="Blues", vmin=0, vmax=2, alpha=0.5, interpolation="nearest")
+            ax.imshow(np.where(rv > 0, rv, np.nan), cmap=RIVER_CMAP, vmin=0.5, vmax=3.5, alpha=1.0, interpolation="nearest")
         ax.imshow(np.where(g["lake"][sl][sub], 1.0, np.nan), cmap="winter", vmin=0, vmax=1, alpha=0.95, interpolation="nearest")
         ar = g["arable"][sl][sub]
         ax.contour(ar > 0, levels=[0.5], colors="#ffdd33", linewidths=0.6)
@@ -217,10 +299,11 @@ def write_preview_main(out: Path, g: dict) -> Path:
     return p
 
 
-SETTLE_PALETTE = [(0, 0, 0), (230, 200, 90), (210, 170, 60), (255, 255, 255), (255, 200, 200), (60, 200, 255), (255, 230, 80), (80, 120, 255), (120, 200, 255)]
+SETTLE_PALETTE = [(0, 0, 0), (230, 200, 90), (210, 170, 60), (255, 255, 255), (255, 200, 200), (60, 200, 255), (255, 230, 80), (80, 120, 255), (120, 200, 255),
+                  (255, 150, 40), (200, 90, 220)]   # 9 镇 / 10 专业聚落
 
 
 def write_settlements(out: Path, g: dict) -> None:
-    """settlements.json + settlements.png（8 位索引：1 田块 / 2 梯田 / 3 村 / 4 散户 / 5 码头 / 6 桥头 / 7 蓄水池 / 8 取水点）。"""
+    """settlements.json + settlements.png（8 位索引：1 田块 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 6 桥头 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落）。"""
     write_png8(out / "settlements.png", g["settle_raster"], SETTLE_PALETTE)
     (out / "settlements.json").write_text(json.dumps(g["settle"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")

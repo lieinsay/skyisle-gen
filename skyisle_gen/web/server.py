@@ -10,7 +10,7 @@ GET  /api/config?run=         生效配置
 GET  /api/check?run=          验收报告
 GET  /api/ninegrid?run=&region=   九格表 markdown
 GET  /api/path?run=&a=&b=&mode=   最优路径逐跳
-GET  /api/island?run=&node=[&year=0][&force=1]   岛群生成器（第三层）：按需生成并返回摘要；/api/island/preview 取 preview.png
+GET  /api/island?run=&node=[&year=0][&force=1]   岛群生成器（第三层）：按需生成并返回摘要；/api/island/preview 取 preview.png（&main=1 主岛放大、&res=1 资源图）
 GET  /island.html?run=&node=[&year=]   岛群调试台（2D 图层、四季、逐日天气、改年份 / 参数重生成）
 GET  /api/island/stats?run=            全量季型统计（islands/season_stats.json，没有就算，8000 群约 5 s）
 GET  /api/island/data?run=&node=&year=   island.json + climate.json（含逐日天气）
@@ -186,7 +186,8 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/api/island":
                 self._json(self._island(q["run"], int(q["node"]), int(q.get("year", 0)), q.get("force") == "1"))
             elif p == "/api/island/preview":
-                f = self.app.out_root / q["run"] / "islands" / str(int(q["node"])) / ("preview_main.png" if q.get("main") == "1" else "preview.png")
+                name = "preview_main.png" if q.get("main") == "1" else ("preview_resources.png" if q.get("res") == "1" else "preview.png")
+                f = self.app.out_root / q["run"] / "islands" / str(int(q["node"])) / name
                 self._send(f.read_bytes(), "image/png") if f.exists() else self._send(b"not found", "text/plain", 404)
             else:
                 self._send(b"not found", "text/plain", 404)
@@ -247,7 +248,7 @@ class Handler(BaseHTTPRequestHandler):
     def _island_data(self, rid, node, year, force=False, sets=None):
         ctx = self.app.ctx(rid)
         out = ctx.out_dir / "islands" / str(node)
-        need = force or not all((out / f).exists() for f in ("island.json", "climate.json", "terrain.npz", "preview_main.png", "settlements.json", f"weather_y{year}.csv"))
+        need = force or not all((out / f).exists() for f in ("island.json", "climate.json", "terrain.npz", "preview_main.png", "settlements.json", "resources.json", "rivers.json", f"weather_y{year}.csv"))
         if not need:
             C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
             need = C.get("weather", {}).get("year") != year or not isinstance(C.get("weather", {}).get("days"), list)
@@ -258,7 +259,10 @@ class Handler(BaseHTTPRequestHandler):
         J = json.loads((out / "island.json").read_text(encoding="utf-8"))
         C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
         S = json.loads((out / "settlements.json").read_text(encoding="utf-8")) if (out / "settlements.json").exists() else None
-        return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "settlements": S, "island_cfg": ctx.cfg.get("island", {}),
+        RS = json.loads((out / "resources.json").read_text(encoding="utf-8")) if (out / "resources.json").exists() else None
+        RV = json.loads((out / "rivers.json").read_text(encoding="utf-8")) if (out / "rivers.json").exists() else None
+        return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "settlements": S, "resources": RS, "rivers": RV, "island_cfg": ctx.cfg.get("island", {}),
+                "preview_res": f"/api/island/preview?run={rid}&node={node}&res=1&t={int(time.time())}",
                 "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
                 "preview_main": f"/api/island/preview?run={rid}&node={node}&main=1&t={int(time.time())}"}
 
@@ -281,9 +285,13 @@ class Handler(BaseHTTPRequestHandler):
         out = {"rows": int(hq.shape[0]), "cols": int(hq.shape[1]), "step": step,
                "height_u16": base64.b64encode(hq.tobytes()).decode("ascii"),
                "island_id_i16": base64.b64encode(pick(arrs["island_id"]).astype(np.int16).tobytes()).decode("ascii")}
-        for k, dt in (("landcover", np.uint8), ("river", np.uint8), ("stream", np.uint8), ("lake", np.uint8), ("arable", np.uint8), ("cliff", np.uint8)):
+        for k, dt in (("landcover", np.uint8), ("river", np.uint8), ("stream", np.uint8), ("lake", np.uint8), ("arable", np.uint8), ("cliff", np.uint8),
+                      ("floodplain", np.uint8), ("terrain_zone", np.uint8), ("resource", np.uint8)):
             if k in arrs:
                 out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
+        if "river_width_m" in arrs:   # 河宽 / 4 m、水深 × 10（u8：到 1020 m / 25.5 m）
+            out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_width_m"]) / 4.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+            out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_depth_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "slope_deg" in arrs:
             out["slope_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["slope_deg"]) * 4), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "flowacc_km2" in arrs:
