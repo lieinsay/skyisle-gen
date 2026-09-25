@@ -63,7 +63,9 @@ def test_island_deterministic_and_consistent(small_ctx):
     c = J1["constraints"]
     assert abs(c["area_km2"]["actual"] - c["area_km2"]["target"]) <= 0.02 * c["area_km2"]["target"]
     assert abs(c["main_area_km2"]["actual"] - c["main_area_km2"]["target"]) <= 0.02 * c["main_area_km2"]["target"]
-    assert abs(c["height_m"]["actual"] - c["height_m"]["target"]) <= 0.01 * c["height_m"]["target"]
+    # IS-surface：height_m 是主岛台面（陆地高程中位数），峰在它之上按岛龄 × 面积长出来
+    assert abs(c["height_m"]["actual"] - c["height_m"]["target"]) <= max(10.0, 0.02 * c["height_m"]["target"])
+    assert c["peak_m"]["actual"] > c["height_m"]["actual"]
     if STEPS >= 2:
         assert abs(c["arable_frac"]["actual"] - c["arable_frac"]["target"]) < 0.005      # IS-arable
         assert c["has_river"]["actual"] == c["has_river"]["target"]                       # IS-river
@@ -203,6 +205,19 @@ def test_label_components_runs():
     assert n4 == 3 and n8 == 2
     assert lab4[0, 0] == lab4[1, 2]
     assert lab8[3, 4] == lab8[4, 5] and lab4[3, 4] != lab4[4, 5]
+
+
+def test_label_by_island_does_not_cross_islands():
+    """两岛斜对角贴着（布局允许一格的岸距）：8 邻域的田块 / 林场不能并到别的岛上（seed 2026 #5246、seed 7 #418）。"""
+    from skyisle_gen.island.grid import label_by_island, label_components
+    iid = np.full((4, 4), -1, dtype=np.int16)
+    iid[0:2, 0:2] = 0
+    iid[2:4, 2:4] = 1
+    m = iid >= 0
+    _, n_plain = label_components(m, 8)
+    lab, n = label_by_island(m, iid, 8)
+    assert n_plain == 1 and n == 2
+    assert lab[0, 0] == lab[1, 1] != lab[2, 2] == lab[3, 3]
 
 
 def test_season_type_table():

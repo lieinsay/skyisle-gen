@@ -104,7 +104,7 @@ land_frac_sigma = 0.5         # f 的对数正态抖动（群与群之间的陆�
 # 可用地率（R9）：陆地里能耕的比例。只是一个标量，不生成岛内地形（第三层按需生成）。
 arable_frac_sigma = 0.35      # 对数正态抖动（均值 = shared.scale.arable_frac_mean）
 arable_frac_range = [0.03, 0.30]  # 夹断：火山岩岛 ~0.03，冲积平坦岛群 ~0.30
-height_scale_m = 1500.0
+height_scale_m = 1500.0       # height_m 的口径：主岛「台面」= 陆地高程中位数（④ 的岛上气温在这个高度），不是峰高；峰由第三层按岛龄 × 面积长出（DESIGN-NOTES 四点十九）
 height_noise_cells = 5
 height_jitter_m = 150.0
 stack_zone_threshold = 0.9    # 叠层岛区：汇聚边界核（[s03.plates]）超过此值的碰撞带，高度呈双层分布（第三批 2 起不再用独立噪声）
@@ -155,7 +155,8 @@ density = [0.2, 0.2, 0.25, 0.25, 0.35, 1.0, 1.0, 0.25, 0.05, 0.04, 0.012, 0.012]
 # river_size = main_area × precip（集水面代理）。河默认只进九格表文本，不进人口容量：
 # catch × (1 + river_capacity_bonus × river_size/中位河)，bonus = 0 即不影响任何推导
 river_main_area_km2 = 300.0
-river_height_m = 400.0
+river_height_m = 0.0          # 旧 400：按「height_m = 峰高」时「岛够高才汇得成河」。台面口径（DESIGN-NOTES 四点十九）下 height_m 是陆地中位，
+                              # 山在台面之上长出来，每个岛都有几百到几千米起伏——这条判据作废（#2051 台面 382 m、峰 2,026 m、1,800 km²、900 mm 曾被判无河）
 river_precip_min = 0.22       # 骨架第二版由 0.35 改：核心是谷物农业的半湿润带（相对降水 0.25–0.30 ≈ 700–900 mm），0.35 时核心区几乎无河（黄河流域年降水 400–800 mm）
 river_capacity_bonus = 0.0
 temp_eq_c = 28.0
@@ -489,8 +490,10 @@ main_gravity = 3.0            # 放岛时以主岛为锚的权重倍数（其余
 arc_elongation = 2.5          # 汇聚带上的群沿板块边界走向拉长（各向异性上限，随边界核强度插值）
 divergent_spread = 1.6        # 离散带上的群更散（间距放大倍数上限）
 place_attempts = 240          # 每座岛的放置尝试次数（放不下就逐步拉开间距）
-height_lo = 0.35              # 其余岛峰高 = 主岛峰高 × U(lo, hi)
-height_hi = 0.95
+# 高度口径（DESIGN-NOTES 四点十九）：③ 的 height_m = 主岛「台面高度」= 陆地高程中位数（④ 的岛上气温就在这个高度），
+# 不是峰高；峰 = 台面之上按岛龄 × 面积长出来的山（[island.terrain] relief_*）
+surface_lo = 0.6              # 其余岛台面 = 主岛台面 × U(lo, hi)（一群岛浮在相近的高度；旧口径是峰高 × U(0.35, 0.95)）
+surface_hi = 1.0
 layered_spread_m = 400.0      # 叠层群：其余岛再 ± U(0.5, 1) × 此值，出现上下错开的岛
 age_jitter = 0.08             # 群内各岛岛龄围绕节点岛龄的抖动（主岛不抖）
 bridge_max_km = 2.0           # 索桥：岸距 ≤ 此值且岸缘高差 ≤ bridge_max_dh_m；否则短渡
@@ -500,6 +503,21 @@ ferry_max_km = 20.0           # 只给岸距 ≤ 此值的岛对连短渡（连�
 [island.terrain]              # 5.2 岛内地形
 age_young = 0.3               # 岛龄 < young 火山锥；< old 山脊谷地；≥ old 台地宽谷（与 geology.py 同口径）
 age_old = 0.65
+# 起伏（岸缘 → 峰）：参考起伏按岛龄对数插值（0 → young，1 → old）× (面积/1000 km²)^area_exp × 对数正态(sigma)，夹 [min, max]
+# 锚点：1000 km² 上下的新火山岛 2000 m 级（特内里费 / 济州 / 马德拉），中年 1000 m 级（瓦胡 / 罗得），老岛几百米（毛里求斯 / 巴巴多斯）
+relief_young_m = 3000.0
+relief_old_m = 450.0
+relief_area_exp = 0.3
+relief_sigma = 0.25
+relief_min_m = 30.0
+relief_max_m = 4500.0
+# 测高曲线：陆地高程中位数落在岸缘 → 峰的这个分位（现实山岛 0.15–0.25：大半是低地，山集中在中央）；老岛台地偏高
+median_frac_young = 0.22
+median_frac_mid = 0.2
+median_frac_old = 0.38
+median_frac_min = 0.12        # 台面离岛底太近、装不下目标起伏时，分位最低压到此值（仍不够才压起伏：台面 < 300 m 的「薄片」岛本来就矮）
+cliff_min_m = 25.0            # 岸缘至少高出岛底此值；台面太低装不下目标起伏时压起伏，不压崖
+keel_surface_frac = 0.5       # 岛底 = min(keel_clearance_m, 此比例 × 台面)：台面低于 600 m 的岛是薄片
 elongation_max = 2.2          # 岛形椭圆长短轴比上限（长轴沿板块走向）
 shape_pad = 1.35              # 局部栅格半宽 = pad × 半长轴（轮廓噪声 0.45 时零等值线最远到 1.2 倍）
 warp_amp = 0.18               # 域扭曲幅度（× 等效半径）
@@ -511,11 +529,19 @@ gully_amp = 0.35              # 放射状沟谷深度（相对）
 plateau_rise = 0.3            # 老岛：向内程度到此值即登上台地
 plateau_valley_depth = 0.5    # 老岛宽谷深度（相对）；0.35 时台地几乎全平，D8 河道走直线
 mound_amp = 0.15              # 老岛边缘残丘
-erosion_rounds_main = 30      # 侵蚀轮数（主岛 / 小岛；新岛 ×0.7、老岛 ×1.3）
-erosion_rounds_small = 8
+# 下切（四点十九）：隐式河流功率 h_i ← (h_i + F·h_下游) / (1 + F)，F = carve_k × 汇流(km²)^carve_m / 距离(km)，每轮先按基形抬升 uplift_rel × 起伏。
+# 结果整体拟合到目标起伏，这几个数只决定「切得多碎」：沟谷多深、沟头离分水岭多近
+carve_rounds_main = 15        # 下切轮数（主岛 / 小岛；新岛 ×0.7、老岛 ×1.3）：溯源侵蚀每轮往上游推 carve_k × A^m km
+carve_rounds_small = 8
+carve_k = 0.3
+carve_a0_km2 = 0.3            # 汇流 ≥ 此值才是河道、才下切；坡面不下切，只靠热力坍塌（talus_deg）跟着变陡 —— 山脊留在基形高度，沟谷切进去
+carve_m = 0.5
+uplift_rel = 0.0               # 每轮按基形抬升（× 起伏）；> 0 时趋向稳态地形（沟谷更密但中心成孤峰、其余被削低）
+carve_jitter_rel = 0.02       # 定流向用的路由面噪声幅度（× 起伏，特征尺度 = 3 个侵蚀格）：打散 D8 横平竖直的沟，只影响流向不改高程
+carve_route_p = 1.5           # 随机流向：每轮在下坡邻格里按 坡降^p 抽下游（期望方向 = 真实梯度）；0 = 纯 D8（沟谷横平竖直、拐直角）
+carve_smooth_coarse = 0       # 下切量回贴细网格：粗网格上 [1,2,1] 平滑遍数（每遍都明显削浅沟谷）
+carve_smooth_fine = 2         # 放大后细网格上的平滑遍数：去掉双线性放大一格宽沟谷留下的沿坐标轴方格纹；0 = 不平滑
 erosion_max_cells = 320       # 侵蚀在 ≤ 此边长的粗网格上做，差值回贴
-fluvial_k = 0.02              # 河道冲刷（无量纲）：Δh = k × 起伏 × (汇流面积 / 岛面积的 1/10)^m × (坡度 / 岛平均坡度)，每轮
-fluvial_m = 0.5
 talus_deg = 38.0              # 热力坍塌休止角
 diffusion_k = 0.04            # 坡面扩散
 fill_iters = 40               # 每轮侵蚀前在粗网格上迭代填洼的轮数（Planchon–Darboux，填直径 ≤ 此格数的洼地，保持排水）
@@ -530,7 +556,8 @@ lake_max_per_island = 2       # 主岛最多几个湖；其余岛 lake_max_per_i
 lake_max_per_islet = 1
 pit_keep_m = 2.0
 stream_min_km2 = 1.0          # 汇流面积 ≥ 此值即有季节性溪涧（小岛一律只有溪涧）
-river_min_km2 = 25.0          # 常年河（只在主岛、has_river 为真时）：汇流面积门槛；若主岛最大汇流不足，降到 river_reach_frac × 最大汇流（旧 60 / 0.35：河网太稀）
+river_min_q_m3s = 0.3         # 常年河（只在主岛、has_river 为真时）：年均流量门槛（m³/s），按降水与径流系数换算成汇流面积——1,000 mm 约 19 km²、3,000 mm 约 6、300 mm 约 65；
+                              # 若主岛最大汇流不足，降到 river_reach_frac × 最大汇流。旧口径是固定 25 km²（干岛上 13 m 宽、0.4 m 深的小沟也算常年河）
 river_reach_frac = 0.2
 river_mid_size = 400.0        # 行星层 river_size（主岛 km² × 相对降水）达此值 → 最大的河为中河；river_big_size → 大河
 river_big_size = 1500.0
@@ -568,7 +595,9 @@ rock_temp_c = -6.0            # 海拔温度（海面年均 − 6 °C/km × 高�
 alpine_temp_c = 2.0
 rock_slope_deg = 35.0         # 坡度 ≥ 此值 → 裸岩
 forest_wet_min = 0.5          # 湿度指数（降水 / 1500 mm × 迎风修正）≥ 此值且土层 ≥ forest_soil_min 且温度 ≥ forest_temp_min_c → 林地
-forest_soil_min = 0.3         # 土层指数（老岛厚、平地厚、汇流处厚；山脊 / 陡坡 / 新岛薄）
+aspect_wet_gain = 0.2         # 坡向修正：湿度 × (1 + 此值 × 迎风度)，迎风度 ∈ [−1, 1] × min(1, 坡 / 15°)（旧 0.4：真实起伏下背风坡一半成灌丛；雨影是山脉尺度的事）
+forest_soil_min = 0.2         # 土层指数（老岛厚、平地厚、汇流处厚；山脊 / 陡坡 / 新岛薄）≥ 此值才成林。旧 0.3 按平岛定：真实起伏下中年岛坡 > 13° 就成灌丛（湿热带岛林地只剩两成）；0.2 时约 29° 以下可成林
+soil_slope_zero_deg = 60.0    # 土层随坡度线性变薄、到此坡度归零（旧 40：按几乎全平的岛定的，真实起伏下 20° 的坡就只剩一半土、一片灌丛）
 forest_temp_min_c = 5.0
 shrub_wet_min = 0.25          # 不成林但 ≥ 此湿度且土层 ≥ 一半 → 灌丛；其余草坡
 wet_slope_deg = 1.5           # 湿地：坡度 < 此值且汇流 ≥ wet_acc_km2 且降水 ≥ wet_precip_mm
@@ -677,7 +706,7 @@ temp_sigma_c = 1.5
 rain_cool_c = 1.5             # 雨日 / 风暴日偏凉
 storm_cool_c = 2.5
 cloudy_k = 1.2                # 无雨日转多云的概率 = f_wet × k
-fog_peak_max_m = 800.0        # 云海漫顶：主岛峰高低于此值的群才有；越低越易
+fog_surface_max_m = 800.0     # 云海漫顶：主岛台面（height_m）低于此值的群才有；越低越易（旧键 fog_peak_max_m 比的是旧口径的「峰高」，数值同一个 height_m）
 fog_p0 = 0.45                 # 基础概率（× 低度 × 静风 × 潮湿）
 fog_calm_ms = 6.0             # 风速达此值即不成雾
 sail_wind_max_ms = 14.0       # 出航：非风暴、风速低于此值、按季窗口的平静概率

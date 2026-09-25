@@ -92,7 +92,7 @@ a{color:var(--acc2)}
     <label class="chk" title="雨丝 / 雪花 / 风暴 / 多云 / 云雾 / 风的粒子"><input type="checkbox" id="ovFx" checked> 天气特效</label>
     <label class="chk" title="村（圆的大小 = 户数）、镇（橙圈，管几个村）、专业聚落（紫菱：矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地）、散户、泊场（拉近才画）/ 桥头 / 蓄水池"><input type="checkbox" id="ovSettle" checked> 聚落</label>
     <label class="chk" title="露天矿 / 采石场 / 洞穴 / 泉眼 / 温泉 / 砂金 / 黏土 / 泥炭 / 浮石矿脉…（林木只在「资源分布」底图上）"><input type="checkbox" id="ovRes"> 资源点位</label>
-    <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="4"><span id="exagV" class="small">4</span></div>
+    <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="1.5"><span id="exagV" class="small">1.5</span></div>
     <div id="legend" class="legend"></div>
   </div>
   <div class="sec"><h3>岛</h3>
@@ -129,7 +129,7 @@ a{color:var(--acc2)}
   </div>
   <details class="fold"><summary>参数覆盖与重新生成</summary>
     <div class="small">每行一条 <code>island.a.b=value</code>，只影响本次生成（不写配置）；留空即按默认重生成。</div>
-    <textarea id="sets" placeholder="island.terrain.fluvial_k=0.03&#10;island.layout.gap_max_km=8"></textarea>
+    <textarea id="sets" placeholder="island.terrain.carve_k=0.08&#10;island.layout.gap_max_km=8"></textarea>
     <div class="btnrow"><button id="btnRegen" class="primary">重新生成</button><button id="btnDefaults" class="mini">看当前参数</button></div>
     <pre id="cfgBox" class="small" style="display:none;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
   </details>
@@ -184,7 +184,7 @@ async function load(force = false, sets = null){
     buildWarp(); refined = null;
     R.lines = D.rivers ? D.rivers.lines.map(L => { const pts = chaikin(chaikin(relax(L.pts, 4)));
         let i0 = 1e9, i1 = -1e9, j0 = 1e9, j1 = -1e9, ws = 0; for (const q of pts) { i0 = Math.min(i0, q[0]); i1 = Math.max(i1, q[0]); j0 = Math.min(j0, q[1]); j1 = Math.max(j1, q[1]); ws += q[2]; }
-        return { island: L.island, lvl: Math.max(...L.pts.map(q => q[3])), pts, bb: [i0, i1, j0, j1], wMean: ws / pts.length }; })
+        return { island: L.island, lvl: Math.max(...L.pts.map(q => q[3])), amax: Math.max(...L.pts.map(q => (q[4] === undefined ? 1e9 : q[4]))), pts, bb: [i0, i1, j0, j1], wMean: ws / pts.length }; })
       .sort((a, b) => a.lvl - b.lvl) : null;
     history.replaceState(null, '', `?run=${run}&node=${node}&year=${year}`);
     base = null; dayLayer = null; dayTab = null; day = Math.min(day, 335);
@@ -207,7 +207,8 @@ function renderSide(){
   $('cons').innerHTML = `<tr><th>量</th><th>行星层</th><th>实际</th><th>误差</th></tr>`
     + row('陆地 km²', c.area_km2.target, c.area_km2.actual, fmt(Math.abs(c.area_km2.actual - c.area_km2.target) / c.area_km2.target * 100, 2) + '%')
     + row('主岛 km²', c.main_area_km2.target, c.main_area_km2.actual, fmt(Math.abs(c.main_area_km2.actual - c.main_area_km2.target) / c.main_area_km2.target * 100, 2) + '%')
-    + row('峰高 m', c.height_m.target, c.height_m.actual, fmt(Math.abs(c.height_m.actual - c.height_m.target), 1) + ' m')
+    + row('台面 m（陆地中位）', c.height_m.target, c.height_m.actual, fmt(Math.abs(c.height_m.actual - c.height_m.target), 1) + ' m')
+    + (c.peak_m ? `<tr><td>峰 m</td><td class="small">起伏 ${fmt(c.peak_m.relief_target_m, 0)}</td><td>${fmt(c.peak_m.actual, 0)}</td><td class="small">起伏 ${fmt(c.peak_m.relief_m, 0)} m</td></tr>` : '')
     + row('可耕率', c.arable_frac.target, c.arable_frac.actual, fmt(Math.abs(c.arable_frac.actual - c.arable_frac.target), 4))
     + `<tr><td>常年河</td><td>${c.has_river.target ? '有' : '无'}</td><td>${c.has_river.actual ? '有' : '无'}</td><td class="small">${c.has_river.target === c.has_river.actual ? '一致' : '不一致'}</td></tr>`;
   const hy = J.hydro || {}, lc = (J.landcover || {}).share || {};
@@ -230,7 +231,7 @@ function renderSide(){
   $('resSum').innerHTML = RS ? `<div>${Object.entries(RS.zones.share).filter(([k, v]) => v >= 0.002).map(([k, v]) => `<span class="pill"><span class="sw" style="background:rgb(${RS.zones.palette[RS.zones.classes.indexOf(k)].join(',')})"></span>${k} ${fmt(v * 100, 0)}%</span>`).join('')}</div>
     <div style="margin-top:4px">${Object.entries(RS.counts).map(([k, v]) => `<span class="pill"><span class="sw" style="background:rgb(${RS.resources.palette[RS.resources.classes.indexOf(k)].join(',')})"></span>${k} ${v}</span>`).join('')}</div>
     <div style="margin-top:4px">最近板块边界：${RS.geology.boundary_type}（核 ${fmt(RS.geology.boundary_kernel, 2)}）${RS.geology.layered ? ' · 叠层' : ''} · 老岛岩性 ${RS.geology.old_island_lithology} · 露天矿倍率 ×${fmt(RS.geology.ore_multiplier, 2)}</div>` : '（旧产物没有资源层：重新生成）';
-  $('islandList').innerHTML = J.islands.map(i => `<button class="mini" data-i="${i.id}" title="${i.area_km2} km² · 峰 ${i.peak_m} m · 岸缘 ${i.rim_m} m · ${i.age_zh}${i.n_lakes ? ' · 湖 ' + i.n_lakes : ''}${i.has_perennial_river ? ' · 有河' : ''}">${i.id}</button>`).join('');
+  $('islandList').innerHTML = J.islands.map(i => `<button class="mini" data-i="${i.id}" title="${i.area_km2} km² · 峰 ${i.peak_m} m · 台面 ${i.surface_m ?? '—'} m · 岸缘 ${i.rim_m} m · ${i.age_zh}${i.n_lakes ? ' · 湖 ' + i.n_lakes : ''}${i.has_perennial_river ? ' · 有河' : ''}">${i.id}</button>`).join('');
   $('islandList').querySelectorAll('button').forEach(b => b.onclick = () => zoomIsland(+b.dataset.i));
   const f = `/api/island/preview?run=${run}&node=${node}`;
   $('files').innerHTML = `<div>${D.island.meta.run}/islands/${node}/：island.json · height.png · landcover.png · water.png · arable.png · terrain.npz · climate.json · weather_y${year}.csv</div>
@@ -323,12 +324,13 @@ function renderRefined(){
   }
   return out;
 }
-// Chaikin 切角平滑（首尾不动）；点 = [行, 列, 河宽 m, 级别]
+// Chaikin 切角平滑（首尾不动）；点 = [行, 列, 河宽 m, 级别, 汇流 km²]（旧产物没有汇流：当作极大，溪涧永远有水）
 function chaikin(P){
   if (P.length < 3) return P; const out = [P[0]];
+  const A = q => (q[4] === undefined ? 1e9 : q[4]);
   for (let k = 0; k < P.length - 1; k++) { const a = P[k], b = P[k + 1];
-    out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1], 0.75 * a[2] + 0.25 * b[2], Math.max(a[3], b[3])]);
-    out.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1], 0.25 * a[2] + 0.75 * b[2], Math.max(a[3], b[3])]); }
+    out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1], 0.75 * a[2] + 0.25 * b[2], Math.max(a[3], b[3]), 0.75 * A(a) + 0.25 * A(b)]);
+    out.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1], 0.25 * a[2] + 0.75 * b[2], Math.max(a[3], b[3]), 0.25 * A(a) + 0.75 * A(b)]); }
   out.push(P[P.length - 1]); return out;
 }
 function lcFill(p){   // 河道格的替身：八邻里最多的非河非虚空地表类（没有就草坡）
@@ -337,39 +339,50 @@ function lcFill(p){   // 河道格的替身：八邻里最多的非河非虚空�
   return best;
 }
 function vecOn(){ return $('ovWater').checked && $('ovVec').checked && !!(R && R.lines); }
+// 线宽下限随河宽连续变化：2.5 m 的源流 0.5 px → 百米宽的干流 1.8 px，中 / 大河再加 0.3 / 0.6 px——河从山里细细的源流一路变粗，不再钝头冒出来
+function riverMinPx(w, lvl){ return 0.5 + 1.3 * Math.max(0, Math.min(1, Math.log(Math.max(w, 2.5) / 2.5) / Math.log(40))) + (lvl >= 2 ? 0.3 * (lvl - 1) : 0); }
 function drawRivers(ctx){
   const X = q => (q[1] / R.step) * view.s + view.tx, Y = q => (q[0] / R.step) * view.s + view.ty;
   const live = liveDraw() && dayTab, T = dayTab;
-  const frozen = live && T.frozen[day], high = live && T.high[day], flow = live ? T.flow[day] : 1;
+  const frozen = live && T.frozen[day], frozenS = live && T.frozenS[day], high = live && T.high[day];
+  const wf = live ? T.wf[day] : 1, aMin = live ? T.aMin[day] : 0;
   const W = ctx.canvas.width, H = ctx.canvas.height, pxPerM = view.s / R.res_m;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  // 分级：一格 ≥ 2 px 逐段按河宽画；更远时抽点（每 m 点取一）、整条一笔（线宽取该线平均河宽）；一格 < 0.35 px 时不画溪涧
-  const cs = view.s / R.step, m = cs >= 2 ? 1 : (cs >= 1 ? 2 : (cs >= 0.5 ? 4 : 8)), coarse = cs < 2;
+  // 每段按自己的级别着色、按自己的河宽定线宽（一条干流线从源头的溪涧段起算）；相同样式的相邻段并成一笔。
+  // 河道永远画、不随日期消失：常年河永远有水（涨水时按快流水库平滑加宽）；溪涧段汇流 ≥ 当日门槛 aMin 的有水，
+  // 不够的画成干河床（细、褐、半透明）——干旱时从源头往下游一段段断流、下雨后再一段段接回去（四点二十）。
+  // 分级：一格 ≥ 2 px 逐点，更远时每 m 点取一；拉远时按汇流逐级隐去小支流（一格 cs 像素时只画汇流 ≥ 0.35 / cs² km² 的溪涧段）
+  const cs = view.s / R.step, m = cs >= 2 ? 1 : (cs >= 1 ? 2 : (cs >= 0.5 ? 4 : 8)), aLod = 0.35 / (cs * cs);
+  // 溪涧段的湿度 = smoothstep(汇流 / aMin 在 0.75–1.25 之间)，量化成 5 档：门槛附近的末梢按比例半干半湿，水沿末梢渐渐漫上去、渐渐退下来，不是一段段「啪」地变色
+  const ICE = 'rgb(215,230,250)', DRY = [176, 152, 118, 0.55], WET = [110, 165, 255, 0.85];
+  const mix = w => `rgba(${DRY.slice(0, 3).map((c, i) => Math.round(c + (WET[i] - c) * w)).join(',')},${(DRY[3] + (WET[3] - DRY[3]) * w).toFixed(2)})`;
+  const colOf = (lv, w) => lv > 0 ? (frozen ? ICE : ['', '#3f7fe8', '#2a64d8', '#1848c0'][Math.min(3, lv + (high ? 1 : 0))]) : (w > 0 && frozenS ? ICE : mix(w));
   for (const L of R.lines) {
-    const stream = L.lvl === 0;
-    if (stream && (flow < 0.5 || cs < 0.35)) continue;                 // 溪涧断流 / 太远
+    if (L.lvl === 0 && L.amax < aLod) continue;
     const [bi0, bi1, bj0, bj1] = L.bb;
     if ((bj1 / R.step) * view.s + view.tx < -20 || (bj0 / R.step) * view.s + view.tx > W + 20 || (bi1 / R.step) * view.s + view.ty < -20 || (bi0 / R.step) * view.s + view.ty > H + 20) continue;
-    if (coarse) {
-      ctx.strokeStyle = frozen ? 'rgb(215,230,250)' : (stream ? `rgba(120,170,255,${0.35 + 0.4 * Math.min(1, flow)})` : ['', '#3f7fe8', '#2a64d8', '#1848c0'][Math.min(3, L.lvl + (high ? 1 : 0))]);
-      ctx.lineWidth = Math.max(stream ? 0.8 : 1.2 + 0.6 * L.lvl, L.wMean * pxPerM * (high && !stream ? 1.4 : 1));
-      const P = L.pts; ctx.beginPath(); ctx.moveTo(X(P[0]), Y(P[0]));
-      for (let k = m; k < P.length - 1; k += m) ctx.lineTo(X(P[k]), Y(P[k]));
-      ctx.lineTo(X(P[P.length - 1]), Y(P[P.length - 1])); ctx.stroke();
-      continue;
-    }
-    let col = frozen ? 'rgb(215,230,250)' : (stream ? `rgba(120,170,255,${0.35 + 0.4 * Math.min(1, flow)})` : ['', '#3f7fe8', '#2a64d8', '#1848c0'][Math.min(3, L.lvl + (high ? 1 : 0))]);
-    ctx.strokeStyle = col;
-    const P = L.pts; let x0 = X(P[0]), y0 = Y(P[0]);
-    for (let k = 1; k < P.length; k++) {
-      const x1 = X(P[k]), y1 = Y(P[k]);
-      if (!((x0 < -20 && x1 < -20) || (y0 < -20 && y1 < -20) || (x0 > W + 20 && x1 > W + 20) || (y0 > H + 20 && y1 > H + 20))) {
-        const wm = 0.5 * (P[k - 1][2] + P[k][2]) * (high && !stream ? 1.4 : 1);
-        ctx.lineWidth = Math.max(stream ? 0.8 : 1.2 + 0.6 * L.lvl, wm * pxPerM);
-        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    const P = L.pts; let key = '', open = false;
+    let a = P[0], xa = X(a), ya = Y(a);
+    for (let k = Math.min(m, P.length - 1); ; k = Math.min(k + m, P.length - 1)) {
+      const b = P[k], xb = X(b), yb = Y(b);
+      if ((xa < -20 && xb < -20) || (ya < -20 && yb < -20) || (xa > W + 20 && xb > W + 20) || (ya > H + 20 && yb > H + 20)) {
+        if (open) { ctx.stroke(); open = false; key = ''; }
+      } else {
+        const lv = a[3], A = a[4] === undefined ? 1e9 : a[4];
+        if (lv === 0 && A < aLod) { if (open) { ctx.stroke(); open = false; key = ''; } }
+        else {
+          const w = lv > 0 ? 1 : Math.round(4 * smooth((A / Math.max(aMin, 1e-6) - 0.75) / 0.5)) / 4;
+          const wm = 0.5 * (a[2] + b[2]) * (1 + (wf - 1) * w);
+          let lw = Math.max(riverMinPx(wm, lv), wm * pxPerM); lw *= 0.6 + 0.4 * w; lw = Math.max(0.5, lw);
+          lw = Math.round(lw * 4) / 4; const col = colOf(lv, w), kk = col + lw;
+          if (kk !== key) { if (open) ctx.stroke(); ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(xa, ya); key = kk; open = true; }
+          ctx.lineTo(xb, yb);
+        }
       }
-      x0 = x1; y0 = y1;
+      a = b; xa = xb; ya = yb;
+      if (k >= P.length - 1) break;
     }
+    if (open) ctx.stroke();
   }
 }
 function flyToCell(i, j, s){
@@ -569,24 +582,46 @@ function buildDayTables(){
   if (!D.climate.weather || !D.climate.weather.days) { dayTab = null; return; }
   const days = D.climate.weather.days; const n = days.length;
   let hmin = 1e9, hmax = -1e9; for (const v of R.h) { if (v) { const hv = v - 1; if (hv < hmin) hmin = hv; if (hv > hmax) hmax = hv; } }
-  const peak = D.island.constraints.height_m.actual; const rim = D.island.islands[0].rim_m;
+  const ref = D.island.constraints.height_m.target; const rim = D.island.islands[0].rim_m;   // 台面 = ③ 的 height_m（旧产物里它就是峰高，数值同一个）
   const binH = k => hmin + (k + 0.5) * (hmax - hmin) / NBIN;
-  const Tat = (d, h) => days[d].temp_c + LAPSE * (peak - h) / 1000;      // 逐日 temp_c 是主岛峰高处的气温
+  const Tat = (d, h) => days[d].temp_c + LAPSE * (ref - h) / 1000;       // 逐日 temp_c 是台面处的气温（④ 同口径）：山上冷、岸缘暖
   const snow = new Float32Array(n * NBIN); const pack = new Float32Array(NBIN);
   for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) for (let k = 0; k < NBIN; k++) { const T = Tat(d, binH(k)); if (T <= 0) pack[k] += days[d].precip_mm; else pack[k] = Math.max(0, pack[k] - 3 * T); if (pass) snow[d * NBIN + k] = pack[k]; }
   const api = new Float32Array(n); let a = 0; for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) { a = 0.96 * a + days[d].precip_mm; if (pass) api[d] = a; }
   let mean = 0; for (const v of api) mean += v; const apiRef = Math.max(mean / n, 1e-6); const pMean = Math.max(D.climate.annual.precip_mm / n, 1e-6);
-  const Trim = new Float32Array(n), green = new Float32Array(n), wet = new Float32Array(n), flow = new Float32Array(n), snowLine = new Float32Array(n), crop = new Float32Array(n);
-  const frozen = new Uint8Array(n), high = new Uint8Array(n), flood = new Uint8Array(n);
+  const Trim = new Float32Array(n), green = new Float32Array(n), wet = new Float32Array(n), snowLine = new Float32Array(n), crop = new Float32Array(n);
+  const frozen = new Uint8Array(n), frozenS = new Uint8Array(n), high = new Uint8Array(n), flood = new Uint8Array(n);
+  // ---- 水情（DESIGN-NOTES 四点二十）：两个线性水库 + 台面积雪 + 冰的度日累积。旧版用「前期降水 + 当天雨量」过 0.5 的门槛，
+  //      溪涧整条隔一两天就有 / 无一次（#1165 一年切换 42 次），河隔天冻、隔天化。现在：
+  //      基流 S（τ 30 日）定溪涧流到哪：汇流 ≥ aMin 的段有水，aMin = A_REF × S_REF / S，夹在 [溪涧阈, 常年河阈]——干旱时从源头往下游一段段断流，常年河永远有水；
+  //      快流 Q（τ 3 日）定涨水加宽与漫滩（持续几天、逐日消退）；冰按岸缘气温的度日累积（负温一度日 +1，正温 −2），≥ 8 溪涧冻、≥ 20 河湖冻
+  const TAU_B = 30, TAU_Q = 3, MELT = 3.0, A_REF = 2.0, ICE_S = 8, ICE_R = 20;
+  const hyd = D.island.hydro || {};
+  const aStream = hyd.stream_min_km2 || 1.0, aPer = hyd.river_threshold_km2 || Infinity;
+  const kb = Math.exp(-1 / TAU_B), kq = Math.exp(-1 / TAU_Q);
+  const S_REF = (1000 / n) / (1 - kb);                  // 年 1,000 mm 均匀下时基流水库的稳态：那时汇流 ≥ A_REF 的溪涧有水
+  const aMin = new Float32Array(n), qf = new Float32Array(n), bf = new Float32Array(n), wf = new Float32Array(n), ice = new Float32Array(n);
+  let spk = 0, S = 0, Q = 0, I = 0;
+  for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) {   // 两遍：第一遍把水库、积雪、冰转到年初的平衡态
+    const Ts = days[d].temp_c, P = days[d].precip_mm;
+    let liquid = 0; if (Ts <= 0.5) spk += P; else liquid += P;
+    const melt = Ts > 0 ? Math.min(spk, MELT * Ts) : 0; spk -= melt; liquid += melt;
+    S = S * kb + liquid; Q = Q * kq + liquid;
+    const Tr = Tat(d, rim); I = Math.min(60, Math.max(0, I + (Tr < 0 ? -Tr : -2 * Tr)));
+    if (pass) { bf[d] = S; qf[d] = Q; ice[d] = I; aMin[d] = Math.min(aPer, Math.max(aStream, A_REF * S_REF / Math.max(S, 1e-6))); }
+  }
+  let qMean = 0; for (const v of qf) qMean += v; qMean = Math.max(qMean / n, 1e-6);
   for (let d = 0; d < n; d++) {
     Trim[d] = Tat(d, rim); wet[d] = Math.min(1.5, api[d] / apiRef);
     green[d] = smooth((Trim[d] - 2) / 10) * (0.3 + 0.7 * Math.min(1, wet[d]));
-    flow[d] = 0.6 * wet[d] + 0.4 * Math.min(3, days[d].precip_mm / (pMean * 4 + 1));
-    frozen[d] = Trim[d] < -2 ? 1 : 0; const sn = isSnow(days[d].type); high[d] = (!sn && (days[d].precip_mm >= 15 || isStorm(days[d].type))) ? 1 : 0; flood[d] = (!sn && (isStorm(days[d].type) || days[d].precip_mm >= 30)) ? 1 : 0;
+    const hw = qf[d] / qMean;
+    frozen[d] = ice[d] >= ICE_R ? 1 : 0; frozenS[d] = ice[d] >= ICE_S ? 1 : 0;
+    wf[d] = frozen[d] ? 1 : 1 + 0.5 * Math.max(0, Math.min(1, (hw - 1) / 3));      // 涨水加宽：快流到均值 4 倍时 × 1.5，随水库逐日消退
+    high[d] = !frozen[d] && hw >= 2 ? 1 : 0; flood[d] = !frozen[d] && hw >= 4 ? 1 : 0;
     let sl = hmax + 1; for (let k = 0; k < NBIN; k++) if (snow[d * NBIN + k] > 1) { sl = binH(k); break; } snowLine[d] = sl;   // 1 mm 水当量就见白（刚下的雪）
   }
   let gdd = 0; for (let pass = 0; pass < 2; pass++) for (let d = 0; d < n; d++) { const T = Trim[d]; if (T < 3) gdd = Math.max(0, gdd - 20); else gdd += Math.max(0, T - 3) * (0.4 + 0.6 * Math.min(1, wet[d])); if (gdd >= 1200) gdd = 0; if (pass) crop[d] = gdd / 1200; }
-  dayTab = { snow, api, Trim, green, wet, flow, snowLine, crop, frozen, high, flood, hmin, hmax, binH, fogH: 120 + 0.25 * Math.max(0, 800 - peak) };
+  dayTab = { snow, api, Trim, green, wet, snowLine, crop, frozen, frozenS, high, flood, aMin, wf, aStream, aPer, hmin, hmax, binH, fogH: 120 + 0.25 * Math.max(0, 800 - ref) };
   // 每格的静态索引：高程箱、植被类、河岸漫滩（有生成器的 floodplain 就用它；旧产物退回「河两格内且坡 < 3°」的估计）
   const { rows, cols } = R; const bin = new Uint8Array(rows * cols), veg = new Uint8Array(rows * cols), fp = new Uint8Array(rows * cols);
   for (let p = 0; p < rows * cols; p++) { if (!R.h[p]) continue; const hv = R.h[p] - 1; bin[p] = Math.max(0, Math.min(NBIN - 1, ((hv - hmin) / (hmax - hmin) * NBIN) | 0)); const lc = R.lc ? R.lc[p] : 0; veg[p] = lc === 4 ? 1 : (lc === 5 ? 2 : ((lc === 6 || lc === 3) ? 3 : ((lc === 7 || lc === 8) ? 4 : 0))); }
@@ -602,7 +637,7 @@ function buildDayLayer(d, k = 1){
   const cw = Math.ceil(cols / k), ch = Math.ceil(rows / k);
   const img = new ImageData(cw, ch); const px = img.data;
   const vec = vecOn(), waterOn = $('ovWater').checked;
-  const gr = T.green[d], crop = T.crop[d], flow = T.flow[d], frozen = T.frozen[d], high = T.high[d], flood = T.flood[d];
+  const gr = T.green[d], crop = T.crop[d], frozen = T.frozen[d], frozenS = T.frozenS[d], high = T.high[d], flood = T.flood[d], aMin = T.aMin[d];
   const fog = w.type === '云海漫顶'; const rim = D.island.islands[0].rim_m; const fogTop = rim + T.fogH;
   const cropCol = crop < 0.15 ? [150, 120, 80] : (crop < 0.75 ? [60 + 40 * (1 - crop), 150 + 40 * Math.min(1, crop * 2), 50] : [225, 190, 70]);
   let snowCells = 0, land = 0;
@@ -611,12 +646,18 @@ function buildDayLayer(d, k = 1){
     if (!h[p]) continue; land++; const o = (ci * cw + cj) * 4; const hv = h[p] - 1;
     let r = 0, g = 0, b = 0, al = 0;
     const isLake = R.lake && R.lake[p], rv = R.river ? R.river[p] : 0, st = R.stream ? R.stream[p] : 0;
-    if (waterOn && (isLake || (!vec && rv) || (!vec && st && flow >= 0.5) || (flood && S.fp[p]))) {
-      if (frozen) { r = 215; g = 230; b = 250; al = 255; }
-      else if (isLake) { r = 30; g = 80; b = 200; al = 255; }
-      else if (rv && !vec) { const lv = Math.min(3, rv + (high ? 1 : 0)); r = 40; g = 90 + 20 * lv; b = 200 + 15 * lv; al = 255; }
+    if (waterOn && (isLake || (!vec && rv) || (!vec && st) || (flood && S.fp[p]))) {
+      if (isLake || (rv && !vec)) {
+        if (frozen) { r = 215; g = 230; b = 250; al = 255; }
+        else if (isLake) { r = 30; g = 80; b = 200; al = 255; }
+        else { const lv = Math.min(3, rv + (high ? 1 : 0)); r = 40; g = 90 + 20 * lv; b = 200 + 15 * lv; al = 255; }
+      }
       else if (flood && S.fp[p]) { r = 120; g = 150; b = 175; al = 120; }   // 漫滩被淹：半透明浑水，看得见底下的地，和河道的深蓝区分
-      else { r = 120; g = 170; b = 255; al = 150 * Math.min(1, flow); }
+      else {   // 溪涧：汇流够当日门槛才有水，门槛 ±25% 内按比例半干半湿；断流的是干河床，不消失
+        const w = R.fa ? smooth((Math.pow(10, (R.fa[p] - 100) / 40) / Math.max(aMin, 1e-6) - 0.75) / 0.5) : 1;
+        if (w > 0 && frozenS) { r = 215; g = 230; b = 250; al = 220; }
+        else { r = 176 + (120 - 176) * w; g = 152 + (170 - 152) * w; b = 118 + (255 - 118) * w; al = 90 + 70 * w; }
+      }
     } else {
       const sp = T.snow[d * NBIN + S.bin[p]];
       if (sp > 1) { snowCells++; r = 245; g = 248; b = 255; al = 255 * Math.min(0.72, 0.2 + sp / 100); }
@@ -707,13 +748,15 @@ function renderDay(){
   const days = D.climate.weather.days; const d = days[day]; if (!d) return; drawDayChart();
   if (dayTab && liveOn()) { if (!dayLayer || dayLayerDay !== day) buildDayLayer(day, lodK()); const st = dayStats; const T = dayTab;
     const riverState = T.frozen[day] ? '结冰' : (T.flood[day] ? '<span style="color:#8fb8de">漫滩</span>' : (T.high[day] ? '涨水' : '平水'));
-    $('dayState').innerHTML = `雪线 ${T.snowLine[day] > T.hmax ? '无雪' : fmt(T.snowLine[day], 0) + ' m'}${st ? `（积雪覆盖陆地 ${fmt(st.snowFrac * 100, 0)}%）` : ''} · 岸缘气温 ${fmt(T.Trim[day], 1)} °C · 土壤湿度 ${fmt(T.wet[day], 2)} · 植被 ${fmt(T.green[day], 2)} · 作物 ${['休耕', '出苗', '生长', '将熟', '待收'][Math.min(4, (T.crop[day] * 5) | 0)]} · 溪涧 ${T.flow[day] >= 0.5 ? '有水' : '<span style="color:#e0a060">断流</span>'} · 河 ${riverState}${d.type === '云海漫顶' ? ' · <span style="color:#e6e1f2">云海漫上岸缘 ' + fmt(T.fogH, 0) + ' m</span>' : ''}`;
+    const am = T.aMin[day], streamState = T.frozenS[day] ? '冰封' : (am <= T.aStream * 1.01 ? '全线有水' : (am >= T.aPer * 0.99 ? '<span style="color:#e0a060">全断流（只剩常年河）</span>'
+      : `<span style="color:#e0a060">汇流 ${fmt(am, am < 10 ? 1 : 0)} km² 以上的有水</span>`));
+    $('dayState').innerHTML = `雪线 ${T.snowLine[day] > T.hmax ? '无雪' : fmt(T.snowLine[day], 0) + ' m'}${st ? `（积雪覆盖陆地 ${fmt(st.snowFrac * 100, 0)}%）` : ''} · 岸缘气温 ${fmt(T.Trim[day], 1)} °C · 土壤湿度 ${fmt(T.wet[day], 2)} · 植被 ${fmt(T.green[day], 2)} · 作物 ${['休耕', '出苗', '生长', '将熟', '待收'][Math.min(4, (T.crop[day] * 5) | 0)]} · 溪涧 ${streamState} · 河 ${riverState}${d.type === '云海漫顶' ? ' · <span style="color:#e6e1f2">云海漫上岸缘 ' + fmt(T.fogH, 0) + ' m</span>' : ''}`;
   } else $('dayState').textContent = '';
   const C = D.climate; const arrow = '↓↙←↖↑↗→↘'[Math.round(d.wind_from_deg / 45) % 8];
   let ground = '';
-  if (dayTab && liveOn() && dayStats) { const T = dayTab; const tags = []; if (dayStats.snowFrac >= 0.05) tags.push(`积雪 ${fmt(dayStats.snowFrac * 100, 0)}%`); if (T.frozen[day]) tags.push('河湖结冰'); if (T.flood[day]) tags.push('漫滩'); if (T.flow[day] < 0.5 && !T.frozen[day]) tags.push('溪涧断流'); if (tags.length) ground = ' <span class="small">地面：</span>' + tags.map(t => `<span class="pill" style="background:#2b3646">${t}</span>`).join(''); }
+  if (dayTab && liveOn() && dayStats) { const T = dayTab; const tags = []; if (dayStats.snowFrac >= 0.05) tags.push(`积雪 ${fmt(dayStats.snowFrac * 100, 0)}%`); if (T.frozen[day]) tags.push('河湖结冰'); if (T.flood[day]) tags.push('漫滩'); if (!T.frozenS[day] && T.aMin[day] > T.aStream * 1.01) tags.push(T.aMin[day] >= T.aPer * 0.99 ? '溪涧全断流' : '溪涧部分断流'); if (tags.length) ground = ' <span class="small">地面：</span>' + tags.map(t => `<span class="pill" style="background:#2b3646">${t}</span>`).join(''); }
   $('dayCard').innerHTML = `<b>第 ${d.day} 日</b> · ${d.season_name} · ${d.month} 月 ${d.day_of_month} 日 <span class="small">天空：</span><span class="pill" style="background:${TYPE_COLORS[d.type]};color:#111">${d.type}</span> ${d.storm_event ? '<span class="pill">风暴 #' + d.storm_event + '</span>' : ''}${ground}
-    <div>${isSnow(d.type) ? '降雪（水当量）' : '降水'} ${fmt(d.precip_mm, 1)} mm · 气温 ${fmt(d.temp_c, 1)} °C（峰顶）/ ${fmt(d.temp_rim_c ?? (dayTab ? dayTab.Trim[day] : d.temp_c), 1)} °C（岸缘）· 风 ${fmt(d.wind_ms, 1)} m/s 自 ${d.wind_from_deg}° ${arrow} · ${d.sailable ? '<span style="color:#9be0b6">可出航</span>' : '<span style="color:#f0a2a2">禁航</span>'}</div>
+    <div>${isSnow(d.type) ? '降雪（水当量）' : '降水'} ${fmt(d.precip_mm, 1)} mm · 气温 ${fmt(d.temp_c, 1)} °C（台面）/ ${fmt(d.temp_rim_c ?? (dayTab ? dayTab.Trim[day] : d.temp_c), 1)} °C（岸缘）· 风 ${fmt(d.wind_ms, 1)} m/s 自 ${d.wind_from_deg}° ${arrow} · ${d.sailable ? '<span style="color:#9be0b6">可出航</span>' : '<span style="color:#f0a2a2">禁航</span>'}</div>
     <div class="small">季中气候：${C.seasons[d.season].name} 温 ${fmt(C.seasons[d.season].temp_c, 1)} °C，季雨 ${fmt(C.seasons[d.season].precip_mm, 0)} mm，风暴 ${fmt(C.seasons[d.season].storm, 2)}，窗口 ${fmt(C.seasons[d.season].window, 2)}</div>`;
 }
 if (q.get('base')) $('baseSel').value = q.get('base');   // 可带 &base=zone|resource|… &res=1（资源点位）直接打开某图层

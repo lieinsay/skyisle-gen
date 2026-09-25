@@ -60,8 +60,8 @@ def _node_inputs(ctx, node: int) -> dict:
 
 def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None, log=print) -> dict:
     """第 1 步：布局 + 岛形 + 高程。返回群栅格字典 g（height / island_id / cliff / json / islands 列表）。"""
-    from .layout import (boundary_axis, island_count, links, peak_heights, place_islands, radial_profile,
-                         shoreline_gaps, zipf_sizes)
+    from .layout import (boundary_axis, island_count, links, place_islands, radial_profile, relief_targets,
+                         shoreline_gaps, surface_heights, zipf_sizes)
     from .terrain import age_class, island_shape, sculpt_island
     from .grid import binary_erode
 
@@ -72,11 +72,12 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     n = island_count(rng_l, inp["area_km2"], inp["area_median_km2"], lay)
     sizes = zipf_sizes(inp["area_km2"], inp["main_area_km2"], n, lay)
     n = sizes.size
-    peaks = peak_heights(rng_l, n, inp["height_m"], inp["layered"], lay)
+    surfs = surface_heights(rng_l, n, inp["height_m"], inp["layered"], lay)
     ages = np.clip(inp["age"] + rng_l.normal(0.0, float(lay["age_jitter"]), n), 0.0, 1.0)
     ages[0] = inp["age"]
     elong = rng_l.uniform(1.0, float(ter["elongation_max"]), n)
     thetas = axis + rng_l.normal(0.0, 0.35 if kernel > 0.3 else 1.2, n)
+    reliefs = relief_targets(_rng(ctx, node, "relief"), sizes, ages, ter)   # 独立随机流：不打乱布局的抽样次序
     keel = inp["keel_clearance_m"]
 
     res0 = float(res_m or c["res_m"])
@@ -125,14 +126,12 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
         # 局部栅格中心 gc[k] 落到群栅格：左上角格
         c0 = int(round((gc[k, 0] - (m - 1) / 2.0 * res_km - x0) / res_km))
         r0 = int(round((y0 - (gc[k, 1] + (m - 1) / 2.0 * res_km)) / res_km))
-        kind = age_class(float(ages[k]), ter)
-        peak = float(peaks[k])
-        keel_k = keel if peak > 2.0 * keel else 0.5 * peak
-        rf_lo, rf_hi = {"young": (0.05, 0.15), "mid": (0.10, 0.30), "old": (0.30, 0.50)}[kind]
+        surf = float(surfs[k])
+        keel_k = min(keel, float(ter["keel_surface_frac"]) * surf)
         rng_t = _rng(ctx, node, f"terrain:{k}")
-        rim = keel_k + rng_t.uniform(rf_lo, rf_hi) * (peak - keel_k)
+        h, kind, rim, peak = sculpt_island(rng_t, mask, inside, X, Y, float(ages[k]), float(sizes[k]), res_km, surf,
+                                           float(reliefs[k]), keel_k + float(ter["cliff_min_m"]), k == 0, ter)
         rims[k] = rim
-        h, kind = sculpt_island(rng_t, mask, inside, X, Y, float(ages[k]), float(sizes[k]), res_km, peak, rim, k == 0, ter)
         # 写入（不覆盖已有岛：布局保证不重叠）
         sl = (slice(r0, r0 + m), slice(c0, c0 + m))
         tgt = height[sl]
@@ -145,6 +144,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
             "id": k, "is_main": k == 0, "area_km2": round(float(put.sum()) * res_km * res_km, 3),
             "area_target_km2": round(float(sizes[k]), 3),
             "center_km": [round(float(centers[k, 0]), 3), round(float(centers[k, 1]), 3)],
+            "surface_m": round(surf, 1), "relief_m": round(peak - rim, 1), "relief_target_m": round(float(reliefs[k]), 1),
             "peak_m": round(peak, 1), "rim_m": round(rim, 1), "keel_m": round(keel_k, 1), "cliff_m": round(rim - keel_k, 1),
             "age": round(float(ages[k]), 3), "age_zh": {"young": "新岛", "mid": "中年", "old": "老岛"}[kind],
             "bbox_cells": [r0, c0, m, m],
@@ -171,7 +171,9 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     gaps = shoreline_gaps(masks_pos, res_km, ctr_cells, radii, float(lay["ferry_max_km"]))
     lk, tree = links(gaps, rims, n, lay)
     cliff = land & ~binary_erode(land, int(ter["cliff_cells"]))
-    log(f"  地形 {n} 岛 {H}×{W} @ {res_m_eff:.0f} m，{time.perf_counter() - t0:.1f} s")
+    i0 = islands_json[0]
+    log(f"  地形 {n} 岛 {H}×{W} @ {res_m_eff:.0f} m，{time.perf_counter() - t0:.1f} s；主岛 岸缘 {i0['rim_m']:.0f} → 峰 {i0['peak_m']:.0f} m"
+        f"（起伏 {i0['relief_m']:.0f} / 目标 {i0['relief_target_m']:.0f}）")
 
     meta = {"node": node, "seed": ctx.seed, "run": ctx.out_dir.name, "lat": inp["lat"], "lon": inp["lon"],
             "cls": CLASS_NAMES[inp["cls"]], "cls_zh": CLASS_ZH[CLASS_NAMES[inp["cls"]]],
@@ -188,7 +190,10 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     constraints = {
         "area_km2": {"target": round(inp["area_km2"], 2), "actual": round(float(land.sum()) * res_km * res_km, 2)},
         "main_area_km2": {"target": round(inp["main_area_km2"], 2), "actual": islands_json[0]["area_km2"]},
-        "height_m": {"target": round(inp["height_m"], 1), "actual": round(float(np.nanmax(height[island_id == 0])), 1)},
+        "height_m": {"target": round(inp["height_m"], 1), "actual": round(float(np.nanmedian(height[island_id == 0])), 1),
+                     "note": "③ 的 height_m = 主岛台面高度 = 陆地高程中位数（④ 的岛上气温在这个高度）；峰高见 peak_m"},
+        "peak_m": {"actual": round(float(np.nanmax(height[island_id == 0])), 1), "relief_m": islands_json[0]["relief_m"],
+                   "relief_target_m": islands_json[0]["relief_target_m"]},
         "arable_frac": {"target": round(inp["arable_frac"], 4)},
         "has_river": {"target": inp["has_river"]},
         "n_islands": n,
@@ -209,7 +214,7 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     c = island_config(ctx, sets)
     inp = _node_inputs(ctx, node)
     t0 = time.perf_counter()
-    log(f"[island {node}] 陆地 {inp['area_km2']:.0f} km²（主岛 {inp['main_area_km2']:.0f}）峰 {inp['height_m']:.0f} m 可耕 {inp['arable_frac']:.3f} "
+    log(f"[island {node}] 陆地 {inp['area_km2']:.0f} km²（主岛 {inp['main_area_km2']:.0f}）台面 {inp['height_m']:.0f} m 可耕 {inp['arable_frac']:.3f} "
         f"河 {'有' if inp['has_river'] else '无'} 岛龄 {inp['age']:.2f} 降水 {inp['precip']:.2f} 温差 {inp['season_range']:.1f} °C")
     g = build_terrain(ctx, node, c, inp, res_m=res_m, log=log)
     if steps >= 2:

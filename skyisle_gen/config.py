@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -225,6 +226,10 @@ def dump_toml(obj: dict, indent_path: str = "") -> str:
     scalars = {k: v for k, v in obj.items() if not isinstance(v, dict)}
     tables = {k: v for k, v in obj.items() if isinstance(v, dict)}
 
+    def key(k: str) -> str:
+        # TOML 裸键只许 ASCII 字母数字 _ -（str.isalnum 对中文也返回 True，「汇聚 = 4.0」会写坏文件）
+        return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k, ensure_ascii=False)
+
     def fmt(v: Any) -> str:
         if isinstance(v, bool):
             return "true" if v else "false"
@@ -233,16 +238,15 @@ def dump_toml(obj: dict, indent_path: str = "") -> str:
         if isinstance(v, str):
             return json.dumps(v, ensure_ascii=False)
         if isinstance(v, dict):
-            return "{ " + ", ".join(f"{k} = {fmt(x)}" for k, x in v.items()) + " }"
+            return "{ " + ", ".join(f"{key(k)} = {fmt(x)}" for k, x in v.items()) + " }"
         if isinstance(v, list):
             return "[" + ", ".join(fmt(x) for x in v) + "]"
         return json.dumps(v, ensure_ascii=False)
 
     for k, v in scalars.items():
-        key = k if k.replace("_", "").replace("-", "").isalnum() else json.dumps(k, ensure_ascii=False)
-        lines.append(f"{key} = {fmt(v)}")
+        lines.append(f"{key(k)} = {fmt(v)}")
     for k, v in tables.items():
-        path = f"{indent_path}.{k}" if indent_path else k
+        path = f"{indent_path}.{key(k)}" if indent_path else key(k)
         lines.append("")
         lines.append(f"[{path}]")
         lines.append(dump_toml(v, path))

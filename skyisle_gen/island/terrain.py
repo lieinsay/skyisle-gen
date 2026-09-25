@@ -2,6 +2,7 @@
 
 每座岛在自己的局部栅格上生成（分辨率 = 群栅格），再贴进群栅格。高程是「云带顶以上的绝对高度（m）」：
 岛底 keel（≈ keel_clearance_m，薄片岛更低）→ 岸缘 rim（岸线上的地面高度，崖高 = rim − keel）→ 峰 peak。
+约束的是台面（陆地高程中位数 = ③ 的 height_m）与目标起伏（峰 − 岸缘，layout.relief_targets），岸缘与峰由拟合得出（四点十九）。
 侵蚀在 ≤ erosion_max_cells 的粗网格上做（纯 numpy + Python 循环的汇流），差值双线性回贴细网格。
 """
 from __future__ import annotations
@@ -12,7 +13,7 @@ import math
 import numpy as np
 
 from .grid import (FractalNoise, LatticeNoise, N8, binary_erode, block_any, block_mean, largest_component,
-                   laplacian, shift, upsample_bilinear)
+                   laplacian, shift, smooth121, upsample_bilinear)
 
 AGE_YOUNG, AGE_OLD = 0.3, 0.65
 
@@ -213,6 +214,33 @@ def d8(hf: np.ndarray, mask: np.ndarray, res_m: float):
     return ri, rj, np.clip(slope, 0.0, None), to_void
 
 
+def d8_random(hf: np.ndarray, mask: np.ndarray, res_m: float, rng, p: float):
+    """随机流向：每格在下坡邻格里按 坡降^p 加权抽一个作下游（p 大 → 接近最陡下降）。期望流向 = 真实梯度方向，
+    不像 D8 那样在 30° 的坡上固定走「东、东北」交替的阶梯——多轮下切叠起来，沟谷不再横平竖直。
+    返回 (recv_i, recv_j, to_void)，口径同 d8：邻接虚空的格是出口（recv = −1、to_void 真）；没有下坡邻格的也是 −1。"""
+    H, W = hf.shape
+    hh = np.where(mask, hf, np.inf)
+    w = np.zeros((8, H, W))
+    to_void = np.zeros((H, W), dtype=bool)
+    for n, (di, dj) in enumerate(N8):
+        nb = shift(hh, di, dj, np.inf)
+        is_void = ~shift(mask, di, dj, False)
+        to_void |= mask & is_void
+        dist = res_m * (math.sqrt(2.0) if di and dj else 1.0)
+        with np.errstate(invalid="ignore"):
+            drop = (hh - nb) / dist
+        w[n] = np.where(mask & ~is_void & (drop > 0), np.power(np.maximum(drop, 0.0), p), 0.0)
+    S = w.sum(axis=0)
+    u = rng.uniform(0.0, 1.0, (H, W)) * S
+    k = np.minimum((np.cumsum(w, axis=0) <= u[None]).sum(axis=0), 7)   # 反查累积分布：第一个累积和 > u 的方向
+    dis = np.array([d[0] for d in N8])[k]
+    djs = np.array([d[1] for d in N8])[k]
+    ok = mask & ~to_void & (S > 0)
+    ri = np.where(ok, np.arange(H)[:, None] - dis, -1).astype(np.int32)   # shift 语义：nb[i] = a[i − di]
+    rj = np.where(ok, np.arange(W)[None, :] - djs, -1).astype(np.int32)
+    return ri, rj, to_void
+
+
 def accumulate(hf: np.ndarray, mask: np.ndarray, ri: np.ndarray, rj: np.ndarray, weight=None) -> np.ndarray:
     """汇流量（格数或加权）。hf 严格递减到下游，按高度降序累加（Python 列表循环，30 万格约 0.1 s）。"""
     H, W = hf.shape
@@ -231,30 +259,51 @@ def accumulate(hf: np.ndarray, mask: np.ndarray, ri: np.ndarray, rj: np.ndarray,
     return np.array(Al).reshape(H, W)
 
 
-def erode(rng, h: np.ndarray, mask: np.ndarray, res_m: float, rounds: int, base_level: float, c: dict) -> np.ndarray:
-    """简化侵蚀：河道冲刷（流量^m × 坡度）+ 热力坍塌 + 坡面扩散，每轮先把单格洼地抬到邻居之上。"""
-    h = h.copy()
-    kf = float(c["fluvial_k"])
-    m_exp = float(c["fluvial_m"])
+def erode(rng, h: np.ndarray, mask: np.ndarray, res_m: float, rounds: int, base_level: float, c: dict,
+          uplift: np.ndarray | None = None, jitter: np.ndarray | None = None) -> np.ndarray:
+    """侵蚀：隐式河流功率下切（Braun & Willett 2013，n = 1）+ 抬升 + 热力坍塌 + 坡面扩散。
+    先对整个网格精确填洼一次（基形里的封闭盆地否则永远排不出去，最后被 5.3 填成一块死平的台面）；
+    每轮：抬升（uplift，m/轮；按基形分布，维持山体）→ 迭代填洼定流向（路由面 = 高程 + jitter）→ 随机流向 d8_random（carve_route_p = 0 时纯 D8）→ 汇流 A（km²）→
+    按路由面升序（先下游后上游）隐式更新 h_i ← (h_i + F·h_r) / (1 + F)，F = carve_k · A^carve_m / 距离（km），无条件稳定；
+    只有汇流 ≥ carve_a0_km2 的河道格下切，坡面靠热力坍塌跟着变陡；流向虚空的出口格以岸缘为下游（河从崖缘跌下）。
+    结果最后整体仿射拟合到目标起伏（sculpt_island），所以这几个数只决定「切得多碎」，不决定绝对高度。"""
+    h = np.where(mask, priority_fill(h, mask, eps=1e-3), h)
+    K = float(c["carve_k"])
+    m_exp = float(c["carve_m"])
     talus = math.tan(math.radians(float(c["talus_deg"])))
     kd = float(c["diffusion_k"])
     cell_km2 = (res_m / 1000.0) ** 2
-    relief = max(1.0, float(np.nanmax(np.where(mask, h, np.nan))) - base_level)
-    area_km2 = float(mask.sum()) * cell_km2
-    R_m = math.sqrt(area_km2 / math.pi) * 1000.0
-    slope_ref = relief / max(R_m, res_m)          # 岛的平均坡度：起伏 / 等效半径
-    a_ref = 0.1 * area_km2                        # 参考汇流面积：岛的十分之一
+    H, W = h.shape
+    jit = np.zeros((H, W)) if jitter is None else jitter
     for _ in range(rounds):
-        # 保持排水：把洼地填到出口高度（粗网格上的近似填洼；水流沿填后的面走，冲刷作用在实际高程上）
-        hf = fill_iter(h, mask, int(c["fill_iters"]))
-        h = np.where(mask, np.maximum(h, hf - float(c["pit_keep_m"])), h)
-        ri, rj, slope, _ = d8(hf, mask, res_m)
-        A = accumulate(hf, mask, ri, rj)
-        E = kf * relief * (A * cell_km2 / a_ref) ** m_exp * (slope / slope_ref)
-        # 不切到下游以下（保持排水）
-        recv_h = np.where(ri >= 0, h[np.clip(ri, 0, None), np.clip(rj, 0, None)], base_level)
-        E = np.minimum(E, 0.6 * np.clip(h - recv_h, 0.0, None))
-        h = np.where(mask, h - E, h)
+        if uplift is not None:
+            h = np.where(mask, h + uplift, h)
+        # 保持排水：把洼地填到出口高度（粗网格上的近似填洼；水流沿填后的面走，下切作用在实际高程上）
+        hf = fill_iter(h + jit, mask, int(c["fill_iters"]))
+        h = np.where(mask, np.maximum(h, hf - jit - float(c["pit_keep_m"])), h)
+        if rng is not None and float(c["carve_route_p"]) > 0:
+            ri, rj, to_void = d8_random(hf, mask, res_m, rng, float(c["carve_route_p"]))
+        else:
+            ri, rj, _, to_void = d8(hf, mask, res_m)
+        A = accumulate(hf, mask, ri, rj) * cell_km2
+        diag = (ri >= 0) & (ri != np.arange(H)[:, None]) & (rj != np.arange(W)[None, :])
+        dist_km = np.where(diag, math.sqrt(2.0), 1.0) * res_m / 1000.0
+        # 只有汇流 ≥ carve_a0_km2 的格是河道、会下切；坡面只靠下面的热力坍塌跟着变陡——山脊保留基形高度，沟谷切进去
+        F = np.where(A >= float(c["carve_a0_km2"]), K * np.power(np.maximum(A, cell_km2), m_exp) / dist_km, 0.0).ravel().tolist()
+        recv = np.where(ri >= 0, ri * W + rj, np.where(mask & to_void, -2, -1)).ravel().tolist()
+        idx = np.where(mask.ravel())[0]
+        order = idx[np.argsort(np.where(mask, hf, np.inf).ravel()[idx], kind="stable")].tolist()
+        hl = h.ravel().tolist()
+        for k in order:
+            r = recv[k]
+            if r == -1:
+                continue
+            hr = base_level if r == -2 else hl[r]
+            hk = hl[k]
+            if hk > hr:
+                f = F[k]
+                hl[k] = (hk + f * hr) / (1.0 + f)
+        h = np.array(hl).reshape(H, W)
         # 热力坍塌：坡度超过休止角，把超出的部分推给最低邻居
         hh = np.where(mask, h, np.nan)
         for di, dj in N8:
@@ -274,30 +323,57 @@ def _coarse_factor(mask: np.ndarray, max_cells: int) -> int:
     return max(1, int(math.ceil(max(mask.shape) / max_cells)))
 
 
+def fit_rim(surface: float, relief: float, median_frac: float, rim_min: float) -> tuple[float, float]:
+    """(岸缘, 起伏)：使 岸缘 + 起伏 × median_frac = 台面。岸缘低于 rim_min（岛底 + 最小崖高）时抬到 rim_min、压起伏，台面不动。"""
+    if median_frac <= 1e-3:
+        return max(surface, rim_min), relief
+    rim = surface - median_frac * relief
+    if rim < rim_min:
+        rim = rim_min
+        relief = max(1.0, (surface - rim_min) / median_frac)
+    return rim, relief
+
+
 def sculpt_island(rng, mask, inside, X, Y, age: float, area_km2: float, res_km: float,
-                  peak: float, rim: float, is_main: bool, c: dict) -> tuple[np.ndarray, str]:
-    """一座岛的完整高程：基形 → 侵蚀（粗网格）→ 归一到 rim → peak（最高格 = peak）。返回 (h[H,W] 掩膜外 NaN, 岛龄类别)。"""
+                  surface: float, relief: float, rim_min: float, is_main: bool, c: dict) -> tuple[np.ndarray, str, float, float]:
+    """一座岛的完整高程：基形 → 测高曲线（幂次）→ 侵蚀（粗网格）→ 仿射拟合（陆地中位 = surface，峰 − 岸缘 = relief）。
+    返回 (h[H,W] 掩膜外 NaN, 岛龄类别, 岸缘, 峰)。台面太低装不下 relief 时岸缘停在 rim_min、起伏按比例压小。"""
     shape, kind = base_form(rng, mask, inside, X, Y, age, area_km2, res_km, c)
     s = shape[mask]
     lo, hi = float(s.min()), float(s.max())
     shape = np.where(mask, (shape - lo) / max(1e-9, hi - lo), 0.0)
-    h = rim + (peak - rim) * shape
-    rounds = int(c["erosion_rounds_main"] if is_main else c["erosion_rounds_small"])
+    # 测高曲线：u → u^γ 不改排序，中位分位 m → m^γ，解 γ 让它等于该岛龄的目标分位（大半是低地、山集中在中央）。
+    # 台面离岛底太近、装不下目标起伏时，先把分位压低（最低 median_frac_min：一圈缓坡低地托一座陡峰），还不够才压起伏
+    m_t = float(c[f"median_frac_{kind}"])
+    m_t = min(m_t, max(float(c["median_frac_min"]), (surface - rim_min) / max(1.0, relief)))
+    m_raw = float(np.median(shape[mask]))
+    if 1e-3 < m_raw < 0.999:
+        shape = shape ** float(np.clip(math.log(m_t) / math.log(m_raw), 0.7, 3.5))
+    rim, R = fit_rim(surface, relief, m_t, rim_min)
+    h = rim + R * shape
+    rounds = int(c["carve_rounds_main"] if is_main else c["carve_rounds_small"])
     rounds = int(round(rounds * {"young": 0.7, "mid": 1.0, "old": 1.3}[kind]))
     res_m = res_km * 1000.0
+    up = float(c["uplift_rel"]) * R
     if rounds > 0 and int(mask.sum()) >= 30:
         f = _coarse_factor(mask, int(c["erosion_max_cells"]))
+        half = float(np.abs(X).max())
+        jit = float(c["carve_jitter_rel"]) * R * FractalNoise(rng, -half, -half, half, half, feature_km=3.0 * res_km * f,
+                                                             octaves=2, persistence=0.5).sample(X, Y)
         if f > 1:
             hc = block_mean(np.where(mask, h, rim), f)
             mc = block_any(mask, f)
-            ec = erode(rng, hc, mc, res_m * f, rounds, rim, c)
-            delta = np.where(mc, ec - hc, 0.0)
-            h = h + upsample_bilinear(delta, f, mask.shape[0], mask.shape[1])
+            ec = erode(rng, hc, mc, res_m * f, rounds, rim, c, uplift=up * block_mean(shape, f), jitter=block_mean(jit, f))
+            # 下切量回贴：粗网格一格宽的沟双线性放大后是沿坐标轴的「方锥坑」——粗网格平滑 carve_smooth_coarse 遍、放大后细网格再平滑 carve_smooth_fine 遍
+            delta = smooth121(np.where(mc, ec - hc, 0.0), mc, int(c["carve_smooth_coarse"]))
+            up_d = upsample_bilinear(delta, f, mask.shape[0], mask.shape[1])
+            h = h + smooth121(up_d, mask, int(c["carve_smooth_fine"]))
         else:
-            h = erode(rng, h, mask, res_m, rounds, rim, c)
-    # 岸缘不向海面收敛：只夹到 rim 以上；归一让最高格恰为 peak
+            h = erode(rng, h, mask, res_m, rounds, rim, c, uplift=up * shape, jitter=jit)
+    # 岸缘不向海面收敛：只夹到 rim 以上；再仿射拟合：u = (h − rim)/(max − rim)，中位分位 m_u → 岸缘 = 台面 − m_u × 起伏
     h = np.where(mask, np.maximum(h, rim), np.nan)
     hmax = float(np.nanmax(h))
-    if hmax > rim + 1e-6:
-        h = rim + (h - rim) * (peak - rim) / (hmax - rim)
-    return h, kind
+    u = np.clip((h - rim) / max(1e-6, hmax - rim), 0.0, 1.0)
+    rim2, R2 = fit_rim(surface, relief, float(np.median(u[mask])), rim_min)
+    h = np.where(mask, rim2 + R2 * u, np.nan)
+    return h, kind, rim2, rim2 + R2

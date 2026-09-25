@@ -186,7 +186,8 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print, grids: dict | Non
         "annual": {"temp_c": round(inp["temp"], 2), "temp_sea_c": round(inp["temp_sea"], 2), "precip_rel": round(inp["precip"], 4),
                    "precip_mm": round(precip_mm(inp["precip"], cc), 0), "storm": round(inp["storm"], 4), "window": round(inp["window"], 4),
                    "season_range_c": round(r_t, 2), "season_range_sea_c": round(float(inp["season_range_sea"]), 2),
-                   "temp_winter_c": round(inp["temp_winter"], 2), "temp_summer_c": round(inp["temp_summer"], 2)},
+                   "temp_winter_c": round(inp["temp_winter"], 2), "temp_summer_c": round(inp["temp_summer"], 2),
+                   "temp_ref_height_m": round(inp["height_m"], 1)},
         "thermal": {"continentality_sea": round(cont_sea, 4), "continentality_island": round(cont_isl, 4),
                     "tau_sea_days": round(tau_sea, 1), "tau_island_days": round(tau_isl, 1),
                     "amplitude_retained_sea": round(A_sea, 3), "amplitude_retained_island": round(A_isl, 3),
@@ -195,7 +196,7 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print, grids: dict | Non
         "seasons": seasons,
         "means_check": {"precip_rel": round(float(precip.mean()), 5), "storm": round(float(storm.mean()), 5),
                         "window": round(float(window.mean()), 5), "temp_c": round(float(t_isl.mean()), 4)},
-        "note": "季名是软的（决定 5）；南北半球反相；每季数值为季中那一天的摆动取样再缩放到年均；precip_mm 是该季总量（四季之和 = 年降水），precip_mm_annual_rate 是折成年当量的强度",
+        "note": "岛上气温（temp_c、逐日 temp_c）是台面 temp_ref_height_m（③ 的 height_m = 主岛陆地高程中位数）处的，某格 = temp + 直减率 × (台面 − 格高)；季名是软的（决定 5）；南北半球反相；每季数值为季中那一天的摆动取样再缩放到年均；precip_mm 是该季总量（四季之和 = 年降水），precip_mm_annual_rate 是折成年当量的强度",
     }
     g["climate"] = clim
     g["json"]["climate"] = {"season_type": stype, "season_type_zh": type_zh, "season_names": names,

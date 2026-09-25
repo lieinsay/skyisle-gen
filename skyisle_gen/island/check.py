@@ -1,6 +1,6 @@
 """第六节：岛群生成器的一致性校验（`skyisle island check <节点>`）。
 
-IS-area / IS-summit / IS-arable / IS-river / IS-channel / IS-season / IS-link / IS-det / IS-iso 为硬项，IS-daily 为软项；
+IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-link / IS-det / IS-iso 为硬项，IS-daily 为软项；
 资源 RES-site / RES-geo 为硬项，RES-quarry 为软项；
 聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
@@ -50,8 +50,12 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
     add("IS-area", "各岛面积之和 = area_km2；主岛 = main_area_km2（相对误差）", {"sum": round(e_area, 5), "main": round(e_main, 5)}, "< 0.02",
         e_area < 0.02 and e_main < 0.02)
     h = cons["height_m"]
-    e_h = abs(h["actual"] - h["target"]) / max(1e-9, h["target"])
-    add("IS-summit", "主岛最高格 = height_m", round(e_h, 5), "< 0.01", e_h < 0.01)
+    e_h = abs(h["actual"] - h["target"])
+    tol_h = max(10.0, 0.02 * h["target"])
+    pk = cons.get("peak_m", {})
+    add("IS-surface", "主岛台面（陆地高程中位数）= height_m（④ 的岛上气温在这个高度）；峰高 / 起伏只报告",
+        {"err_m": round(e_h, 1), "tol_m": round(tol_h, 1), "peak_m": pk.get("actual"), "relief_m": pk.get("relief_m"),
+         "relief_target_m": pk.get("relief_target_m")}, "≤ max(10 m, 2%)", e_h <= tol_h)
     ar = cons["arable_frac"]
     e_ar = abs(ar.get("actual", -1) - ar["target"])
     add("IS-arable", "可耕地 / 陆地 = arable_frac", round(e_ar, 5), "< 0.005", e_ar < 0.005)

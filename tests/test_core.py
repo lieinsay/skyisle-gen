@@ -187,6 +187,14 @@ def test_default_config_valid():
     assert cfg["s08"]["eps0"] > 0
 
 
+def test_resolved_toml_roundtrip():
+    """config.resolved.toml 必须读得回来：[island.resources] 的 ore_gain 用中文键（TOML 裸键只许 ASCII）。"""
+    import tomllib
+    from skyisle_gen.config import dump_toml
+    cfg = load_config()
+    assert tomllib.loads(dump_toml(cfg)) == cfg
+
+
 def test_lambda_order_enforced():
     with pytest.raises(ValueError):
         load_config(sets=["s08.half_distance_days.daily=[100.0,200.0]"])

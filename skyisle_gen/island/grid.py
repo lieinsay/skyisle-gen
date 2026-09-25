@@ -112,6 +112,18 @@ def label_components(mask: np.ndarray, connectivity: int = 4) -> tuple[np.ndarra
     return labels, int(uniq.size)
 
 
+def label_by_island(mask: np.ndarray, island_id: np.ndarray, connectivity: int = 8) -> tuple[np.ndarray, int]:
+    """群栅格上的连通分量，但不跨岛：按（分量号, 岛号）重新编号。两岛岸线贴着时（布局放不下会给出一格的岸距）
+    8 邻域的分量会跨岛，田块 / 林场就被并到别的岛上。不跨岛的分量编号顺序不变。返回 (labels，0 = 背景)，n。"""
+    lab, n = label_components(mask, connectivity)
+    if not n:
+        return lab, n
+    key = np.where(lab > 0, lab.astype(np.int64) * (int(island_id.max()) + 2) + island_id.astype(np.int64) + 1, 0)
+    uniq, inv = np.unique(key, return_inverse=True)
+    off = 0 if uniq[0] == 0 else 1
+    return (inv.reshape(lab.shape) + off).astype(lab.dtype), int(uniq.size - 1 + off)
+
+
 def largest_component(mask: np.ndarray) -> np.ndarray:
     labels, n = label_components(mask)
     if n <= 1:
@@ -238,6 +250,18 @@ def upsample_bilinear(a: np.ndarray, f: int, H: int, W: int) -> np.ndarray:
     tx = np.clip(fx - j0, 0.0, 1.0)[None, :]
     return (a[np.ix_(i0, j0)] * (1 - ty) * (1 - tx) + a[np.ix_(i0, j1)] * (1 - ty) * tx
             + a[np.ix_(i1, j0)] * ty * (1 - tx) + a[np.ix_(i1, j1)] * ty * tx)
+
+
+def smooth121(a: np.ndarray, mask: np.ndarray, passes: int = 1) -> np.ndarray:
+    """掩膜内的可分离 [1, 2, 1] / 4 平滑，passes 遍；掩膜外的格不参与（按权重归一），掩膜外输出 0。"""
+    m = mask.astype(np.float64)
+    a = np.where(mask, a, 0.0)
+    for _ in range(max(0, int(passes))):
+        for di, dj in ((1, 0), (0, 1)):
+            num = 2.0 * a * m + shift(a * m, di, dj, 0.0) + shift(a * m, -di, -dj, 0.0)
+            den = 2.0 * m + shift(m, di, dj, 0.0) + shift(m, -di, -dj, 0.0)
+            a = np.where(mask, num / np.maximum(den, 1e-9), 0.0)
+    return a
 
 
 def laplacian(a: np.ndarray, mask: np.ndarray) -> np.ndarray:

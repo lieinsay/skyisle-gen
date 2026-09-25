@@ -13,7 +13,7 @@ import math
 
 import numpy as np
 
-from .grid import binary_dilate, label_components, nearest_propagate
+from .grid import binary_dilate, label_by_island, nearest_propagate
 
 LC_FOREST, LC_SHRUB, LC_GRASS = 4, 5, 6
 GRADE_W = {"上": 1.5, "中": 1.0, "下": 0.5}
@@ -223,7 +223,7 @@ def clear_forest(g, sc, villages, hamlets, specials, res_km) -> dict:
     if "resource" in g and g.get("resources"):
         from .resources import RES_INDEX
         tim = g["resource"] == RES_INDEX["timber"]
-        lab, _ = label_components(tim, connectivity=8)
+        lab, _ = label_by_island(tim, island_id, 8)       # 不跨岛：两岛贴着时林场会被并到别的岛（seed 7 #418：33 → 201 km²、代表格挪到邻岛）
         g["resource"][tim & hit] = 0
         keep = tim & ~hit
         cnt = np.bincount(lab[keep].ravel(), minlength=int(lab.max()) + 1)

@@ -29,11 +29,13 @@
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 46 个测试，约 25 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
+  $py -m pytest tests -q                          # 48 个测试，约 30 s（tests/test_island.py 跑一个 1600 岛的小世界到 ④）
   ```
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
 - 产物目录 `out/` 已 gitignore；`config.resolved.toml` 是 `check/viz/probe` 读取配置的来源——改了 `[check]` 阈值要先 `run` 一次刷新它。
+  岛群生成器的 `[island]` 也是「default.toml ← 该 run 的快照 ← --set」：**改已有键的默认值，旧 run 仍用快照里的旧值**（先 `run` 刷新，全命中缓存、不到 1 s）；
+  **键的含义变了就改键名**（旧键留在快照里无害），否则旧 run 会拿旧含义的数去用。快照写出时中文键要加引号（`dump_toml` 曾把 `汇聚 = 4.0` 写成裸键，读不回来）。
 - 提交信息用中文；`out/`、`out-*/` 不提交。
 
 ## 架构速查
@@ -61,14 +63,15 @@ skyisle_gen/
                  /api/island?run=&node= 按需生成岛群并返回摘要，/api/island/preview 取总览图（探针折叠区「岛群生成器」；单文件版不支持）
                  **岛群调试台** `static/island.html`（`/island.html?run=&node=[&year=]`，探针里有链接）：2D canvas 图层（地形 / 晕渲 / 地表 / 坡度 / 汇流 / 岛号 / 当日海拔温度 / 地形区 / 资源分布；`&base=zone|resource&res=1&fly=行,列,缩放&day=N` 可直接打开；拉远时季相层 / 河道矢量自动降级）、
                  滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水与河宽水深 / 地形区 / 资源 / 当日温度）、资源点位与漫滩叠加层、主岛河流表（点按钮飞到河口）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
-                 「季相与水情」日图层（积雪 / 雪线、植被枯荣、作物阶段、溪涧断流、河道涨水漫滩、结冰、云海漫顶）与「天气特效」（雨雪风暴云雾风粒子）都在浏览器里按逐日天气推，不改产物（DESIGN-NOTES 四点十四）；
+                 「季相与水情」日图层（积雪 / 雪线、植被枯荣、作物阶段、溪涧按基流水库逐段断流 / 接回、河道涨水漫滩、冰按度日封冻 / 开河、云海漫顶；河道永远画，断流是干河床，四点二十）与「天气特效」（雨雪风暴云雾风粒子）都在浏览器里按逐日天气推，不改产物（DESIGN-NOTES 四点十四）；
                  数据通道 /api/island/data（island.json + climate.json 含 weather.days）、/api/island/raster（terrain.npz 定型数组 base64，> 160 万格抽稀）、POST /api/island/regen
   island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`skyisle island <节点>`，按需生成、不进十步管线、不回灌
                  （stages/ 与 check/ninegrid/polity/culture 不得 import 它，pytest 与 IS-iso 有静态断言）
                  __init__  island_config（[island] 段：默认值 ← run 的 resolved ← --set，不进缓存 key）、_node_inputs、build_terrain、generate
                  grid      局部分形噪声（LatticeNoise / FractalNoise，特征尺度以 km 给）、行程并查集连通分量、形态学、块均值 / 双线性、PNG 写出
-                 layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、峰高、索桥 / 短渡 / 导水槽 MST
-                 terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（锥 / 脊 / 台地）、粗网格侵蚀（fill_iter 保持排水、无量纲冲刷）、priority_fill / d8 / accumulate（5.3 共用）
+                 layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、各岛台面高度与目标起伏（岛龄 × 面积^0.3，另一条随机流）、索桥 / 短渡 / 导水槽 MST
+                 terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（锥 / 脊 / 台地）+ 幂次定测高曲线、粗网格**隐式河流功率下切**（只切汇流 ≥ 0.3 km² 的河道格、坡面靠休止角；随机流向 + 细网格平滑去方格纹）、
+                           仿射拟合（陆地中位 = 台面、峰 − 岸缘 = 目标起伏）；priority_fill / d8 / d8_random / accumulate（5.3 共用）
                  hydro     5.3 河（主岛按 has_river 调阈值）/ 溪涧 / 湖 / 河口盆地、地表 12 类、可耕地按适宜度分位取到 arable_frac；
                            流向在「路由面」上算（填平面 + 弯曲噪声 + 朝岸缘微倾：河在缓坡上蜿蜒、不贴崖边平行跑），湖与抬洼仍按原填平面
                  river     5.3b 河道成形（DESIGN-NOTES 四点十六）：水力几何 w = 5·Q^0.5 × 8、d = 0.35·Q^0.4 × 3（夸张系数设 1 = 真实比例）→ 河宽 ≥ 2 格时加宽；
@@ -84,7 +87,7 @@ skyisle_gen/
                            前哨、三个主家候选、都与城（城居人口 = 本邑 × 城居率 + 邦 × 集聚率，郭沿索桥，仓城 = 主泊场，祭台）→ settlements.json / png
                  tiers     聚落层级（四点十八）：**飞船取代车船、随处可停 → 没有码头**；专业聚落（矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地，按资源量、封顶非农 40%）、
                            集镇（中心地：6 km 直线跨岛服务半径、镇距 ≥ 10 km、邑治必为镇）、每个聚落旁一块泊场、村周开垦（林地 → 草坡 / 灌丛薪炭林，同步林木资源）
-                 check     第六节 IS-area/summit/arable/river/channel/season/link/det/iso（硬）+ RES-site/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
+                 check     第六节 IS-area/surface/arable/river/channel/season/link/det/iso（硬）+ RES-site/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
@@ -97,6 +100,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 
 1. **改了阶段代码就把 `pipeline.STAGE_VERSIONS[k]` +1**，否则旧缓存会被当成命中。只改配置不用改版本。
 2. **原则乙**：`s07/s08/s09_polity/ninegrid/polity` 不得出现 `["height_m"]`（check 与 pytest 都有静态断言）。高度只进 s04 温度、s05 落差因子、s06 爬升成本。
+   **`height_m` 的口径是主岛「台面」= 陆地高程中位数**（四点十九；④ 的岛上气温就在这个高度），不是峰高——峰由第三层按岛龄 × 面积长出来，`wall_m` 因此低估了真实山高。
    **陆地不受此限**：`area_km2`/`arable_frac` 是集雨面与人口容量（docs/02 §六），可以进社会推导——高度才是「地理决定贵贱」的禁区。`arable_frac` 刻意不从 `height_m` 推（保持这条卫生习惯）。
 3. **铁律五**：文化只以 share/strength 浮点场存在。不得从 argmax 派生地区/标签，不得 flood fill。P1b（每条边的 TV 差 ≤ a + b·(λ_max·cost + max L)）是硬项。
 4. **原则己**：每岛必须可达（史前扩散全覆盖）、每槽位 share 和为 1（本地行 ε>0 保证）。任何会造出孤岛的改动（采样、边集、G 阻断）都要查 `IL-ji`。
@@ -145,9 +149,11 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
   「干旱」口径 `arid_precip` 0.2（≈560 mm）；河流降水门槛 0.22；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
 
 - **岛群生成器（2026-09-17，PLAN-ISLAND，`[island]`）**：栅格 100 m（群外框 > 2048 格自动加倍，38,000 km² 的最大群落到 400 m）；岛数 12–80、Zipf 1.1、最小岛 0.3 km²；
-  岸距 1–15 km（beta(1.3, 2.2)）、索桥 ≤ 2 km 且岸缘高差 ≤ 250 m；侵蚀 30 / 8 轮在 ≤ 320 格的粗网格上；湖 = 填平深 ≥ 3 m 且 ≥ 0.5 km²（`pit_keep_m=2` 让它少见）；
-  河阈值 25 km²（不够则 0.2 × 主岛最大汇流；旧 60 / 0.35 河网太稀），河宽 / 水深夸张 ×8 / ×3、干流下切 25 m、漫滩 = 10 × 河宽、河谷最远 2 km；
-  地形区的局地起伏按 4 km 方窗，山地 ≥ 300 m、丘陵 ≥ 100 m，外加相对高度判据（空岛整体低缓，只按起伏判 686 m 峰的岛一格山地都没有）；盆地 = 汇流 ≥ max(5 km², 2%) 的河口集水区，≥ 15% 岛面积算大盆地；
+  岸距 1–15 km（beta(1.3, 2.2)）、索桥 ≤ 2 km 且岸缘高差 ≤ 250 m；**高度**：台面 = height_m（陆地中位），起伏按岛龄对数插值（1000 km² 时新岛 3000 → 老岛 450 m）× (面积/1000)^0.3 × 对数正态 0.25，
+  中位分位 新 0.22 / 中 0.2 / 老 0.38（台面离岛底太近时先压到 0.12 再压起伏；台面 < 600 m 的岛底 = 0.5 × 台面）；#1165：岸缘 570 → 峰 1,830 m，坡中位 5°、>15° 占 12%；
+  下切 15 / 8 轮在 ≤ 320 格的粗网格上（carve_k 0.3、m 0.5、河道阈 0.3 km²、随机流向 p 1.5、细网格平滑 2 遍）；湖 = 填平深 ≥ 3 m 且 ≥ 0.5 km²（`pit_keep_m=2` 让它少见）；
+  常年河按流量：年均 ≥ 0.3 m³/s（1,000 mm 约 19 km²、3,000 mm 约 6、300 mm 约 65；不够则 0.2 × 主岛最大汇流；旧固定 25 km²，四点二十），河宽 / 水深夸张 ×8 / ×3、干流下切 25 m、漫滩 = 10 × 河宽、河谷最远 2 km；
+  地形区的局地起伏按 4 km 方窗，山地 ≥ 300 m、丘陵 ≥ 100 m，外加相对高度判据（旧的平岛上只按起伏判一格山地都没有；有真实起伏后主要靠起伏判）；土层到 60° 才归零、坡向湿度修正 ±0.2、成林土层门槛 0.2（按平岛定的 40° / ±0.4 / 0.3 在真实坡上是一片灌丛）；盆地 = 汇流 ≥ max(5 km², 2%) 的河口集水区，≥ 15% 岛面积算大盆地；
   相对降水 → mm：150 + 3850 × p^1.3（第八节 a）；带界摆动 k_shift 0.35（±5° 左右）；季型阈值：四季分明 ≥ 20 °C、冷暖两季 ≥ 8 °C、雨旱 2.5 倍、风暴 / 窗口季差 0.25；
   雨日比例 0.12 + 0.30 × (季雨量/1000)^0.7、湿→湿持续 0.45、伽马形状 0.8、风暴日比例 0.35 × 强度^1.2（布尔覆盖率反解事件数）、云海漫顶只在峰高 < 800 m 的群。
   IS-daily 用 60 年样本：30 年时单季标准误约 5%，和 5% 的阈值同量级（DESIGN-NOTES 四点十四）。

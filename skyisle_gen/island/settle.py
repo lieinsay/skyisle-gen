@@ -11,7 +11,7 @@ import math
 
 import numpy as np
 
-from .grid import binary_dilate, distance_bands, label_components, shift
+from .grid import binary_dilate, distance_bands, label_by_island, shift
 
 HOUSEHOLD = 5.0
 
@@ -107,7 +107,8 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     land_per_hh = arable_km2 / max(1, farm_total)       # 户均地量 km²（农户）
 
     # ---------- 田块：可耕地 8 邻域连通块；小块并入散户田；大块按 80 户切分 ----------
-    lab, n_lab = label_components(arable, 8)
+    # 不跨岛：两岛岸线贴着时 8 邻域连通块会跨岛，村子兜底落在田上就落到了别的岛（seed 2026 #5246 曾因此在找泊场时崩溃）
+    lab, n_lab = label_by_island(arable, island_id, 8)
     fields_raster = np.zeros((H, W), dtype=np.int32)
     fields = []
     rng = _rng(ctx, node, "settle:fields")

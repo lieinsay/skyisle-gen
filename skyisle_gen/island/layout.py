@@ -1,4 +1,4 @@
-"""5.1 群内布局：岛数、大小（Zipf）、位置（泊松盘 + 主岛引力 + 板块走向）、峰高、索桥 / 短渡、导水槽网络。
+"""5.1 群内布局：岛数、大小（Zipf）、位置（泊松盘 + 主岛引力 + 板块走向）、台面高度与目标起伏、索桥 / 短渡、导水槽网络。
 
 只依赖行星产物里这个节点的标量（area_km2、main_area_km2、height_m、layered、age、板块边界核与类型），
 随机数来自 rng.entity_rng(seed, ISLAND_STREAM, f"island:{node}:layout")。
@@ -158,15 +158,29 @@ def place_islands(rng, profiles: list[np.ndarray], sizes: np.ndarray, axis: floa
     return centers, stats
 
 
-def peak_heights(rng, n: int, height_m: float, layered: bool, c: dict) -> np.ndarray:
-    peaks = np.empty(n)
-    peaks[0] = height_m
+def surface_heights(rng, n: int, height_m: float, layered: bool, c: dict) -> np.ndarray:
+    """各岛台面高度（陆地高程中位数，云带顶以上 m）：主岛 = height_m（③ 的口径，④ 的岛上气温就在这个高度），
+    其余 = height_m × U(surface_lo, surface_hi)；叠层群再 ± U(0.5, 1) × layered_spread_m。抽样次序与旧 peak_heights 相同，布局不变。"""
+    surf = np.empty(n)
+    surf[0] = height_m
     if n > 1:
-        peaks[1:] = height_m * rng.uniform(float(c["height_lo"]), float(c["height_hi"]), n - 1)
+        surf[1:] = height_m * rng.uniform(float(c["surface_lo"]), float(c["surface_hi"]), n - 1)
         if layered:
             sgn = rng.choice([-1.0, 1.0], n - 1)
-            peaks[1:] += sgn * float(c["layered_spread_m"]) * rng.uniform(0.5, 1.0, n - 1)
-    return np.maximum(peaks, 50.0)
+            surf[1:] += sgn * float(c["layered_spread_m"]) * rng.uniform(0.5, 1.0, n - 1)
+    return np.maximum(surf, 50.0)
+
+
+def relief_targets(rng, sizes: np.ndarray, ages: np.ndarray, c: dict) -> np.ndarray:
+    """各岛目标起伏（岸缘 → 峰，m）：参考起伏按岛龄在 relief_young_m（岛龄 0）与 relief_old_m（岛龄 1）之间对数插值，
+    × (面积 / 1000 km²)^relief_area_exp × 对数正态(relief_sigma)，夹 [relief_min_m, relief_max_m]。
+    锚点是现实的岛：1000 km² 上下的新火山岛 2000 m 级（特内里费、济州、马德拉），中年岛 1000 m 级（瓦胡、罗得），老岛几百米（毛里求斯、巴巴多斯）。"""
+    a = np.clip(np.asarray(ages, dtype=np.float64), 0.0, 1.0)
+    ly, lo = math.log(float(c["relief_young_m"])), math.log(float(c["relief_old_m"]))
+    ref = np.exp(ly + a * (lo - ly))
+    R = ref * (np.asarray(sizes, dtype=np.float64) / 1000.0) ** float(c["relief_area_exp"])
+    R *= np.exp(rng.normal(0.0, float(c["relief_sigma"]), R.size))
+    return np.clip(R, float(c["relief_min_m"]), float(c["relief_max_m"]))
 
 
 def shoreline_gaps(masks_pos: list[tuple[np.ndarray, int, int]], res_km: float, centers_cell: np.ndarray,

@@ -4,7 +4,8 @@
       单年围绕气候值波动、多年平均回到气候值（IS-daily：30 年样本 < 5%）。
 风暴：按该季风暴强度生成持续 1–4 天的事件（泊松个数），风暴日强制大风、大雨、禁航。
 风：围绕该季平均风向风速的 AR(1) 扰动；温度：季节曲线 + AR(1) 日际扰动，雨日 / 风暴日偏凉。
-云海漫顶：低岛（峰高 < fog_peak_max_m）在静风、潮湿的日子被云海漫上岸缘 —— 本世界独有的天气类型。
+云海漫顶：低岛（台面 < fog_surface_max_m）在静风、潮湿的日子被云海漫上岸缘 —— 本世界独有的天气类型。
+逐日气温是台面（③ 的 height_m = 主岛陆地高程中位数）处的气温，与 ④ 同口径；某格气温 = temp + 直减率 × (台面 − 格高)。
 随机数：rng.entity_rng(seed, ISLAND_STREAM, f"island:{node}:weather:{year}")，改年份不动地形与气候。
 """
 from __future__ import annotations
@@ -42,7 +43,7 @@ def season_params(clim: dict, wc: dict) -> list[dict]:
     return out
 
 
-def simulate_year(rng, clim: dict, daily: dict, params: list[dict], peak_m: float, wc: dict, rim_m: float | None = None,
+def simulate_year(rng, clim: dict, daily: dict, params: list[dict], surface_m: float, wc: dict, rim_m: float | None = None,
                   lapse_c_per_km: float = 6.0) -> dict:
     cal = clim["calendar"]
     ydays = int(round(cal["year_days"]))
@@ -109,16 +110,16 @@ def simulate_year(rng, clim: dict, daily: dict, params: list[dict], peak_m: floa
     temp = daily["temp_c"] + et - float(wc["rain_cool_c"]) * wet - float(wc["storm_cool_c"]) * storm
     # 云海漫顶：低岛、静风、潮湿（今日或昨日有雨，或本季雨日多）、非风暴
     fog = np.zeros(n, dtype=bool)
-    if peak_m < float(wc["fog_peak_max_m"]):
-        low = 1.0 - min(1.0, max(0.0, (peak_m - 300.0) / max(1.0, float(wc["fog_peak_max_m"]) - 300.0)))
+    if surface_m < float(wc["fog_surface_max_m"]):
+        low = 1.0 - min(1.0, max(0.0, (surface_m - 300.0) / max(1.0, float(wc["fog_surface_max_m"]) - 300.0)))
         humid = np.maximum(wet.astype(float), np.roll(wet, 1).astype(float) * 0.7) * 0.6 + np.array([params[int(s)]["f_wet"] for s in season]) * 0.4
         calm = np.clip(1.0 - speed / float(wc["fog_calm_ms"]), 0.0, 1.0)
         p_fog = float(wc["fog_p0"]) * (0.3 + 0.7 * low) * calm * humid
         fog = (rng.uniform(0.0, 1.0, n) < p_fog) & ~storm & (precip < float(wc["heavy_rain_mm"]))
-    # 天气类型。雨 / 雪按岸缘气温分：逐日 temp 是主岛峰高处的气温，岸缘 = temp + 直减率 × (峰 − 岸缘)
+    # 天气类型。雨 / 雪按岸缘气温分：逐日 temp 是台面处的气温，岸缘 = temp + 直减率 × (台面 − 岸缘)（岸缘在台面之下，更暖）
     cloudy = ~wet & (rng.uniform(0.0, 1.0, n) < np.array([params[int(s)]["f_wet"] for s in season]) * float(wc["cloudy_k"]))
-    rim = peak_m if rim_m is None else float(rim_m)
-    t_rim = temp + lapse_c_per_km * max(0.0, peak_m - rim) / 1000.0
+    rim = surface_m if rim_m is None else float(rim_m)
+    t_rim = temp + lapse_c_per_km * (surface_m - rim) / 1000.0
     snowy = t_rim <= float(wc["snow_temp_c"])
     heavy = precip >= float(wc["heavy_rain_mm"])
     t = np.full(n, 0, dtype=np.int8)                      # 晴
@@ -146,10 +147,10 @@ def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) ->
     clim = g["climate"]
     daily = g["daily"]
     params = season_params(clim, wc)
-    peak = float(g["json"]["islands"][0]["peak_m"])
+    surface = float(g["inp"]["height_m"])
     rim = float(g["json"]["islands"][0]["rim_m"])
     rng = _rng(ctx, node, f"weather:{year}")
-    y = simulate_year(rng, clim, daily, params, peak, wc, rim_m=rim, lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
+    y = simulate_year(rng, clim, daily, params, surface, wc, rim_m=rim, lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
     names = clim["season_names"]
     n = y["day"].size
     days = []
@@ -187,12 +188,13 @@ def multi_year_stats(ctx, node: int, c: dict, g: dict, years: int = 30) -> dict:
     wc = c["weather"]
     clim = g["climate"]
     params = season_params(clim, wc)
-    peak = float(g["json"]["islands"][0]["peak_m"])
+    surface = float(g["inp"]["height_m"])
     n_s = int(clim["calendar"]["seasons"])
     P = np.zeros((years, n_s))
     F = np.zeros((years, n_s))
     for yv in range(years):
-        y = simulate_year(_rng(ctx, node, f"weather:{yv}"), clim, g["daily"], params, peak, wc, rim_m=float(g["json"]["islands"][0].get("rim_m", peak)))
+        y = simulate_year(_rng(ctx, node, f"weather:{yv}"), clim, g["daily"], params, surface, wc, rim_m=float(g["json"]["islands"][0]["rim_m"]),
+                          lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
         for s in range(n_s):
             m = y["season"] == s
             P[yv, s] = y["precip_mm"][m].sum()

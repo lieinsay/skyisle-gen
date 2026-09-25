@@ -21,6 +21,11 @@ def precip_mm(p_rel: float, c: dict) -> float:
     return lo + (hi - lo) * float(np.clip(p_rel, 0.0, 1.0)) ** e
 
 
+def river_area_for_q(q_m3s: float, P_mm: float, runoff: float, year_s: float) -> float:
+    """年均流量 q（m³/s）对应的汇流面积 km²：A = q × 一年秒数 / (年降水 m × 径流系数)。river.discharge_m3s 的反函数。"""
+    return q_m3s * year_s / max(1e-9, P_mm / 1000.0 * runoff) / 1e6
+
+
 def _wind_exposure(H: int, W: int, u: float, v: float, slope_dir_x, slope_dir_y):
     """迎风 = 坡面法线朝向来风（风向量 (u, v) 指向下游）。返回 [-1, 1]，正 = 迎风。"""
     sp = math.hypot(u, v)
@@ -120,8 +125,10 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
         thr_stream = float(hc["stream_min_km2"]) * P_mm
         if k == 0:
             if inp["has_river"]:
-                # 常年河的阈值：默认 river_min_km2，但至少让主岛最大汇流的 river_reach_frac 成河（调阈值直到成立）
-                thr_river = min(float(hc["river_min_km2"]), float(hc["river_reach_frac"]) * float(Akm.max()))
+                # 常年河的阈值按流量：年均流量 ≥ river_min_q_m3s 才算河（够宽够深、旱季不断流），换算成汇流面积——
+                # 干岛要大得多的集雨面，湿岛小流域就够；但至少让主岛最大汇流的 river_reach_frac 成河（has_river 是行星层给的）
+                thr_river = min(river_area_for_q(float(hc["river_min_q_m3s"]), P_mm, float(hc["runoff_coef"]), year_s),
+                                float(hc["river_reach_frac"]) * float(Akm.max()))
                 river_thr_km2 = thr_river
                 per = Akm >= thr_river
                 # 分级：按 river_size（= 主岛面积 × 降水，行星层）定最大河的级别
@@ -158,9 +165,11 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
         n_falls += rinfo["n_stream_falls"] + len(rinfo["rivers"])
         max_cut = max(max_cut, rinfo.get("max_cut_m", 0.0))
         for L in rinfo.get("lines", []):
-            river_lines.append({"island": k, "pts": [[round(q[0] + r0, 2), round(q[1] + c0, 2), q[2], q[3]] for q in L]})
+            river_lines.append({"island": k, "pts": [[round(q[0] + r0, 2), round(q[1] + c0, 2), q[2], q[3], q[4]] for q in L]})
         if k == 0:
             rivers_info = rinfo["rivers"]
+            for rv_ in rivers_info:        # 切片坐标 → 群栅格坐标（调试台「飞到河口」、资源层的瀑布后洞都按群栅格读）
+                rv_["mouth_cell"] = [rv_["mouth_cell"][0] + int(r0), rv_["mouth_cell"][1] + int(c0)]
         J["n_lakes"] = n_lakes
         J["lake_km2"] = round(float(lk.sum()) * cell_km2, 3)
         J["max_flowacc_km2"] = round(float(Akm.max()), 2)
@@ -168,6 +177,16 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
         J["has_stream"] = bool((stream[sl][mk] > 0).any())
     river[lake] = 0
     stream[lake] = 0
+    # 台面校正：河道下切 / 河谷压低了主岛的一圈格子，陆地中位比 height_m 低几米（100 m 栅格约 4 m、300 m 约 10 m）——主岛整体抬回。
+    # 平移不改坡度、河床单调与湖面；岸缘 / 峰 / 崖高同步（后面的地表、资源、天气都读它们）
+    m0 = island_id == 0
+    dz = float(inp["height_m"]) - float(np.nanmedian(height[m0]))
+    height[m0] += dz
+    filled[m0] += dz
+    J0 = g["json"]["islands"][0]
+    J0["rim_m"] = round(J0["rim_m"] + dz, 1)
+    J0["peak_m"] = round(J0["peak_m"] + dz, 1)
+    J0["cliff_m"] = round(J0["rim_m"] - J0["keel_m"], 1)
 
     # ---------- 地表分类 ----------
     slope = slope_deg(np.where(land, height, np.nan), land, res_m)
@@ -190,8 +209,8 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     age_arr = np.zeros((H, W))
     for k, J in enumerate(g["json"]["islands"]):
         age_arr[island_id == k] = J["age"]
-    soil = np.clip(0.35 + 0.5 * age_arr, 0, 1) * np.clip(1.0 - slope / 40.0, 0.0, 1.0) * (0.7 + 0.3 * np.clip(np.log1p(acc_km2) / 4.0, 0, 1))
-    wet = np.clip(P_mm / 1500.0, 0.2, 2.0) * (1.0 + 0.4 * expo)
+    soil = np.clip(0.35 + 0.5 * age_arr, 0, 1) * np.clip(1.0 - slope / float(lc["soil_slope_zero_deg"]), 0.0, 1.0) * (0.7 + 0.3 * np.clip(np.log1p(acc_km2) / 4.0, 0, 1))
+    wet = np.clip(P_mm / 1500.0, 0.2, 2.0) * (1.0 + float(lc["aspect_wet_gain"]) * expo)
     dist_water = distance_bands((river > 0) | lake, int(lc["water_near_cells"]))
     near_water = np.clip(1.0 - dist_water / (int(lc["water_near_cells"]) + 1.0), 0.0, 1.0) ** 0.5
 
@@ -254,6 +273,8 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     from .output import LANDCOVER_PALETTE
     J["landcover"]["palette"] = LANDCOVER_PALETTE
     J["hydro"] = {"precip_mm": round(P_mm, 0), "river_threshold_km2": None if river_thr_km2 is None else round(river_thr_km2, 2),
+                  "perennial_q_m3s": float(hc["river_min_q_m3s"]), "stream_min_km2": float(hc["stream_min_km2"]),
+                  "runoff_coef": float(hc["runoff_coef"]),
                   "main_max_flowacc_km2": J["islands"][0]["max_flowacc_km2"],
                   "n_lakes": int(sum(i["n_lakes"] for i in J["islands"])),
                   "lake_km2": round(float(lake.sum()) * cell_km2, 3),
@@ -268,8 +289,12 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
                   "wind_ms": [round(u, 2), round(v, 2)],
                   "river_levels": {"1": "小河", "2": "中河", "3": "大河", "stream": "季节性溪涧（water.png 值 1）"}}
     J["constraints"]["arable_frac"]["actual"] = round(float((arable > 0).sum()) / max(1, n_land), 4)
+    # 河道下切 / 抬洼 / 湖面改过高程：台面（主岛陆地中位）与峰按最终高程重记（IS-surface 校的是这个）
+    hm = height[island_id == 0]
+    J["constraints"]["height_m"]["actual"] = round(float(np.nanmedian(hm)), 1)
+    J["constraints"]["peak_m"]["actual"] = round(float(np.nanmax(hm)), 1)
     J["constraints"]["has_river"]["actual"] = bool(J["islands"][0]["has_perennial_river"])
-    log(f"  水系：降水 {P_mm:.0f} mm，主岛河 {'有' if J['constraints']['has_river']['actual'] else '无'}（阈 {river_thr_km2}），湖 {J['hydro']['n_lakes']}，盆地 {basin_info.get('n_large', 0)} 大；"
+    log(f"  水系：降水 {P_mm:.0f} mm，主岛河 {'有' if J['constraints']['has_river']['actual'] else '无'}（阈 {'—' if river_thr_km2 is None else f'{river_thr_km2:.1f} km²'}），湖 {J['hydro']['n_lakes']}，盆地 {basin_info.get('n_large', 0)} 大；"
         f"可耕 {J['constraints']['arable_frac']['actual']:.4f} / {inp['arable_frac']:.4f}")
 
 

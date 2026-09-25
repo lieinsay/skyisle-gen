@@ -918,7 +918,7 @@ async function loadIsland(i,force){
     const S=C.seasons.map(s=>`<tr><td>${s.name}</td><td>${s.days[0]}–${s.days[1]}</td><td>${fmt(s.temp_c,1)}</td><td>${fmt(s.precip_mm,0)}</td><td>${fmt(s.storm,2)}</td><td>${fmt(s.window,2)}</td><td>${fmt(s.wind.speed_ms,0)} m/s 自 ${fmt(s.wind.from_deg,0)}°</td></tr>`).join('');
     const lc=Object.entries(j.landcover).filter(([k,v])=>v>0.005).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k} ${fmt(v*100,0)}%`).join(' · ');
     const wt=j.weather&&j.weather.types?Object.entries(j.weather.types).map(([k,v])=>`${k} ${v}`).join(' · '):'';
-    box.innerHTML=`<div>${j.n_islands} 岛（索桥 ${j.layout.n_bridges} / 短渡 ${j.layout.n_ferries}）· ${j.meta.res_m} m/格 · 陆地 ${fmt(c.area_km2.actual,0)} / ${fmt(c.area_km2.target,0)} km² · 主岛峰 ${fmt(c.height_m.actual,0)} m · 可耕 ${fmt(c.arable_frac.actual,3)} · 河 ${c.has_river.actual?'有':'无'} · 湖 ${j.hydro.n_lakes} · 降水 ${fmt(j.hydro.precip_mm,0)} mm</div>
+    box.innerHTML=`<div>${j.n_islands} 岛（索桥 ${j.layout.n_bridges} / 短渡 ${j.layout.n_ferries}）· ${j.meta.res_m} m/格 · 陆地 ${fmt(c.area_km2.actual,0)} / ${fmt(c.area_km2.target,0)} km² · 主岛台面 ${fmt(c.height_m.actual,0)} m${c.peak_m?' · 峰 '+fmt(c.peak_m.actual,0)+' m':''} · 可耕 ${fmt(c.arable_frac.actual,3)} · 河 ${c.has_river.actual?'有':'无'} · 湖 ${j.hydro.n_lakes} · 降水 ${fmt(j.hydro.precip_mm,0)} mm</div>
       <div>地表：${lc}</div>
       <div><b>${C.season_type_zh}</b>（全年温差 ${fmt(C.annual.season_range_c,1)} °C，滞后 ${fmt(C.thermal.lag_island_days,0)} 日，带界摆幅 ±${fmt(C.thermal.band_shift_amp_deg,1)}°）</div>
       <table class="kv"><tr><td>季</td><td>日</td><td>°C</td><td>mm</td><td>风暴</td><td>窗口</td><td>风</td></tr>${S}</table>

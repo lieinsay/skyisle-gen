@@ -136,13 +136,14 @@ def carve_channels(h, hf, mk, lake, ri, rj, Akm, river_lvl, stream, P_mm: float,
         info["rivers"] = rivers
     info["n_stream_falls"] = int((center_s.ravel() & (recv < 0)).sum())
     info["max_cut_m"] = round(float(np.max(np.where(mk, h - h_new, 0.0))), 1)
-    info["lines"] = trace_lines(seed, mk, recv, width, np.where(center_r, river_lvl, 0), H, W)
+    info["lines"] = trace_lines(seed, mk, recv, width, np.where(center_r, river_lvl, 0), H, W, Akm)
     return h_new, lvl_out, width_out, depth_out, floodplain, info
 
 
-def trace_lines(seed, mk, recv, width, lvl, H: int, W: int) -> list[list[list[float]]]:
+def trace_lines(seed, mk, recv, width, lvl, H: int, W: int, acc=None) -> list[list[list[float]]]:
     """河道中心线折线（给矢量渲染）：从每个源头顺流走到汇入已走过的格（汇流点）或出口为止。
-    点 = [行 + 0.5, 列 + 0.5, 河宽 m, 级别（0 = 溪涧）]，局部切片坐标；出口多补一个点落在崖缘外半格（河跌下崖缘处）。"""
+    点 = [行 + 0.5, 列 + 0.5, 河宽 m, 级别（0 = 溪涧）, 汇流 km²]，局部切片坐标；出口多补一个点落在崖缘外半格（河跌下崖缘处）。
+    汇流给调试台的水情用：干旱时溪涧从源头往下游一段段断流（汇流小于当日门槛的段），不是整条忽有忽无。"""
     sd = seed.ravel()
     rl = recv.tolist()
     idx = np.where(sd)[0]
@@ -151,6 +152,7 @@ def trace_lines(seed, mk, recv, width, lvl, H: int, W: int) -> list[list[list[fl
     ok = (tgt >= 0) & sd[np.maximum(tgt, 0)]
     np.add.at(indeg, tgt[ok], 1)
     wf, lf = width.ravel(), lvl.ravel()
+    af = np.zeros(H * W) if acc is None else np.asarray(acc, dtype=np.float64).ravel()
     visited = np.zeros(H * W, dtype=bool)
     mkf = mk.ravel()
     lines = []
@@ -158,7 +160,7 @@ def trace_lines(seed, mk, recv, width, lvl, H: int, W: int) -> list[list[list[fl
         pts, k = [], s
         while True:
             i, j = divmod(k, W)
-            pts.append([i + 0.5, j + 0.5, round(float(wf[k]), 1), int(lf[k])])
+            pts.append([i + 0.5, j + 0.5, round(float(wf[k]), 1), int(lf[k]), round(float(af[k]), 2)])
             if visited[k] and len(pts) > 1:
                 break
             visited[k] = True
@@ -168,7 +170,7 @@ def trace_lines(seed, mk, recv, width, lvl, H: int, W: int) -> list[list[list[fl
                 for di, dj in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
                     a, b = i + di, j + dj
                     if not (0 <= a < H and 0 <= b < W) or not mkf[a * W + b]:
-                        pts.append([i + 0.5 + 0.5 * di, j + 0.5 + 0.5 * dj, pts[-1][2], pts[-1][3]])
+                        pts.append([i + 0.5 + 0.5 * di, j + 0.5 + 0.5 * dj, pts[-1][2], pts[-1][3], pts[-1][4]])
                         break
                 break
             if not sd[r]:

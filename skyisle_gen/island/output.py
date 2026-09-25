@@ -24,7 +24,8 @@ LANDCOVER_PALETTE = [(20, 24, 40), (90, 80, 75), (150, 150, 150), (170, 200, 120
 
 
 def _smooth_line(P: np.ndarray, n: int = 4) -> np.ndarray:
-    """拉普拉斯松弛（首尾不动）+ 两次 Chaikin 切角：抹掉 D8 的 45° 台阶。P = [[行, 列, 宽], ...]。与调试台同口径。"""
+    """拉普拉斯松弛（首尾不动）+ 两次 Chaikin 切角：抹掉 D8 的 45° 台阶。P = [[行, 列, 宽(, 级别)], ...]。与调试台同口径：
+    切角新点的级别取两端较大者（第 4 列插值后向上取整）。"""
     Q = P.astype(float).copy()
     for _ in range(n):
         if Q.shape[0] > 2:
@@ -37,35 +38,42 @@ def _smooth_line(P: np.ndarray, n: int = 4) -> np.ndarray:
         mid[0::2] = 0.75 * a + 0.25 * b
         mid[1::2] = 0.25 * a + 0.75 * b
         Q = np.vstack([Q[:1], mid, Q[-1:]])
+    if Q.shape[1] > 3:
+        Q[:, 3] = np.ceil(Q[:, 3] - 1e-9)
     return Q
 
 
+def river_min_width(w_m: np.ndarray, lvl: np.ndarray) -> np.ndarray:
+    """线宽下限（points）随河宽连续变化：2.5 m 的源流 0.3 → 百米宽的干流 1.3，中 / 大河再加 0.25 / 0.5——河从源头渐粗，不在 25 km² 阈值处钝头冒出。"""
+    t = np.clip(np.log(np.maximum(w_m, 2.5) / 2.5) / math.log(40.0), 0.0, 1.0)
+    return 0.3 + 1.0 * t + 0.25 * np.maximum(0, lvl - 1)
+
+
 def _draw_rivers(ax, g: dict, to_xy, cell_px: float, sel_island: int | None = None, streams: bool = True) -> None:
-    """河道矢量（rivers 中心线）：平滑折线，线宽 = 河宽 × 显示比例（points），小 / 中 / 大河有最细线宽。
-    to_xy(行, 列) → 数据坐标；cell_px = 一格在图上多少 points。"""
+    """河道矢量（rivers 中心线）：平滑折线，每段按自己的级别着色（干流线从源头的溪涧段起算，源流段是溪涧色），
+    线宽 = 河宽 × 显示比例（points），下限随河宽渐变。to_xy(行, 列) → 数据坐标；cell_px = 一格在图上多少 points。"""
     from matplotlib.collections import LineCollection
     lines = g.get("river_lines")
     if not lines:
         return
     res_m = g["json"]["raster"]["res_m"]
-    cols = {0: (0.47, 0.67, 1.0, 0.55), 1: (0.25, 0.5, 0.91, 1.0), 2: (0.16, 0.39, 0.85, 1.0), 3: (0.09, 0.28, 0.75, 1.0)}
-    min_w = {0: 0.35, 1: 0.9, 2: 1.2, 3: 1.5}
+    cols = np.array([(0.47, 0.67, 1.0, 0.55), (0.25, 0.5, 0.91, 1.0), (0.16, 0.39, 0.85, 1.0), (0.09, 0.28, 0.75, 1.0)])
     for want_stream in ((True, False) if streams else (False,)):
         segs, lws, cs = [], [], []
         for L in lines:
             if sel_island is not None and L["island"] != sel_island:
                 continue
             P = np.array(L["pts"], dtype=float)
-            lvl = int(P[:, 3].max())
-            if (lvl == 0) != want_stream:
+            if (int(P[:, 3].max()) == 0) != want_stream:
                 continue
-            Q = _smooth_line(P[:, :3])
+            Q = _smooth_line(P)
             x, y = to_xy(Q[:, 0], Q[:, 1])
             xy = np.stack([x, y], axis=1)
-            w = 0.5 * (Q[:-1, 2] + Q[1:, 2]) / res_m * cell_px
+            w_m = 0.5 * (Q[:-1, 2] + Q[1:, 2])
+            lv = Q[:-1, 3].astype(int)
             segs.extend(np.stack([xy[:-1], xy[1:]], axis=1))
-            lws.extend(np.maximum(w, min_w[lvl]).tolist())
-            cs.extend([cols[lvl]] * (Q.shape[0] - 1))
+            lws.extend(np.maximum(w_m / res_m * cell_px, river_min_width(w_m, lv)).tolist())
+            cs.extend(cols[np.clip(lv, 0, 3)].tolist())
         if segs:
             ax.add_collection(LineCollection(segs, linewidths=lws, colors=cs, capstyle="round", joinstyle="round", zorder=4))
 
@@ -101,8 +109,8 @@ def write_terrain(out: Path, g: dict) -> None:
         write_png8(out / "water.png", water, [(0, 0, 0), (120, 170, 255), (80, 130, 240), (50, 100, 220), (20, 70, 200), (30, 60, 170), (150, 200, 190)])
         write_png8(out / "arable.png", g["arable"] * 120, None)
     if "river_lines" in g:
-        # 河道中心线（矢量）：点 = [行, 列, 河宽 m, 级别 0 溪涧 / 1–3 小中大河]，群栅格坐标（格心 = 整数 + 0.5）
-        (out / "rivers.json").write_text(json.dumps({"note": "河道中心线：每条从源头顺流到汇流点或出口；点 = [行, 列, 河宽 m, 级别（0 = 季节性溪涧）]，群栅格坐标",
+        # 河道中心线（矢量）：点 = [行, 列, 河宽 m, 级别 0 溪涧 / 1–3 小中大河, 汇流 km²]，群栅格坐标（格心 = 整数 + 0.5）
+        (out / "rivers.json").write_text(json.dumps({"note": "河道中心线：每条从源头顺流到汇流点或出口；点 = [行, 列, 河宽 m, 级别（0 = 季节性溪涧）, 汇流 km²]，群栅格坐标",
                                                      "res_m": g["json"]["raster"]["res_m"], "lines": g["river_lines"]},
                                                     ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (out / "island.json").write_text(json.dumps(g["json"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
@@ -220,7 +228,7 @@ def write_preview(out: Path, g: dict) -> Path:
         sub = sub[rr.min():rr.max() + 1, cc.min():cc.max() + 1]
         ax3.imshow(_hillshade_rgb(sub, res_m, float(np.nanmin(sub)), float(np.nanmax(sub)), "terrain"), interpolation="nearest")
         ax3.contour(np.where(np.isnan(sub), np.nanmin(sub), sub), levels=10, colors="k", linewidths=0.3, alpha=0.5)
-        ax3.set_title(f"主岛放大（{J['islands'][0]['age_zh']}，峰 {J['islands'][0]['peak_m']:.0f} m，岸缘 {J['islands'][0]['rim_m']:.0f} m）", fontsize=9)
+        ax3.set_title(f"主岛放大（{J['islands'][0]['age_zh']}，台面 {J['constraints']['height_m']['actual']:.0f} m，峰 {J['islands'][0]['peak_m']:.0f} m，岸缘 {J['islands'][0]['rim_m']:.0f} m）", fontsize=9)
         ax3.set_xticks([])
         ax3.set_yticks([])
     if "landcover" in J:
@@ -282,7 +290,7 @@ def write_preview_main(out: Path, g: dict) -> Path:
     ax.text(10 + km / 2, h.shape[0] - 16, "10 km", color="w", ha="center", fontsize=9)
     i0 = J["islands"][0]
     hy = J.get("hydro", {})
-    ax.set_title(f"主岛（{i0['age_zh']}，{i0['area_km2']:.0f} km²，峰 {i0['peak_m']:.0f} m，岸缘 {i0['rim_m']:.0f} m，崖 {i0['cliff_m']:.0f} m）"
+    ax.set_title(f"主岛（{i0['age_zh']}，{i0['area_km2']:.0f} km²，台面 {J['constraints']['height_m']['actual']:.0f} m，峰 {i0['peak_m']:.0f} m，岸缘 {i0['rim_m']:.0f} m，崖 {i0['cliff_m']:.0f} m）"
                  + (f" · 河阈 {hy.get('river_threshold_km2')} km² · 湖 {i0.get('n_lakes', 0)} · 盆地 {hy.get('main_basins', {}).get('n_basins', '-')}（大 {hy.get('main_basins', {}).get('n_large', '-')}）" if hy else ""),
                  fontsize=10)
     ax.set_xticks([])
