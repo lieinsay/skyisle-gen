@@ -97,3 +97,123 @@ def test_kmeans_split_matches():
         a = _kmeans_split(entity_rng(7, 21, key), ii, jj, k)
         b = core.kmeans_split(7, key, ii.astype(np.int32).tolist(), jj.astype(np.int32).tolist(), k)
         assert np.array_equal(np.asarray(a), b), t
+
+
+# ---------------------------------------------------------------- 小世界：整群 generate 两个后端逐字节对照
+SMALL = ["s03.islands.n_islands=1600"]
+
+
+@pytest.fixture(scope="module")
+def small_ctx(tmp_path_factory):
+    from skyisle_gen.config import load_config
+    from skyisle_gen.pipeline import Context, run
+    root = tmp_path_factory.mktemp("p6b")
+    cfg = load_config(sets=SMALL + ["run.id=p6b"])
+    out = run(cfg, 7, root, upto=4)
+    return Context(cfg, 7, out)
+
+
+def _nodes(ctx, k=3):
+    isl = ctx.load_npz(3, "islands")
+    cli = ctx.load_npz(4, "climate_islands")
+    ok = np.where(cli["has_river"] & (isl["main_area_km2"] < 2500) & (isl["main_area_km2"] > 200))[0]
+    dry = np.where(~cli["has_river"] & (isl["main_area_km2"] < 2500) & (isl["main_area_km2"] > 200))[0]
+    return [int(x) for x in ok[:k]] + [int(x) for x in dry[:1]]      # 有河的几群 + 一个无河的（蓄水池、祭台的另一条路）
+
+
+def _products(out):
+    import json
+    res = {}
+    for p in sorted(out.iterdir()):
+        if p.name == "island.json":
+            J = json.loads(p.read_text(encoding="utf-8"))
+            J["meta"].pop("seconds", None)
+            J["meta"].pop("engine", None)
+            res[p.name] = json.dumps(J, sort_keys=True, ensure_ascii=False)
+        elif p.suffix in (".npz", ".png", ".csv", ".json"):
+            res[p.name] = p.read_bytes()
+    return res
+
+
+def _gen(ctx, node, backend, root, threads=4, **kw):
+    from skyisle_gen import island as isl
+    out, g = isl.generate(ctx, node, res_m=300.0, sets=[f"engine.backend={backend}", f"engine.threads={threads}"], log=lambda *a: None,
+                          return_state=True, out_root=root, **kw)
+    ctx.cfg["engine"]["backend"] = "python"
+    return out, g
+
+
+def test_generate_products_identical(small_ctx, tmp_path):
+    """整群 generate（地形 → 资源 → 四季 → 天气 → 聚落）：两个后端的整套产物逐字节相同（island.json 只差 meta.seconds / engine）。"""
+    for node in _nodes(small_ctx):
+        a, ga = _gen(small_ctx, node, "python", tmp_path / "py")
+        b, gb = _gen(small_ctx, node, "cpp", tmp_path / "cpp")
+        pa, pb = _products(a), _products(b)
+        assert sorted(pa) == sorted(pb), node
+        bad = [k for k in pa if pa[k] != pb[k]]
+        assert not bad, (node, bad)
+        assert gb["json"]["meta"]["engine"] == "cpp"
+        for k in ("terrain_zone", "patch_id", "resource", "res_field", "settle_raster", "settle_fields", "landcover"):
+            assert ga[k].dtype == gb[k].dtype and np.array_equal(ga[k], gb[k]), (node, k)
+        assert ga["settle"] == gb["settle"] and ga["resources"] == gb["resources"] and ga["climate"] == gb["climate"]
+        for k in ("day", "season", "temp_c", "wind_u", "wind_v", "precip_mm"):
+            assert np.array_equal(ga["daily"][k], gb["daily"][k]), (node, k)
+
+
+def test_generate_cpp_thread_independent(small_ctx, tmp_path):
+    node = _nodes(small_ctx, 1)[0]
+    a, _ = _gen(small_ctx, node, "cpp", tmp_path / "t1", threads=1)
+    b, _ = _gen(small_ctx, node, "cpp", tmp_path / "t4", threads=4)
+    assert _products(a) == _products(b)
+
+
+def test_steps_partial_match(small_ctx, tmp_path):
+    """只算到资源 / 四季 / 天气（steps 2–4）时两个后端也相同。"""
+    node = _nodes(small_ctx, 1)[0]
+    for steps in (2, 3, 4):
+        a, _ = _gen(small_ctx, node, "python", tmp_path / f"p{steps}", steps=steps)
+        b, _ = _gen(small_ctx, node, "cpp", tmp_path / f"c{steps}", steps=steps)
+        assert _products(a) == _products(b), steps
+
+
+def test_lod_block_reduce_matches(small_ctx):
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.lod import build_lod
+    node = _nodes(small_ctx, 1)[0]
+    outs = {}
+    for b in ("python", "cpp"):
+        c = isl.island_config(small_ctx, [f"engine.backend={b}"])
+        outs[b] = build_lod(small_ctx, node, c, [1600.0, 3200.0], native_res_m=400.0)
+    small_ctx.cfg["engine"]["backend"] = "python"
+    for res in outs["python"]:
+        A, B = outs["python"][res][0], outs["cpp"][res][0]
+        for k in A:
+            assert A[k].dtype == B[k].dtype and np.array_equal(A[k], B[k], equal_nan=True), (res, k)
+
+
+def test_is_daily_and_climate_only_match(small_ctx, tmp_path):
+    """IS-daily 的多年逐日（C++ 的 weather_years）与全量季型（climate_only）与 Python 版同值。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.climate import build_climate
+    from skyisle_gen.island.engine import climate_only_cpp
+    from skyisle_gen.island.weather import multi_year_stats
+    node = _nodes(small_ctx, 1)[0]
+    _, g = _gen(small_ctx, node, "python", tmp_path / "d")
+    c = isl.island_config(small_ctx)
+    st_py = multi_year_stats(small_ctx, node, c, g, years=10)
+    c = isl.island_config(small_ctx, ["engine.backend=cpp"])
+    st_cpp = multi_year_stats(small_ctx, node, c, g, years=10)
+    small_ctx.cfg["engine"]["backend"] = "python"
+    assert st_py == st_cpp
+    isl_npz = small_ctx.load_npz(3, "islands")
+    cli = small_ctx.load_npz(4, "climate_islands")
+    planet = small_ctx.load_json(1, "planet")
+    for j in range(0, isl_npz["lat"].size, 97):
+        inp = {k: float(isl_npz[k][j]) for k in ("lat", "lon", "height_m")}
+        for k in ("precip", "temp", "storm", "window", "temp_sea", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
+            inp[k] = float(cli[k][j])
+        inp["planet"] = planet
+        inp["keel_clearance_m"] = float(small_ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))
+        g2 = {"inp": inp, "json": {}}
+        build_climate(small_ctx, j, c, g2, log=lambda *a: None)
+        assert climate_only_cpp(small_ctx, inp, c) == g2["climate"], j

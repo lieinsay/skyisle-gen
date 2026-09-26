@@ -291,9 +291,10 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
 
 
 def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: str | None = None,
-             sets: list[str] | None = None, steps: int = 9, log=print, return_state: bool = False, out_root: Path | None = None):
+             sets: list[str] | None = None, steps: int = 9, log=print, return_state: bool = False, out_root: Path | None = None,
+             write: bool = True):
     """生成一个岛群的全部产物，写到 out/<run>/islands/<node>/（out_root 给了就写到 out_root/<node>/，对照工具用）。返回目录。
-    g["timing"] 记地形、水系两步的用时（不进产物）。"""
+    g["timing"] 记地形、水系两步与整群算法部分（generate，不含写产物）的用时（不进产物）。write=False：只算不写，返回 g（用时对照用）。"""
     from .output import write_preview, write_preview_main, write_terrain
     c = island_config(ctx, sets)
     inp = _node_inputs(ctx, node)
@@ -326,7 +327,9 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
             from .settle import build_settlements
             build_settlements(ctx, node, c, g, log=log)
     g["timing"]["generate"] = time.perf_counter() - t0      # 不含写产物（png / 预览图）
-    out = (ctx.out_dir / "islands" if out_root is None else Path(out_root)) / str(node)
+    if not write:
+        return g
+    out =(ctx.out_dir / "islands" if out_root is None else Path(out_root)) / str(node)
     g["json"]["meta"]["seconds"] = round(time.perf_counter() - t0, 2)
     write_terrain(out, g)
     if "climate" in g:

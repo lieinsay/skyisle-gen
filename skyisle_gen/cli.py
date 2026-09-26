@@ -8,7 +8,7 @@ skyisle check --run out/seed42 [--calibrate]
 skyisle ninegrid --run out/seed42 [--region K]
 skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
 skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N]
-skyisle island compare --sample 30 [--jobs N] [--timing]   # 两个后端（python / cpp）的对照；island 各命令加 --backend cpp 走 C++ 核心
+skyisle island compare --sample 30 [--jobs N] [--timing [--no-python]]   # 两个后端（python / cpp）的对照；island 各命令加 --backend cpp 走 C++ 核心
 """
 from __future__ import annotations
 
@@ -97,7 +97,8 @@ def main(argv=None):
     p_isl.add_argument("--force", action="store_true", help="lod：已有的也重跑")
     p_isl.add_argument("--backend", choices=["python", "cpp"], default=None,
                        help="生成器后端（= --set engine.backend=…；cpp 要先 python core/build.py）")
-    p_isl.add_argument("--timing", action="store_true", help="compare：只量地形 + 水系的用时（顺序跑，不写产物）")
+    p_isl.add_argument("--timing", action="store_true", help="compare：只量整群 generate 的用时（顺序跑，不写产物；python / cpp 1 线程 / cpp 4 线程）")
+    p_isl.add_argument("--no-python", action="store_true", help="compare --timing：不跑 python 后端（它慢）")
 
     p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
     p_serve.add_argument("--out", default="out")
@@ -154,7 +155,7 @@ def main(argv=None):
             from .island.compare import run_compare, run_timing
             nodes = [int(x) for x in a.nodes.split(",") if x.strip()] if a.nodes else None
             if a.timing:
-                return run_timing(ctx, sample=a.sample, nodes=nodes, sets=a.sets)
+                return run_timing(ctx, sample=a.sample, nodes=nodes, sets=a.sets, python=not a.no_python)
             return run_compare(ctx, sample=a.sample, jobs=max(1, a.jobs), sets=a.sets, nodes=nodes)
         if a.what == "check":
             from .island.check import run_island_check
