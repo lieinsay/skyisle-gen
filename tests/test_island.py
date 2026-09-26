@@ -274,3 +274,50 @@ def test_classify_all_small_world(small_ctx):
     assert abs(sum(st["share"].values()) - 1.0) < 1e-6
     west = [v for k, v in st["by_band"].items() if k.startswith("西风带")]
     assert west and west[0]["四季分明"] >= 0.9
+
+
+# ---------------- 势力范围（territory.py，DESIGN-NOTES 四点二十二）与粗版（lod.py） ----------------
+def test_territory_split_is_consistent(small_ctx):
+    """邻群两边各画的分界线是同一条（k 离线 t_k、j 离线 t_j，t_k + t_j = 群心距），各退半道缝后两群之间正好隔 gap_km。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.territory import limits
+    c = isl.island_config(small_ctx)
+    tc = dict(c["territory"], reach=50.0, reach_km=5000.0)   # 小世界稀：放宽只为找到一对邻群
+    k = _pick_node(small_ctx)
+    lk = limits(small_ctx, k, isl._node_inputs(small_ctx, k), tc)
+    assert lk
+    j = lk[0]["node"]
+    lj = {L["node"]: L for L in limits(small_ctx, j, isl._node_inputs(small_ctx, j), tc)}
+    assert k in lj
+    gap = float(tc["gap_km"])
+    assert abs(lk[0]["limit_km"] + lj[k]["limit_km"] + gap - lk[0]["dist_km"]) < 1e-3      # dist_km 记到米
+    u1, u2 = np.array(lk[0]["u"]), np.array(lj[k]["u"])
+    assert np.hypot(*u1) == pytest.approx(1.0) and u1 @ -u2 > 0.99     # 两边的法向相反（几百 km 内近似平面）
+
+
+def test_territory_nearest_fit():
+    """Dykstra：放得下时给离原点最近的偏移，放不下时越界量 > 0。"""
+    from skyisle_gen.island.territory import nearest_fit, violation
+    lim = [{"u": (1.0, 0.0), "limit_km": 10.0}, {"u": (0.0, 1.0), "limit_km": 10.0}, {"u": (-1.0, 0.0), "limit_km": 10.0}]
+    o, v = nearest_fit(np.array([15.0, 4.0, 4.0]), lim)          # 向东伸 15 km：要往西挪 5 km
+    assert v <= 1e-6 and o[0] == pytest.approx(-5.0, abs=1e-3) and abs(o[1]) < 1e-3
+    assert violation(o, np.array([15.0, 4.0, 4.0]), lim) <= 1e-6
+    o, v = nearest_fit(np.array([15.0, 4.0, 15.0]), lim)         # 东西都伸 15，只有 20 km 宽：放不下
+    assert v > 4.0
+
+
+def test_territory_off_leaves_unconstrained_groups_identical(small_ctx):
+    """没碰到约束的群，开不开势力范围产物逐字节一样（布局照旧摆，越界了才重摆）。"""
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    c = isl.island_config(small_ctx)
+    inp = isl._node_inputs(small_ctx, node)
+    g1 = isl.build_terrain(small_ctx, node, c, inp, res_m=400.0, log=lambda *a: None)
+    t = g1["json"]["constraints"]["territory"]
+    if t.get("constrained"):
+        pytest.skip("这个节点碰到了约束")
+    c2 = dict(c, territory=dict(c["territory"], enabled=False))
+    g2 = isl.build_terrain(small_ctx, node, c2, inp, res_m=400.0, log=lambda *a: None)
+    assert np.array_equal(g1["island_id"], g2["island_id"])
+    assert np.array_equal(np.nan_to_num(g1["height"], nan=-1.0), np.nan_to_num(g2["height"], nan=-1.0))
+    assert t.get("violation_km", -1.0) <= 0.0

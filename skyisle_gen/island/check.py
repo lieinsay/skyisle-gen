@@ -1,6 +1,6 @@
 """第六节：岛群生成器的一致性校验（`skyisle island check <节点>`）。
 
-IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-link / IS-det / IS-iso 为硬项，IS-daily 为软项；
+IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap 为软项；
 资源 RES-site / RES-occ / RES-work / RES-geo 为硬项，RES-quarry 为软项；
 聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
@@ -147,6 +147,14 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
                 {"annual_rel_err": st["annual_rel_err"], "annual_z": st["annual_z"], "annual_se_rel": st["annual_se_rel"],
                  "season_rel_err": st["precip_rel_err"], "wet_frac_err": st["wet_frac_err"]},
                 "< 0.05 或 z < 3 / ≤ 0.05", (st["annual_rel_err"] < 0.05 or st["annual_z"] < 3.0) and max(st["wet_frac_err"]) <= 0.05, hard=False)
+    # IS-terr：势力范围（territory.py）——陆地不越过与邻群的分界线；只是离线不到半道缝的算软项
+    t = cons.get("territory")
+    if t is not None and "violation_km" in t:
+        v, half = float(t["violation_km"]), 0.5 * float(t.get("gap_km", 3.0))
+        add("IS-terr", "陆地不越过与邻群的分界线（按等效半径分界、各退半道缝）；越界量 ≤ 0 全过，≤ 半道缝只是缝窄（软）",
+            {"violation_km": v, "constrained": t.get("constrained"), "neighbours": t.get("neighbours")}, "≤ 0", v <= half)
+        if 0.0 < v <= half:
+            add("IS-terr-gap", "离分界线不到半道缝（两群之间的缝比 gap_km 窄）", {"violation_km": v}, "≤ 0", False, hard=False)
     # IS-link：索桥 + 短渡连通
     from ..graph import weak_components
     n = len(J["islands"])

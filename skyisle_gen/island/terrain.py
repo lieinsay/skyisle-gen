@@ -63,6 +63,10 @@ def island_shape(rng, area_km2: float, res_km: float, elong: float, theta: float
         if err <= max(0.5, 0.002 * target):
             break
     mask = best_mask
+    if not mask.any():
+        # 粗分辨率下比半格还小的礁：留最高的一格（默认 100 m 时最小的 0.3 km² 也有 30 格，碰不到这里）
+        mask = np.zeros(f.shape, dtype=bool)
+        mask[np.unravel_index(int(np.argmax(f)), f.shape)] = True
     tau_eff = float(f[mask].min())
     inside = np.clip((f - tau_eff) / max(1e-9, float(f[mask].max()) - tau_eff), 0.0, 1.0)
     inside = np.where(mask, inside, 0.0)

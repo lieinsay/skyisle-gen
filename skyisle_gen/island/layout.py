@@ -100,13 +100,27 @@ def _r_at(prof: np.ndarray, theta: float) -> float:
     return float(prof[i0] * (1 - t) + prof[(i0 + 1) % n] * t)
 
 
+def _r_at_max(prof: np.ndarray, theta: float) -> float:
+    """保守的角向半径：θ 所在桶与左右各一桶里最大的（拉长的岛尖上，线性插值会低估、摆近了贴进栅格就叠上）。"""
+    n = prof.size
+    i0 = int(math.floor(((theta + math.pi) / (2 * math.pi) * n) % n))
+    return float(max(prof[(i0 - 1) % n], prof[i0], prof[(i0 + 1) % n], prof[(i0 + 2) % n]))
+
+
 def place_islands(rng, profiles: list[np.ndarray], sizes: np.ndarray, axis: float, kernel: float,
-                  btype: int, c: dict) -> tuple[np.ndarray, dict]:
+                  btype: int, c: dict, territory: dict | None = None) -> tuple[np.ndarray, dict]:
     """依次放置（主岛在原点）。返回 centers[n, 2]（km）。
-    汇聚带：沿边界走向拉长（各向异性 a）；离散带：更散（间距放大）；走滑：略拉长。"""
+    汇聚带：沿边界走向拉长（各向异性 a）；离散带：更散（间距放大）；走滑：略拉长。
+    territory（势力范围，territory.py）：None 照旧；否则 {"lim", "support", "main"}——主岛放在 main，
+    其余每座岛的质心 p 还须 p·u + support[k][j] ≤ limit_j（不越过与邻群的分界线），放不下时往里收间距而不是往外拉。"""
     n = len(profiles)
     centers = np.zeros((n, 2))
+    if territory is not None:
+        from .territory import violation
+        centers[0] = territory["main"]
     gap_lo, gap_hi = float(c["gap_min_km"]), float(c["gap_max_km"])
+    if territory is not None:
+        gap_lo = min(gap_lo, float(territory.get("gap_min_km", gap_lo)))   # 势力范围里挤一挤：群内岛与岛可以更近
     if btype == CONVERGENT:
         aniso = 1.0 + (float(c["arc_elongation"]) - 1.0) * kernel
         spread = 1.0
@@ -119,6 +133,7 @@ def place_islands(rng, profiles: list[np.ndarray], sizes: np.ndarray, axis: floa
     ca, sa = math.cos(axis), math.sin(axis)
     weights = np.sqrt(sizes)
     weights[0] *= float(c["main_gravity"])
+    r_at = _r_at if territory is None else _r_at_max   # 势力范围里挤得近，岸距按保守的半径量
 
     def gap_ok(k, pos):
         worst = 1e9
@@ -126,15 +141,16 @@ def place_islands(rng, profiles: list[np.ndarray], sizes: np.ndarray, axis: floa
             d = pos - centers[j]
             dist = math.hypot(d[0], d[1])
             th = math.atan2(d[1], d[0])
-            g = dist - _r_at(profiles[j], th) - _r_at(profiles[k], th + math.pi)
+            g = dist - r_at(profiles[j], th) - r_at(profiles[k], th + math.pi)
             worst = min(worst, g)
         return worst
 
     stats = {"gaps": []}
+    attempts = int(c["place_attempts"]) * (1 if territory is None else 2)
     for k in range(1, n):
         w = weights[:k] / weights[:k].sum()
         best, best_gap = None, -1e9
-        for attempt in range(int(c["place_attempts"])):
+        for attempt in range(attempts):
             anchor = int(rng.choice(k, p=w))
             phi = rng.uniform(-math.pi, math.pi)
             vx, vy = math.cos(phi), math.sin(phi) / aniso
@@ -144,10 +160,18 @@ def place_islands(rng, profiles: list[np.ndarray], sizes: np.ndarray, axis: floa
             th = math.atan2(dy, dx)
             gap = (gap_lo + (gap_hi - gap_lo) * rng.beta(1.3, 2.2)) * spread
             gap = min(gap, gap_hi) if spread <= 1.0 else min(gap, gap_hi * spread)
-            gap *= 1.0 + 0.15 * (attempt // 40)   # 放不下就慢慢拉开
-            dist = _r_at(profiles[anchor], th) + gap + _r_at(profiles[k], th + math.pi)
+            if territory is None:
+                gap *= 1.0 + 0.15 * (attempt // 40)   # 放不下就慢慢拉开
+            else:
+                gap *= max(0.3, 1.0 - 0.12 * (attempt // 40))   # 势力范围里：放不下就往里收
+            dist = r_at(profiles[anchor], th) + gap + r_at(profiles[k], th + math.pi)
             pos = centers[anchor] + np.array([dx, dy]) * dist
             g = gap_ok(k, pos)
+            if territory is not None:
+                # 分数 = min(岸距余量, 离分界线的余量)：两样都 ≥ 0 才收；都不行就留分数最高的——
+                # 但离群里别的岛太近（岸距 < gap_lo：剖面量的岸距不精确，贴进栅格时会叠上、吃掉面积，IS-area 不过）的一律排在后面
+                score = min(g - gap_lo, -violation(pos, territory["support"][k], territory["lim"]))
+                g = score + gap_lo if g >= gap_lo else g - 1e6
             if g >= gap_lo:
                 best, best_gap = pos, g
                 break
@@ -203,6 +227,8 @@ def shoreline_gaps(masks_pos: list[tuple[np.ndarray, int, int]], res_km: float, 
             if d - radii_km[i] - radii_km[j] > max_gap_km:
                 continue
             a, b = edges[i], edges[j]
+            if a.shape[0] == 0 or b.shape[0] == 0:
+                continue                      # 贴进群栅格时被别的岛全压掉了（粗分辨率下的小礁）
             best = 1e9
             for s in range(0, a.shape[0], 512):
                 blk = a[s:s + 512]

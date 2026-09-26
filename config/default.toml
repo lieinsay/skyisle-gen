@@ -500,6 +500,15 @@ bridge_max_km = 2.0           # 索桥：岸距 ≤ 此值且岸缘高差 ≤ br
 bridge_max_dh_m = 250.0
 ferry_max_km = 20.0           # 只给岸距 ≤ 此值的岛对连短渡（连通性回退另补）
 
+[island.territory]            # 势力范围（territory.py，DESIGN-NOTES 四点二十二）：邻群的陆地不许叠——与每个邻群按等效半径 √(陆地/π) 分界
+enabled = true                # 布局照旧摆，越界了才带约束重摆（主岛挪进来、放不下再转走向；其余岛带约束），没越界的群产物不变
+gap_km = 3.0                  # 两群陆地之间至少隔这么远（各退一半）
+reach = 3.0                   # 只看群心距 ≤ reach × (两群等效半径之和) + reach_km 的邻群（更远的碰不上）
+reach_km = 40.0
+turns = 8                     # 主岛挪不进来时试几个走向（每次转 π / turns）
+stretch = [1.0, 1.6, 2.4]     # 转了还放不下，就把主岛的长短轴比按这几档拉长（更窄）再转；面积不变
+inner_gap_min_km = 0.3        # 带约束重摆时群内岛与岛的最小岸距（照旧摆是 layout.gap_min_km）
+
 [island.terrain]              # 5.2 岛内地形
 age_young = 0.3               # 岛龄 < young 火山锥；< old 山脊谷地；≥ old 台地宽谷（与 geology.py 同口径）
 age_old = 0.65

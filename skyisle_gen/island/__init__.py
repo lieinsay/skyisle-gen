@@ -58,6 +58,68 @@ def _node_inputs(ctx, node: int) -> dict:
     return d
 
 
+def _fit_territory(ctx, node: int, c: dict, inp: dict, shapes: list, profiles: list, offsets: list, centers: np.ndarray,
+                   sizes: np.ndarray, elong: np.ndarray, thetas: np.ndarray, res_km: float, axis: float, kernel: float, btype: int) -> dict:
+    """势力范围（territory.py）：照旧摆好的布局若越过与邻群的分界线，就把主岛挪进来（放不下就转走向）、其余岛带约束重摆。
+    没越界时什么都不动（产物逐字节不变）。会就地改 shapes / profiles / offsets 的主岛那一项；返回记录（constrained 时带 centers）。"""
+    from .layout import place_islands, radial_profile
+    from .terrain import island_shape
+    from . import territory as T
+    tc = c.get("territory") or {}
+    lim = T.limits(ctx, node, inp, tc) if tc.get("enabled", True) else []
+    rec = {"neighbours": len(lim), "gap_km": float(tc.get("gap_km", 3.0)), "constrained": False, "lim": lim}
+    if not lim:
+        return rec
+
+    def support(k):
+        mask, _inside, X, Y = shapes[k]
+        return T.mask_support(mask, X - offsets[k][0], Y - offsets[k][1], lim, res_km)   # 相对岛的质心
+
+    sup = [support(k) for k in range(len(shapes))]
+    before = max(T.violation(centers[k], sup[k], lim) for k in range(len(shapes)))
+    if before <= 0.0:
+        return rec
+    # 主岛：原样先试，放得下就只挪；放不下再按 π/turns 转；还不行就一档档拉长（更窄）再转。
+    # 同一档里挑放得下且挪得最少的；哪档都放不下就挑越界最少的（IS-terr 会报出来）
+    turns = max(1, int(tc.get("turns", 8)))
+    stretches = [float(s) for s in tc.get("stretch", [1.0, 1.6, 2.4])]
+    cands = []
+    chosen = None
+    for f in stretches:
+        tier = []
+        for m in range(turns):
+            if f == 1.0 and m == 0:
+                shp, off, prof = shapes[0], offsets[0], profiles[0]
+            else:
+                th = float(thetas[0]) + m * math.pi / turns
+                shp = island_shape(_rng(ctx, node, "shape:0"), float(sizes[0]), res_km, float(elong[0]) * f, th, c["terrain"])
+                off, prof = radial_profile(shp[0], res_km)
+            s0 = T.mask_support(shp[0], shp[2] - off[0], shp[3] - off[1], lim, res_km)
+            o, v = T.nearest_fit(s0, lim)
+            tier.append((f, m, shp, off, prof, s0, o, v))
+            if f == 1.0 and m == 0 and v <= 0.0:
+                break
+        cands += tier
+        ok = [x for x in tier if x[7] <= 0.0]
+        if ok:
+            chosen = min(ok, key=lambda x: float(np.hypot(*x[6])))
+            break
+    if chosen is None:
+        chosen = min(cands, key=lambda x: x[7])
+    f, m, shp, off, prof, s0, o, v = chosen
+    shapes[0], offsets[0], profiles[0] = shp, off, prof
+    sup[0] = s0
+    psup = [T.profile_support(p, lim, res_km) for p in profiles]
+    new_centers, _ = place_islands(_rng(ctx, node, "place"), profiles, sizes, axis, kernel, btype, c["layout"],
+                                   territory={"lim": lim, "support": psup, "main": o,
+                                              "gap_min_km": float(tc.get("inner_gap_min_km", 0.3))})
+    after = max(T.violation(new_centers[k], sup[k], lim) for k in range(len(shapes)))
+    rec.update({"constrained": True, "main_offset_km": [round(float(o[0]), 3), round(float(o[1]), 3)],
+                "main_turn_deg": round(m * 180.0 / turns, 1), "main_stretch": f, "before_km": round(before, 3),
+                "after_km": round(after, 3), "centers": new_centers})
+    return rec
+
+
 def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None, log=print) -> dict:
     """第 1 步：布局 + 岛形 + 高程。返回群栅格字典 g（height / island_id / cliff / json / islands 列表）。"""
     from .layout import (boundary_axis, island_count, links, place_islands, radial_profile, relief_targets,
@@ -103,6 +165,10 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
         profiles.append(prof)
         offsets.append(ctr)
     centers, pstats = place_islands(_rng(ctx, node, "place"), profiles, sizes, axis, kernel, btype, lay)
+    terr = _fit_territory(ctx, node, c, inp, shapes, profiles, offsets, centers, sizes, elong, thetas, res_km, axis, kernel, btype)
+    terr_lim = terr.pop("lim")
+    if terr["constrained"]:
+        centers = terr.pop("centers")
     halves = np.array([s[0].shape[0] * res_km / 2.0 for s in shapes])
     gc = centers - np.array(offsets)          # 各岛局部栅格中心（岛心 = 质心 + 偏移）
     xmin, xmax = float((gc[:, 0] - halves).min()), float((gc[:, 0] + halves).max())
@@ -198,6 +264,11 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
         "has_river": {"target": inp["has_river"]},
         "n_islands": n,
     }
+    if terr_lim:
+        from .territory import raster_violation
+        terr["violation_km"] = round(raster_violation(height, island_id, raster, terr_lim), 3)
+        terr["note"] = "势力范围（territory.py）：与每个邻群按等效半径分界、各退 gap/2；violation_km ≤ 0 = 没越界（负值是最小余量）"
+    constraints["territory"] = terr
     J = {"meta": meta, "raster": raster, "constraints": constraints, "islands": islands_json, "links": lk,
          "channels": [[int(a), int(b)] for a, b in tree],
          "layout": {"n_bridges": sum(1 for e in lk if e["kind"] == "bridge"), "n_ferries": sum(1 for e in lk if e["kind"] == "ferry"),
