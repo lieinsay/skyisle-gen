@@ -198,12 +198,17 @@ def build_climate(ctx, node: int, c: dict, g: dict, log=print, grids: dict | Non
                         "window": round(float(window.mean()), 5), "temp_c": round(float(t_isl.mean()), 4)},
         "note": "岛上气温（temp_c、逐日 temp_c）是台面 temp_ref_height_m（③ 的 height_m = 主岛陆地高程中位数）处的，某格 = temp + 直减率 × (台面 − 格高)；季名是软的（决定 5）；南北半球反相；每季数值为季中那一天的摆动取样再缩放到年均；precip_mm 是该季总量（四季之和 = 年降水），precip_mm_annual_rate 是折成年当量的强度",
     }
-    g["climate"] = clim
-    g["json"]["climate"] = {"season_type": stype, "season_type_zh": type_zh, "season_names": names,
-                            "season_range_c": round(r_t, 1), "temps_c": [s["temp_c"] for s in seasons],
-                            "precip_mm": [s["precip_mm"] for s in seasons]}
+    set_climate(g, clim, r_t)
     log(f"  气候：{type_zh}（{'/'.join(names)}）温 {[round(x, 1) for x in t_isl.tolist()]} 雨 {[int(x) for x in p_mm.tolist()]} mm "
         f"风暴 {[round(x, 2) for x in storm.tolist()]} 窗 {[round(x, 2) for x in window.tolist()]} Δφ {[round(x, 1) for x in dphi.tolist()]}")
+
+
+def set_climate(g: dict, clim: dict, r_t: float) -> None:
+    """g["climate"] 与 island.json 的 climate 摘要（两个后端共用）。"""
+    g["climate"] = clim
+    g["json"]["climate"] = {"season_type": clim["season_type"], "season_type_zh": clim["season_type_zh"], "season_names": clim["season_names"],
+                            "season_range_c": round(r_t, 1), "temps_c": [s["temp_c"] for s in clim["seasons"]],
+                            "precip_mm": [s["precip_mm"] for s in clim["seasons"]]}
 
 
 def _season_names(stype: str, t, precip, storm, window, n_s: int) -> list[str]:
@@ -349,6 +354,8 @@ def classify_all(ctx, c: dict, log=print) -> dict:
     codes = np.zeros(n, dtype=np.int8)
     ratio = np.zeros(n, dtype=np.float32)
     names_all = []
+    from .engine import backend
+    cpp = backend(ctx) == "cpp"
     t0 = time.perf_counter()
     for j in range(n):
         inp = {k: float(isl[k][j]) for k in ("lat", "lon", "height_m")}
@@ -356,9 +363,13 @@ def classify_all(ctx, c: dict, log=print) -> dict:
             inp[k] = float(cli[k][j])
         inp["planet"] = planet
         inp["keel_clearance_m"] = keel
-        g = {"inp": inp, "json": {}}
-        build_climate(ctx, j, c, g, log=lambda *a: None, grids=grids)
-        C = g["climate"]
+        if cpp:                                  # 行星计划 P6b：四季在 C++ 里算（同式）
+            from .engine import climate_only_cpp
+            C = climate_only_cpp(ctx, inp, c)
+        else:
+            g = {"inp": inp, "json": {}}
+            build_climate(ctx, j, c, g, log=lambda *a: None, grids=grids)
+            C = g["climate"]
         st = C["season_type"]
         code = TYPE_CODES.index(st) if st != "none" else (5 if C["season_type_zh"] == TYPE_ZH["none_cold"] else 4)
         codes[j] = code

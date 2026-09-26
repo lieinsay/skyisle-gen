@@ -76,9 +76,14 @@ def build_lod(ctx, node: int, c: dict, res_list: list[float], native_res_m: floa
     J = g["json"]
     native = float(J["raster"]["res_m"])
     out = {}
+    from .engine import backend
     for res in res_list:
         f = max(1, int(round(float(res) / native)))
-        arr = _block_reduce(g, f)
+        if backend(ctx) == "cpp":              # 行星计划 P6b：块降采样也在 C++（同式，逐位相同）
+            from .engine import block_reduce_cpp
+            arr = block_reduce_cpp(g, f)
+        else:
+            arr = _block_reduce(g, f)
         Hb, Wb = arr["land"].shape
         meta = {
             "node": node, "seed": ctx.seed, "lat": inp["lat"], "lon": inp["lon"],

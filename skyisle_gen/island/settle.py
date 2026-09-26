@@ -305,14 +305,7 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
          "raster_codes": {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "泊场", "6": "桥头", "7": "蓄水池", "8": "取水点", "9": "镇", "10": "专业聚落"},
          "note": "第三层，人口只读 ⑨；村 / 镇 / 专业聚落只有位置与户数（原则乙）。名字是 村NNN / 镇NN 占位。"
                  "飞船随处可停：没有码头，每个聚落旁一块泊场；households = 村农户 + 散户 + 镇的非农户 + 专业聚落户。"}
-    g["settle"] = S
-    J["settlements"] = {k: S[k] for k in ("population", "households", "n_fields", "n_villages", "n_hamlets", "seat_households", "village_hh_median", "nonfarm_households")}
-    J["settlements"].update({"n_towns": len(towns), "n_specials": len(specials), "specials": sorted({x["kind"] for x in specials}),
-                             "n_landings": len(lands), "n_bridgeheads": len(S["bridgeheads"]), "n_cisterns": len(S["cisterns"]), "n_intakes": len(S["intakes"]),
-                             "forest_share_after_clearing": clearing["forest_share_after"],
-                             "workings": {k: {kk: vv for kk, vv in v.items() if kk in ("n", "villages_share")} for k, v in workings.items()},
-                             "n_outposts": len(S["outposts"]), "home_candidates": [h["kind"] for h in S["home_candidates"]],
-                             "city": ({k: S["city"][k] for k in ("role", "households", "population", "n_guo_islands")} if S.get("city") else None)})
+    set_settlements(g, S)
     log(f"  聚落：人口 {pop:.0f}（{pop_src}）→ {hh_total} 户；田块 {len(fields)}，村 {len(villages)}（邑治 {S['seat_households']} 户，中位 {S['village_hh_median']}），散户 {len(hamlets)}；"
         f"镇 {len(towns)}（非农 {hh_m} 户），专业聚落 {len(specials)}（{hh_s} 户：{'、'.join(sorted({x['kind'] for x in specials}))}）；"
         f"村农户 {hh_v} + 散户 {hh_h} + 镇 {hh_m} + 专业 {hh_s} = {hh_v + hh_h + hh_m + hh_s}；泊场 {len(lands)}，桥头 {len(S['bridgeheads'])}，蓄水池 {len(S['cisterns'])}，取水点 {len(S['intakes'])}，"
@@ -320,6 +313,19 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         + "".join(f"{k} {v['n']}（{v['villages_share']:.0%} 村），" if "villages_share" in v else f"{k} {v['n']}，" for k, v in workings.items()) +
         f"村 1 km 内有水源 {S['water_ok_share']:.0%}；前哨 {len(S['outposts'])}，主家候选 {[h['kind'] for h in S['home_candidates']]}"
         + (f"；{S['city']['role']} {S['city']['households']} 户（城 {S['city']['inner_households']} + 郭 {S['city']['guo_households']}，{S['city']['n_guo_islands']} 岛）" if S.get("city") else ""))
+
+
+def set_settlements(g: dict, S: dict) -> None:
+    """g["settle"] 与 island.json 的 settlements 摘要（两个后端共用）。"""
+    g["settle"] = S
+    J = g["json"]
+    J["settlements"] = {k: S[k] for k in ("population", "households", "n_fields", "n_villages", "n_hamlets", "seat_households", "village_hh_median", "nonfarm_households")}
+    J["settlements"].update({"n_towns": len(S["towns"]), "n_specials": len(S["specials"]), "specials": sorted({x["kind"] for x in S["specials"]}),
+                             "n_landings": len(S["landings"]), "n_bridgeheads": len(S["bridgeheads"]), "n_cisterns": len(S["cisterns"]), "n_intakes": len(S["intakes"]),
+                             "forest_share_after_clearing": S["clearing"]["forest_share_after"],
+                             "workings": {k: {kk: vv for kk, vv in v.items() if kk in ("n", "villages_share")} for k, v in S["workings"].items()},
+                             "n_outposts": len(S["outposts"]), "home_candidates": [h["kind"] for h in S["home_candidates"]],
+                             "city": ({k: S["city"][k] for k in ("role", "households", "population", "n_guo_islands")} if S.get("city") else None)})
 
 
 # ---------------------------------------------------------------- 第 2 步：桥头、导水槽、水设施

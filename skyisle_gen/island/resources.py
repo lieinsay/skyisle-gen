@@ -533,22 +533,7 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
     field_occurrences("placer", lambda ii, jj: "砂金", note="上游有金 / 铜矿化带：河砂可淘金")
     g.update({"patch_id": patch_id, "occ_lab": occ_lab,
               "res_field": np.stack([np.round(np.clip(F[k], 0.0, 1.0) * 255.0).astype(np.uint8) for k in FIELD_KINDS])})
-    R = {"node": node, "zones": {"classes": ZONE_NAMES, "palette": ZONE_PALETTE,
-                                 "share": {ZONE_NAMES[i]: round(float(((zone == i) & land).sum()) / max(1, int(land.sum())), 4) for i in range(1, len(ZONE_NAMES))},
-                                 "rule": f"局地起伏 = {2 * r_cells + 1}×{2 * r_cells + 1} 格方窗内高差；山地 ≥ {rc['mountain_relief_m']} m 或坡 ≥ {rc['mountain_slope_deg']}° 或高于岸缘→峰的 {rc['mountain_peak_frac']}，"
-                                         f"丘陵 ≥ {rc['hill_relief_m']} m 或坡 ≥ {rc['hill_slope_deg']}° 或高于 {rc['hill_peak_frac']}；高山 = 山地且（海拔温度 < 高山草甸线或近峰）；河谷 = 漫滩 + 河边缓坡"},
-         "resources": {"classes": RES_NAMES, "palette": RES_PALETTE, "forms": {k[1]: k[3] for k in RES_KINDS},
-                       "dominant_order": [RES_NAMES[RES_INDEX[k]] for k in DOMINANT_ORDER]},
-         "fields": {"kinds": FIELD_KINDS, "names": [RES_NAMES[RES_INDEX[k]] for k in FIELD_KINDS], "thr": thr,
-                    "rock_kinds": list(ROCK_KINDS), "rock_hill_slope_deg": float(rc["rock_hill_slope_deg"]),
-                    "rule": f"res_field = 品位 × 255。岩类（金属矿 / 石料 / 硫磺）只在岩类可放区：山地、高山、裸岩 / 高山草甸，或丘陵且坡 ≥ {rc['rock_hill_slope_deg']}°"
-                            "（林坡算，平地林、耕地、湿地、漫滩不算）；沉积类（黏土 / 砂砾 / 砂金）可压在田下。赋存区 = 品位 ≥ thr 的连通块（矿化带 / 硫磺按各自的核）"},
-         "geology": {"boundary_type": btype, "boundary_kernel": kern, "layered": layered, "old_island_lithology": "石灰岩" if old_limestone else "砂岩",
-                     "ore_multiplier": round(geo_ore, 3), "floatstone_expose_rate": round(fs_rate, 3),
-                     "floatstone": "岛体本身就是浮石；可开采，采掉的量相对岛体微不足道，不影响浮空"},
-         "deposits": deposits, "occurrences": occurrences, "workings": workings,
-         "note": "第三层叙事 / 场景素材，不进管线；cell = 群栅格 [行, 列]，km = 相对群心（x 东 y 北）。deposits = 点与片，occurrences = 散的赋存区（cell = 品位峰值格，"
-                 "axis_deg = 走向，自东逆时针），workings = 采场（villages / special = 用它的村 / 专业聚落）；grade 是本类里的相对品位"}
+    R = resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, old_limestone, geo_ore, fs_rate, deposits, occurrences, workings)
     g["resources"] = R
     for w in workings:                            # 岩类采场开在林坡 / 灌丛上：那格改裸岩
         if w["kind"] in ROCK_KINDS:
@@ -558,9 +543,34 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
         + f"；点与片 {len(deposits)} 处，赋存区 {len(occurrences)}，采场 {len(workings)}（林木外占陆地 {R['non_timber_share'] * 100:.1f}%）：" + "，".join(f"{k} {v}" for k, v in R["counts"].items()))
 
 
+def resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, old_limestone, geo_ore, fs_rate, deposits, occurrences, workings) -> dict:
+    """resources.json 的整体（除 sync_resources 补的计数）：两个后端共用（cpp 后端的记录由 decode.py 译回同形）。"""
+    return {"node": node, "zones": {"classes": ZONE_NAMES, "palette": ZONE_PALETTE,
+                                    "share": {ZONE_NAMES[i]: round(float(((zone == i) & land).sum()) / max(1, int(land.sum())), 4) for i in range(1, len(ZONE_NAMES))},
+                                    "rule": f"局地起伏 = {2 * r_cells + 1}×{2 * r_cells + 1} 格方窗内高差；山地 ≥ {rc['mountain_relief_m']} m 或坡 ≥ {rc['mountain_slope_deg']}° 或高于岸缘→峰的 {rc['mountain_peak_frac']}，"
+                                            f"丘陵 ≥ {rc['hill_relief_m']} m 或坡 ≥ {rc['hill_slope_deg']}° 或高于 {rc['hill_peak_frac']}；高山 = 山地且（海拔温度 < 高山草甸线或近峰）；河谷 = 漫滩 + 河边缓坡"},
+            "resources": {"classes": RES_NAMES, "palette": RES_PALETTE, "forms": {k[1]: k[3] for k in RES_KINDS},
+                          "dominant_order": [RES_NAMES[RES_INDEX[k]] for k in DOMINANT_ORDER]},
+            "fields": {"kinds": FIELD_KINDS, "names": [RES_NAMES[RES_INDEX[k]] for k in FIELD_KINDS], "thr": thr,
+                       "rock_kinds": list(ROCK_KINDS), "rock_hill_slope_deg": float(rc["rock_hill_slope_deg"]),
+                       "rule": f"res_field = 品位 × 255。岩类（金属矿 / 石料 / 硫磺）只在岩类可放区：山地、高山、裸岩 / 高山草甸，或丘陵且坡 ≥ {rc['rock_hill_slope_deg']}°"
+                               "（林坡算，平地林、耕地、湿地、漫滩不算）；沉积类（黏土 / 砂砾 / 砂金）可压在田下。赋存区 = 品位 ≥ thr 的连通块（矿化带 / 硫磺按各自的核）"},
+            "geology": {"boundary_type": btype, "boundary_kernel": kern, "layered": layered, "old_island_lithology": "石灰岩" if old_limestone else "砂岩",
+                        "ore_multiplier": round(geo_ore, 3), "floatstone_expose_rate": round(fs_rate, 3),
+                        "floatstone": "岛体本身就是浮石；可开采，采掉的量相对岛体微不足道，不影响浮空"},
+            "deposits": deposits, "occurrences": occurrences, "workings": workings,
+            "note": "第三层叙事 / 场景素材，不进管线；cell = 群栅格 [行, 列]，km = 相对群心（x 东 y 北）。deposits = 点与片，occurrences = 散的赋存区（cell = 品位峰值格，"
+                    "axis_deg = 走向，自东逆时针），workings = 采场（villages / special = 用它的村 / 专业聚落）；grade 是本类里的相对品位"}
+
+
 def sync_resources(g: dict) -> None:
     """片的面积（按 patch_id 重数：开垦、开采都会划掉格）、代表格、主导栅格、计数与地表占比。资源层末尾与聚落开垦 / 开采之后各调一次。"""
-    from .output import LANDCOVER_CLASSES
+    _sync_patches(g)
+    resource_summary(g)
+
+
+def _sync_patches(g: dict) -> None:
+    """片的面积与代表格、主导栅格（cpp 后端在 C++ 里做了同样的事，桥只调 resource_summary）。"""
     R = g["resources"]
     J = g["json"]
     pid = g["patch_id"]
@@ -604,6 +614,16 @@ def sync_resources(g: dict) -> None:
                 if d["kind"] == key:
                     res[d["cell"][0], d["cell"][1]] = code
     g["resource"] = res
+
+
+def resource_summary(g: dict) -> None:
+    """计数、面积、采场数、林木外占陆地、地表占比与 island.json 的 resources 摘要（两个后端共用）。"""
+    from .output import LANDCOVER_CLASSES
+    R = g["resources"]
+    J = g["json"]
+    res = g["resource"]
+    land = g["island_id"] >= 0
+    deps = R["deposits"]
     counts: dict[str, int] = {}
     area: dict[str, float] = {}
     for d in deps + R["occurrences"]:

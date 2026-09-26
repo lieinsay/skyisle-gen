@@ -300,26 +300,32 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     t0 = time.perf_counter()
     log(f"[island {node}] 陆地 {inp['area_km2']:.0f} km²（主岛 {inp['main_area_km2']:.0f}）台面 {inp['height_m']:.0f} m 可耕 {inp['arable_frac']:.3f} "
         f"河 {'有' if inp['has_river'] else '无'} 岛龄 {inp['age']:.2f} 降水 {inp['precip']:.2f} 温差 {inp['season_range']:.1f} °C")
-    g = build_terrain(ctx, node, c, inp, res_m=res_m, log=log)
-    timing = {"terrain": time.perf_counter() - t0}
-    if steps >= 2:
-        from .hydro import build_hydro
-        from .resources import build_resources
-        t1 = time.perf_counter()
-        build_hydro(ctx, node, c, g, log=log)
-        timing["hydro"] = time.perf_counter() - t1
-        build_resources(ctx, node, c, g, log=log)
-    g["timing"] = timing
-    if steps >= 3:
-        from .climate import build_climate, daily_curves
-        build_climate(ctx, node, c, g, log=log)
-        g["daily"] = daily_curves(g["climate"], inp, ctx.cfg["s04"]["climate"])
-    if steps >= 4:
-        from .weather import build_weather
-        build_weather(ctx, node, c, g, year=year, log=log)
-    if steps >= 5:
-        from .settle import build_settlements
-        build_settlements(ctx, node, c, g, log=log)
+    from .engine import backend
+    if backend(ctx) == "cpp":                  # 行星计划 P6b：整群在 C++ 里算，g 拼回同形；写产物照旧在下面
+        from .engine import generate_cpp
+        g = generate_cpp(ctx, node, c, inp, year=year, res_m=res_m, steps=steps, log=log)
+    else:
+        g = build_terrain(ctx, node, c, inp, res_m=res_m, log=log)
+        timing = {"terrain": time.perf_counter() - t0}
+        if steps >= 2:
+            from .hydro import build_hydro
+            from .resources import build_resources
+            t1 = time.perf_counter()
+            build_hydro(ctx, node, c, g, log=log)
+            timing["hydro"] = time.perf_counter() - t1
+            build_resources(ctx, node, c, g, log=log)
+        g["timing"] = timing
+        if steps >= 3:
+            from .climate import build_climate, daily_curves
+            build_climate(ctx, node, c, g, log=log)
+            g["daily"] = daily_curves(g["climate"], inp, ctx.cfg["s04"]["climate"])
+        if steps >= 4:
+            from .weather import build_weather
+            build_weather(ctx, node, c, g, year=year, log=log)
+        if steps >= 5:
+            from .settle import build_settlements
+            build_settlements(ctx, node, c, g, log=log)
+    g["timing"]["generate"] = time.perf_counter() - t0      # 不含写产物（png / 预览图）
     out = (ctx.out_dir / "islands" if out_root is None else Path(out_root)) / str(node)
     g["json"]["meta"]["seconds"] = round(time.perf_counter() - t0, 2)
     write_terrain(out, g)

@@ -151,6 +151,12 @@ def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) ->
     rim = float(g["json"]["islands"][0]["rim_m"])
     rng = _rng(ctx, node, f"weather:{year}")
     y = simulate_year(rng, clim, daily, params, surface, wc, rim_m=rim, lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
+    set_weather(g, y, params, year, log=log)
+
+
+def set_weather(g: dict, y: dict, params: list[dict], year: int, log=print) -> None:
+    """一年逐日数组 → 逐日表、季汇总、g["weather"] 与 island.json 的 weather 摘要（两个后端共用：cpp 后端只算 y 与 params）。"""
+    clim = g["climate"]
     names = clim["season_names"]
     n = y["day"].size
     days = []
@@ -183,22 +189,27 @@ def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) ->
 
 
 def multi_year_stats(ctx, node: int, c: dict, g: dict, years: int = 30) -> dict:
-    """IS-daily：多年样本的季降水均值与雨日比例，对照气候值。"""
+    """IS-daily：多年样本的季降水均值与雨日比例，对照气候值（cpp 后端的逐年模拟在 C++ 里，统计照旧在这里）。"""
     from . import _rng
+    from .engine import backend
     wc = c["weather"]
     clim = g["climate"]
     params = season_params(clim, wc)
     surface = float(g["inp"]["height_m"])
     n_s = int(clim["calendar"]["seasons"])
-    P = np.zeros((years, n_s))
-    F = np.zeros((years, n_s))
-    for yv in range(years):
-        y = simulate_year(_rng(ctx, node, f"weather:{yv}"), clim, g["daily"], params, surface, wc, rim_m=float(g["json"]["islands"][0]["rim_m"]),
-                          lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
-        for s in range(n_s):
-            m = y["season"] == s
-            P[yv, s] = y["precip_mm"][m].sum()
-            F[yv, s] = y["wet"][m].mean()
+    if backend(ctx) == "cpp":
+        from .engine import weather_years_cpp
+        P, F = weather_years_cpp(ctx, node, c, g, years)
+    else:
+        P = np.zeros((years, n_s))
+        F = np.zeros((years, n_s))
+        for yv in range(years):
+            y = simulate_year(_rng(ctx, node, f"weather:{yv}"), clim, g["daily"], params, surface, wc, rim_m=float(g["json"]["islands"][0]["rim_m"]),
+                              lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
+            for s in range(n_s):
+                m = y["season"] == s
+                P[yv, s] = y["precip_mm"][m].sum()
+                F[yv, s] = y["wet"][m].mean()
     clim_p = np.array([s["precip_mm"] for s in clim["seasons"]])
     annual = P.sum(axis=1)
     se = float(annual.std(ddof=1) / math.sqrt(years)) if years > 1 else 1.0

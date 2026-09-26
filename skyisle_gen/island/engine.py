@@ -1,17 +1,20 @@
-"""后端开关与 C++ 桥（docs/PLAN-CORE.md 第六节；行星计划 P6a）。
+"""后端开关与 C++ 桥（docs/PLAN-CORE.md 第六节；行星计划 P6a / P6b）。
 
 `[engine] backend = "python" | "cpp"`：读法与 `[island]` 同（default.toml ← run 的快照 ← `--set engine.backend=cpp`，`--backend` 是简写），
-不进任何阶段的缓存 key。分派点只有两处：`island.build_terrain` 与 `hydro.build_hydro` 的第一行。
+不进任何阶段的缓存 key。分派点：`island.generate`（P6b：整群进 C++）、`island.build_terrain` 与 `hydro.build_hydro`（粗版、对照、用时仍单独调）、
+`weather.multi_year_stats`（IS-daily 的逐年模拟）、`lod.build_lod` 的块降采样、`climate.classify_all`（全量季型）。
 cpp 后端调 `skyisle_gen._core`（core/，`python core/build.py` 编），这里把输入备好、把结果拼回与 Python 版同形的 g：
-数组同 dtype，island.json 同键序、同 round 位数（C++ 只给原始的双精度数）。后面的步（资源、气候、天气、聚落、出图）照旧走 Python。
+数组同 dtype，island.json 同键序、同 round 位数（C++ 只给原始的双精度数与 ASCII 代码，中文由 decode.py 译回）；写产物仍在 Python。
 """
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
 
 AGE_ZH = {"young": "新岛", "mid": "中年", "old": "老岛"}
+KEY_ASCII = {"汇聚": "convergent", "离散": "divergent", "走滑": "transform"}   # [island.resources] ore_gain 的键
 _PLANET_CACHE: dict = {}
 
 
@@ -36,12 +39,13 @@ def core():
 
 
 def flat_config(c: dict) -> dict:
-    """[island] 段展平成 {"num": {"layout.n0": 30.0, …}, "vec": {"territory.stretch": [1.0, 1.6, 2.4], …}}（布尔 → 0 / 1，字符串跳过）。"""
+    """[island] 段展平成 {"num": {"layout.n0": 30.0, …}, "vec": {"territory.stretch": [1.0, 1.6, 2.4], …}}（布尔 → 0 / 1，字符串跳过）。
+    中文键（resources.ore_gain 的板块边界类型）换成 ASCII：C++ 只用 ASCII 键。"""
     num, vec = {}, {}
 
     def walk(d, prefix):
         for k, v in d.items():
-            key = f"{prefix}{k}"
+            key = f"{prefix}{KEY_ASCII.get(k, k)}"
             if isinstance(v, dict):
                 walk(v, key + ".")
             elif isinstance(v, bool):
@@ -71,6 +75,15 @@ def planet_view(ctx) -> dict:
     wl = ctx.load_npz(4, "wind_local")
     planet = ctx.load_json(1, "planet")
     cal = planet.get("calendar", {})
+    cg = ctx.load_npz(4, "climate_grid")
+    bl = ctx.load_npz(4, "band_local")
+    c4 = ctx.cfg["s04"]["climate"]
+    keys = [str(k) for k in bl["keys"]]
+    from .climate import calendar
+    cal2 = calendar(planet)
+
+    def f64(a):
+        return np.ascontiguousarray(a, dtype=np.float64)
     pv = {
         "radius_km": float(planet["radius_km"]),
         "year_s": float(cal.get("year_days_solar", 336.0)) * float(cal.get("solar_day_hr", 24.0)) * 3600.0,
@@ -83,24 +96,55 @@ def planet_view(ctx) -> dict:
                     "area": np.ascontiguousarray(isl["area_km2"], dtype=np.float64)},
         "wind": {**_grid_spec(wl["lats"], wl["lons"]), "u": np.ascontiguousarray(wl["u"], dtype=np.float64),
                  "v": np.ascontiguousarray(wl["v"], dtype=np.float64)},
+        # 5.4 四季：④ 的网格（grid_interp 同口径）、局部带界（local_edges 按 float64 插值）、倾角、热惯性常数、历法
+        "climate": {**_grid_spec(cg["lats"], cg["lons"]), "precip": f64(cg["precip"]), "storm": f64(cg["storm"]), "window": f64(cg["window"]),
+                    "continentality": f64(cg["continentality"]) if "continentality" in cg else None,
+                    "band_lons": f64(bl["lons"]), "band_eq_n": f64(bl["edges"][keys.index("eq_n")]), "band_eq_s": f64(bl["edges"][keys.index("eq_s")]),
+                    "tilt_deg": float(planet["axial_tilt_deg"]), "tau_land": float(c4["season_tau_land_days"]),
+                    "tau_ocean": float(c4["season_tau_ocean_days"]), "alt_cont": float(c4.get("season_alt_continentality", 0.0)),
+                    "calendar": {k: cal2[k] for k in ("seasons", "months_per_season", "days_per_month", "days_per_season", "year_days",
+                                                      "day_offset_solstice_n")}},
     }
     _PLANET_CACHE.clear()
     _PLANET_CACHE[key] = pv
     return pv
 
 
-def inputs(ctx, node: int, inp: dict) -> dict:
-    return {"node": int(node), "seed": int(ctx.seed), "lat": inp["lat"], "lon": inp["lon"], "area_km2": inp["area_km2"],
-            "main_area_km2": inp["main_area_km2"], "height_m": inp["height_m"], "age": inp["age"], "layered": bool(inp["layered"]),
-            "keel_clearance_m": inp["keel_clearance_m"], "area_median_km2": inp["area_median_km2"],
-            "precip": inp["precip"], "temp_sea": inp["temp_sea"], "lapse_c_per_km": inp["lapse_c_per_km"],
-            "arable_frac": inp["arable_frac"], "river_size": inp["river_size"], "has_river": bool(inp["has_river"])}
+def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
+    d = {"node": int(node), "seed": int(ctx.seed), "lat": inp["lat"], "lon": inp["lon"], "area_km2": inp["area_km2"],
+         "main_area_km2": inp["main_area_km2"], "height_m": inp["height_m"], "age": inp["age"], "layered": bool(inp["layered"]),
+         "keel_clearance_m": inp["keel_clearance_m"], "area_median_km2": inp["area_median_km2"],
+         "precip": inp["precip"], "temp_sea": inp["temp_sea"], "lapse_c_per_km": inp["lapse_c_per_km"],
+         "arable_frac": inp["arable_frac"], "river_size": inp["river_size"], "has_river": bool(inp["has_river"])}
+    for k in ("temp", "storm", "window", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
+        if k in inp:
+            d[k] = float(inp[k])
+    if full:
+        # 聚落：人口只读 ⑨（没有 ⑨ 给 None，C++ 按可耕地 × 人口密度）；本群是不是某邦的都（settle._polity_role）
+        from .settle import _polity_role
+        d["pop"] = _polity_pop(ctx, node)
+        d["people_per_arable_km2"] = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
+        d["capital"] = _polity_role(ctx, node)
+    return d
+
+
+def _polity_pop(ctx, node: int):
+    p = ctx.stage_dir(9) / "polity.npz"
+    if p.exists():
+        with np.load(p) as z:
+            if "pop" in z.files and node < z["pop"].size:
+                return float(z["pop"][node])
+    return None
 
 
 # ---------------------------------------------------------------- 第 1 步：布局 + 岛形 + 高程
 def build_terrain_cpp(ctx, node: int, c: dict, inp: dict, res_m: float | None = None, log=print) -> dict:
-    from ..stages.s03_islands import CLASS_NAMES, CLASS_ZH
     R = core().build_terrain(inputs(ctx, node, inp), planet_view(ctx), flat_config(c), float(res_m or 0.0), threads(ctx))
+    return _terrain_from(ctx, node, inp, R, log)
+
+
+def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print) -> dict:
+    from ..stages.s03_islands import CLASS_NAMES, CLASS_ZH
     res_km = float(R["res_km"])
     n = int(R["n"])
     height, island_id, cliff = R["height"], R["island_id"], R["cliff"]
@@ -181,18 +225,24 @@ def build_terrain_cpp(ctx, node: int, c: dict, inp: dict, res_m: float | None = 
 
 # ---------------------------------------------------------------- 第 2 步前半：水系、河道、地表、可耕地
 def build_hydro_cpp(ctx, node: int, c: dict, g: dict, log=print) -> None:
+    inp = g["inp"]
+    J = g["json"]
+    ox, oy = J["raster"]["origin_km"]
+    state = {"inp": inputs(ctx, node, inp), "height": np.ascontiguousarray(g["height"], dtype=np.float64),
+             "island_id": np.ascontiguousarray(g["island_id"], dtype=np.int16), "cliff": np.ascontiguousarray(g["cliff"], dtype=bool),
+             "res_km": float(g["res_km"]), "origin_x": float(ox), "origin_y": float(oy),
+             "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "age": float(i["age"])} for i in J["islands"]]}
+    R = core().build_hydro(state, planet_view(ctx), flat_config(c), threads(ctx))
+    _hydro_from(c, g, R, log)
+
+
+def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
     from .output import LANDCOVER_CLASSES, LANDCOVER_PALETTE
     hc = c["hydro"]
     inp = g["inp"]
     res_km = g["res_km"]
     cell_km2 = res_km * res_km
     J = g["json"]
-    ox, oy = J["raster"]["origin_km"]
-    state = {"inp": inputs(ctx, node, inp), "height": np.ascontiguousarray(g["height"], dtype=np.float64),
-             "island_id": np.ascontiguousarray(g["island_id"], dtype=np.int16), "cliff": np.ascontiguousarray(g["cliff"], dtype=bool),
-             "res_km": float(res_km), "origin_x": float(ox), "origin_y": float(oy),
-             "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "age": float(i["age"])} for i in J["islands"]]}
-    R = core().build_hydro(state, planet_view(ctx), flat_config(c), threads(ctx))
     island_id = g["island_id"]
     land = island_id >= 0
     height = R["height"]
@@ -276,3 +326,82 @@ def build_hydro_cpp(ctx, node: int, c: dict, g: dict, log=print) -> None:
     log(f"  水系（C++ {float(R['seconds']):.1f} s）：降水 {P_mm:.0f} mm，主岛河 {'有' if J['constraints']['has_river']['actual'] else '无'}"
         f"（阈 {'—' if river_thr_km2 is None else f'{river_thr_km2:.1f} km²'}），湖 {J['hydro']['n_lakes']}，盆地 {basin_info.get('n_large', 0)} 大；"
         f"可耕 {J['constraints']['arable_frac']['actual']:.4f} / {inp['arable_frac']:.4f}")
+
+
+# ---------------------------------------------------------------- P6b：整群 generate（地形 → 水系 → 资源 → 四季 → 天气 → 聚落）
+def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float | None = None, steps: int = 9, log=print) -> dict:
+    """整群在 C++ 里算完，拼回与 Python 版同形的 g（写产物照旧由 island.generate 做）。"""
+    from . import decode
+    from .climate import set_climate
+    from .resources import resource_summary
+    from .settle import set_settlements
+    from .weather import set_weather
+    t0 = time.perf_counter()
+    R = core().generate(inputs(ctx, node, inp, full=steps >= 5), planet_view(ctx), flat_config(c), int(year), int(steps),
+                        float(res_m or 0.0), threads(ctx))
+    t_core = time.perf_counter() - t0
+    secs = R["seconds"]
+    g = _terrain_from(ctx, node, inp, R["terrain"], log)
+    g["timing"] = {"terrain": float(secs[0]), "core": t_core}
+    J = g["json"]
+    if steps >= 2:
+        _hydro_from(c, g, R["hydro"], log)
+        g["timing"]["hydro"] = float(secs[1])
+        g["resources"] = decode.resources(g, node, c, R["resources"])
+    if steps >= 3:
+        set_climate(g, decode.climate(R["climate"], inp["planet"]), float(inp["season_range"]))
+        D = R["daily"]
+        g["daily"] = {"day": D["day"].astype(np.int64), "temp_c": D["temp_c"], "season": D["season"].astype(np.int64),
+                      "precip_rel": D["precip_rel"], "precip_mm": D["precip_mm"], "storm": D["storm"], "window": D["window"],
+                      "wind_u": D["wind_u"], "wind_v": D["wind_v"]}
+        C = g["climate"]
+        log(f"  气候（C++）：{C['season_type_zh']}（{'/'.join(C['season_names'])}）温 {[s['temp_c'] for s in C['seasons']]} "
+            f"雨 {[int(s['precip_mm']) for s in C['seasons']]} mm")
+    if steps >= 4:
+        Y = R["weather"]
+        y = {"day": Y["day"].astype(np.int64), "season": Y["season"].astype(np.int64), "month": Y["month"].astype(np.int64),
+             "day_of_month": Y["day_of_month"].astype(np.int64), "type": Y["type"], "precip_mm": Y["precip_mm"], "temp_c": Y["temp_c"],
+             "wind_from_deg": Y["wind_from_deg"], "wind_ms": Y["wind_ms"], "sailable": Y["sailable"], "storm_event": Y["storm_event"],
+             "wet": Y["wet"], "temp_rim_c": Y["temp_rim_c"], "snow": Y["snow"]}
+        set_weather(g, y, [dict(p) for p in Y["params"]], year, log=log)
+    if steps >= 5:
+        S = decode.settlements(R["settle"], g.get("climate"))
+        g["settle_pop"] = float(R["settle_pop"])
+        g["settle_raster"] = R["settle_raster"]
+        g["settle_fields"] = R["settle_fields"]
+        set_settlements(g, S)
+        if "to_grass_km2" in S["clearing"]:
+            J["landcover"]["note_clearing"] = "林地在村 / 镇 / 专业聚落半径内已开垦：内圈草坡（牧场草场）、外圈灌丛（薪炭林）"
+        log(f"  聚落（C++）：人口 {S['population']:.0f} → {S['households']} 户；田块 {S['n_fields']}，村 {S['n_villages']}，散户 {S['n_hamlets']}，"
+            f"镇 {len(S['towns'])}，专业聚落 {len(S['specials'])}，泊场 {len(S['landings'])}")
+    if steps >= 2:
+        resource_summary(g)
+        Rr = g["resources"]
+        log(f"  资源（C++）：点与片 {len(Rr['deposits'])} 处，赋存区 {len(Rr['occurrences'])}，采场 {len(Rr['workings'])}")
+    g["timing"]["settle"] = float(secs[4])
+    return g
+
+
+def weather_years_cpp(ctx, node: int, c: dict, g: dict, years: int):
+    """IS-daily 的多年逐日模拟（weather.multi_year_stats 的 cpp 分支）：返回 P[年, 季]（季降水和）与 F[年, 季]（季雨日比例）。"""
+    P, F, _frd = core().weather_years(inputs(ctx, node, g["inp"]), planet_view(ctx), flat_config(c), float(g["json"]["islands"][0]["rim_m"]),
+                                      int(years))
+    return P, F
+
+
+def block_reduce_cpp(g: dict, f: int) -> dict:
+    """粗版的块降采样（lod._block_reduce 的 cpp 分支）。"""
+    return core().block_reduce(np.ascontiguousarray(g["island_id"], dtype=np.int16), np.ascontiguousarray(g["height"], dtype=np.float64),
+                               np.ascontiguousarray(g["landcover"], dtype=np.uint8), np.ascontiguousarray(g["river"], dtype=np.uint8),
+                               np.ascontiguousarray(g["lake"], dtype=bool), int(f))
+
+
+def climate_only_cpp(ctx, node_inp: dict, c: dict) -> dict:
+    """只算四季（climate.classify_all 的 cpp 分支）。node_inp：classify_all 拼的 inp（lat / lon / height_m / 气候标量 / planet / keel）。"""
+    from . import decode
+    d = {"node": 0, "seed": int(ctx.seed), "area_km2": 0.0, "main_area_km2": 0.0, "age": 0.0, "layered": False, "area_median_km2": 1.0,
+         "lapse_c_per_km": 6.0, "arable_frac": 0.0, "river_size": 0.0, "has_river": False}
+    for k in ("lat", "lon", "height_m", "keel_clearance_m", "precip", "temp", "temp_sea", "storm", "window", "season_range", "season_range_sea",
+              "temp_winter", "temp_summer"):
+        d[k] = float(node_inp[k])
+    return decode.climate(core().climate_only(d, planet_view(ctx), flat_config(c)), node_inp["planet"])
