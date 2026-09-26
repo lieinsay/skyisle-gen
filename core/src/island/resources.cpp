@@ -43,16 +43,15 @@ struct Box {
     bool empty() const { return r1 <= r0; }
 };
 
-// 贪心取种子（_seeds）：按分数降序（同分按扁平下标），与已选的距离 ≥ min_sep 格；最多看前 40000 个候选
-std::vector<std::pair<int, int>> seeds_of(const std::vector<double>& score, int W, const Box& bx, int64_t n, double min_sep) {
+// 贪心取种子（_seeds）：按分数降序（同分按扁平下标），与已选的距离 ≥ min_sep 格；最多看前 40000 个候选。
+// score 是岛外框里的局部栅格（外框外的分数在 Python 版里都是 0）：局部光栅次序与整图的扁平下标次序一致
+std::vector<std::pair<int, int>> seeds_of(const std::vector<double>& score, const Box& bx, int64_t n, double min_sep) {
     std::vector<std::pair<int, int>> out;
     if (n <= 0) return out;
+    const int bw = bx.c1 - bx.c0;
     std::vector<std::pair<double, int32_t>> cand;
-    for (int i = bx.r0; i < bx.r1; ++i)
-        for (int j = bx.c0; j < bx.c1; ++j) {
-            const int32_t k = i * W + j;
-            if (score[k] > 0) cand.emplace_back(score[k], k);
-        }
+    for (size_t q = 0; q < score.size(); ++q)
+        if (score[q] > 0) cand.emplace_back(score[q], static_cast<int32_t>(q));
     if (cand.empty()) return out;
     auto cmp = [](const std::pair<double, int32_t>& a, const std::pair<double, int32_t>& b) {
         return a.first > b.first || (a.first == b.first && a.second < b.second);
@@ -62,7 +61,7 @@ std::vector<std::pair<int, int>> seeds_of(const std::vector<double>& score, int 
     const double ms2 = min_sep * min_sep;
     std::vector<std::pair<double, double>> pts;
     for (size_t q = 0; q < take; ++q) {
-        const int i = cand[q].second / W, j = cand[q].second % W;
+        const int i = bx.r0 + cand[q].second / bw, j = bx.c0 + cand[q].second % bw;
         bool bad = false;
         for (const auto& p : pts) {
             const double di = p.first - i, dj = p.second - j;
@@ -332,13 +331,14 @@ void build_resources(Group& g, const Config& c) {
         if (seeds_in) {
             seeds = *seeds_in;
         } else {
-            std::vector<double> s0(N, 0.0);
+            const int bw = bx.c1 - bx.c0;
+            std::vector<double> s0(static_cast<size_t>(bx.r1 - bx.r0) * bw, 0.0);
             for (int i = bx.r0; i < bx.r1; ++i)
                 for (int j = bx.c0; j < bx.c1; ++j) {
                     const size_t k = static_cast<size_t>(i) * W + j;
-                    s0[k] = taken.v[k] ? 0.0 : sc_at(k);
+                    s0[static_cast<size_t>(i - bx.r0) * bw + (j - bx.c0)] = taken.v[k] ? 0.0 : sc_at(k);
                 }
-            seeds = seeds_of(s0, W, bx, n, sep_km / res_km);
+            seeds = seeds_of(s0, bx, n, sep_km / res_km);
         }
         int placed = 0;
         for (const auto& sd : seeds) {
@@ -654,17 +654,21 @@ void build_resources(Group& g, const Config& c) {
                     }
             if (any_st) {
                 auto st = [&](int a, int b) { return a >= 0 && b >= 0 && a < H && b < W && g.island_id(a, b) == k && stream(a, b); };
-                std::vector<uint8_t> heads(N, 0);
+                std::vector<uint8_t> heads(static_cast<size_t>(bx.r1 - bx.r0) * bw, 0);
                 for (int i = bx.r0; i < bx.r1; ++i)
                     for (int j = bx.c0; j < bx.c1; ++j) {
                         if (!st(i, j)) continue;
                         int nb = 0;
                         for (int d = 0; d < 8; ++d) nb += st(i - N8[d][0], j - N8[d][1]) ? 1 : 0;
                         const size_t q = static_cast<size_t>(i) * W + j;
-                        heads[q] = (nb <= 1 && soft.v[q]) ? 1 : 0;
+                        heads[static_cast<size_t>(i - bx.r0) * bw + (j - bx.c0)] = (nb <= 1 && soft.v[q]) ? 1 : 0;
                     }
                 const int64_t n = lam("spring", 1.0);
-                place(RK_SPRING, bx, [&](size_t q) { return heads[q] != 0; }, [&](size_t q) { return patchy[q] * clip(1.2 - slope[q] / 25.0, 0.05, 1.0); },
+                auto head_at = [&](size_t q) {
+                    const int i = static_cast<int>(q / W), j = static_cast<int>(q % W);
+                    return i >= bx.r0 && i < bx.r1 && j >= bx.c0 && j < bx.c1 && heads[static_cast<size_t>(i - bx.r0) * bw + (j - bx.c0)] != 0;
+                };
+                place(RK_SPRING, bx, head_at, [&](size_t q) { return patchy[q] * clip(1.2 - slope[q] / 25.0, 0.05, 1.0); },
                       n, 0, cf("spring_sep_km"), nullptr, "", 0, rng, nullptr);
             }
         }
@@ -700,16 +704,16 @@ void build_resources(Group& g, const Config& c) {
                     }
             if (big && any) {
                 const double mrel2 = 2.0 * mrel;
-                std::vector<double> score(N, 0.0);
+                std::vector<double> score(static_cast<size_t>(bx.r1 - bx.r0) * bw, 0.0);
                 for (int i = bx.r0; i < bx.r1; ++i)
                     for (int j = bx.c0; j < bx.c1; ++j) {
                         const size_t q = static_cast<size_t>(i) * W + j;
-                        if (cand(q)) score[q] = patchy[q] * clip(relief[q] / mrel2, 0.1, 1.0);
+                        if (cand(q)) score[static_cast<size_t>(i - bx.r0) * bw + (j - bx.c0)] = patchy[q] * clip(relief[q] / mrel2, 0.1, 1.0);
                     }
                 const int64_t n = lam("ore", geo_ore * age_mult);
                 const double elong = cf("ore_elongation");
                 const double ca = std::cos(axis), sa = std::sin(axis);
-                for (const auto& sd : seeds_of(score, W, bx, n, cf("ore_sep_km") / res_km)) {
+                for (const auto& sd : seeds_of(score, bx, n, cf("ore_sep_km") / res_km)) {
                     const int i = sd.first, j = sd.second;
                     const double area = cf("ore_km2") * rng.lognormal(0.0, 0.6);
                     const double b_km = std::sqrt(area / (PI * elong));
@@ -830,14 +834,14 @@ void build_resources(Group& g, const Config& c) {
             if (age == YOUNG && big) {
                 const double spf = cf("sulfur_peak_frac");
                 auto cand = [&](size_t q) { return in_m(q) && rock_site.v[q] && peak_rel[q] >= spf; };
-                std::vector<double> score(N, 0.0);
+                std::vector<double> score(static_cast<size_t>(bx.r1 - bx.r0) * bw, 0.0);
                 for (int i = bx.r0; i < bx.r1; ++i)
                     for (int j = bx.c0; j < bx.c1; ++j) {
                         const size_t q = static_cast<size_t>(i) * W + j;
-                        if (cand(q)) score[q] = patchy[q] * peak_rel[q];
+                        if (cand(q)) score[static_cast<size_t>(i - bx.r0) * bw + (j - bx.c0)] = patchy[q] * peak_rel[q];
                     }
                 const int64_t ns = lam("sulfur", 1.0);
-                for (const auto& sd : seeds_of(score, W, bx, ns, cf("patch_sep_km") / res_km)) {
+                for (const auto& sd : seeds_of(score, bx, ns, cf("patch_sep_km") / res_km)) {
                     const int i = sd.first, j = sd.second;
                     const double r_km = std::sqrt(cf("sulfur_km2") * rng.lognormal(0.0, 0.6) / PI);
                     const int Rw = static_cast<int>(std::ceil(r_km / res_km)) + 1;
