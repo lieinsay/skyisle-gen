@@ -14,10 +14,6 @@ namespace skyisle::island {
 
 namespace {
 
-Rng part_rng(const NodeInputs& inp, const std::string& part) {
-    return entity_rng(inp.seed, ISLAND_STREAM, "island:" + std::to_string(inp.node) + ":" + part);
-}
-
 double now_s() {
     using namespace std::chrono;
     return duration<double>(steady_clock::now().time_since_epoch()).count();

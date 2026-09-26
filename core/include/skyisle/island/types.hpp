@@ -9,6 +9,7 @@
 
 #include "skyisle/config.hpp"
 #include "skyisle/grid.hpp"
+#include "skyisle/json.hpp"
 
 namespace skyisle::island {
 
@@ -26,6 +27,19 @@ struct NodeInputs {
     // 水系用
     double precip = 0, temp_sea = 0, lapse_c_per_km = 6.0, arable_frac = 0, river_size = 0;
     bool has_river = false;
+    // 气候用（④ 的岛上年均值）
+    double temp = 0, storm = 0, window = 0, season_range = 0, season_range_sea = 0, temp_winter = 0, temp_summer = 0;
+    // 聚落用：人口（⑨ 的 pop；没有 ⑨ 时 NaN → 可耕地 × people_per_arable_km2）与本群是不是某邦的都
+    double pop = NaN, people_per_arable_km2 = 100.0;
+    bool is_capital = false, reformer = false;
+    int64_t state = -1;
+    double state_pop = 0;
+};
+
+// 历法（climate.calendar）
+struct Calendar {
+    int seasons = 4, months_per_season = 3;
+    double days_per_month = 28.0, days_per_season = 84.0, year_days = 336.0, offset = 126.0;   // offset = day_offset_solstice_n
 };
 
 // 行星层的网格与全体群（板块走向、势力范围、局地风）
@@ -39,6 +53,12 @@ struct PlanetView {
     std::vector<double> isl_lat, isl_lon, isl_area;   // 全体群：势力范围
     LatLonGrid wind_grid;
     std::vector<double> wind_u, wind_v;
+    // ④ 的气候网格与带界（5.4 四季）、行星常数
+    LatLonGrid cg_grid;
+    std::vector<double> cg_precip, cg_storm, cg_window, cg_cont;   // cg_cont 空 = 没有陆地性场（取 0.1）
+    std::vector<double> band_lons, band_eq_n, band_eq_s;           // band_local 的经度与 eq_n / eq_s 两行
+    double tilt_deg = 34.0, tau_land = 8.0, tau_ocean = 110.0, alt_cont = 0.0;
+    Calendar cal;
 };
 
 struct Limit {
@@ -63,6 +83,8 @@ struct IslandRec {
     int r0 = 0, c0 = 0, m = 0;          // 局部栅格左上角在群栅格里的行列、边长（裁切后）
     // island.json 里的四舍五入值（Python 版 hydro 读的是它们）
     double rim_j = 0, keel_j = 0, age_j = 0;
+    // 水系之后的 island.json 值（主岛台面校正过；资源、天气、聚落读它们）：finalize_islands 填
+    double peak_j = 0, cliff_j = 0, area_j = 0, cx_j = 0, cy_j = 0;
     // 水系（build_hydro 填）
     bool hydro = false;
     int n_lakes = 0;
@@ -115,6 +137,98 @@ struct Basins {
     std::vector<std::array<double, 3>> mouths;   // 群栅格 [行, 列, 汇流 km²]
 };
 
+// ---------------------------------------------------------------- 资源的记录（resources.hpp）
+struct Deposit {                      // 点与片（resources.json 的 deposits）
+    int id = 0, kind = 0;
+    std::string subtype;              // "" = None
+    int island = 0, ci = 0, cj = 0;
+    double kx = 0, ky = 0;            // km（round 3）
+    double area_km2 = 0, elev_m = 0, slope_deg = 0;
+    int zone = 0;
+    std::string grade;
+    std::string note;                 // 代码；"" = 无
+    double note_arg = 0;
+    bool cleared = false;
+    bool has_area_before = false;     // 开垦前面积（clear_forest 记，只林木）
+    double area_before = 0;
+};
+
+struct Occurrence {                   // 散的赋存区（occurrences）
+    int id = 0, kind = 0;
+    std::string subtype, note;
+    int island = 0, ci = 0, cj = 0;
+    double kx = 0, ky = 0, area_km2 = 0;
+    double length_km = 0;             // C++ 的闭式主轴；前端按 numpy 的 cov / eigh 重算（格子在 cells）
+    bool has_axis = false;
+    double axis_deg = 0;
+    double grade_peak = 0, grade_mean = 0;
+    std::string grade;
+    double elev_lo = 0, elev_hi = 0;
+    int zone = 0;
+    int n_workings = 0;
+    std::vector<int32_t> cells;       // 群栅格扁平下标（add_occ 的 ii、jj 次序）
+};
+
+struct Working {                      // 采场（workings）
+    int id = 0, kind = 0, occurrence = 0, island = 0, ci = 0, cj = 0;
+    double kx = 0, ky = 0, grade = 0;
+    std::vector<int> villages;
+    int special = -1;                 // −1 = None
+    std::string note;
+};
+
+struct Resources {
+    std::vector<Deposit> deposits;
+    std::vector<Occurrence> occ;
+    std::vector<Working> works;
+    bool old_limestone = false;
+    double geo_ore = 0, fs_rate = 0, kernel_j = 0;
+    int r_cells = 1;
+    std::array<double, 6> thr{};   // 各类散的赋存区阈值（层序同 res_field）
+};
+
+// ---------------------------------------------------------------- 四季与逐日天气的记录（climate.hpp）
+struct SeasonRec {
+    int index = 0;
+    std::string name;                 // 季名代码（前端映射成中文）
+    int d0 = 0, d1 = 0;
+    double mid_day = 0;
+    std::vector<int> months;
+    double temp_c = 0, temp_sea_c = 0, precip_rel = 0, precip_mm = 0, precip_rate = 0, storm = 0, window = 0;
+    double wu = 0, wv = 0, speed = 0, from_deg = 0, band_shift = 0, lat_sampled = 0;   // 均已按 Python 的 round 舍好
+};
+
+struct Climate {
+    Calendar cal;
+    std::string stype;                // four / two / rain / storm / none
+    std::string type_code;            // four / two / rain / storm / none_warm / none_cold（前端映射季型中文）
+    std::vector<std::string> names;
+    double score_temp = 0, score_rain = 0, score_storm = 0;
+    double a_temp = 0, a_temp_sea = 0, a_precip_rel = 0, a_precip_mm = 0, a_storm = 0, a_window = 0, a_range = 0, a_range_sea = 0,
+           a_winter = 0, a_summer = 0, a_ref_h = 0;
+    double cont_sea = 0, cont_isl = 0, tau_sea = 0, tau_isl = 0, A_sea = 0, A_isl = 0, lag_sea_days = 0, lag_isl_days = 0, k_shift = 0,
+           band_amp = 0;
+    std::vector<SeasonRec> seasons;
+    double m_precip = 0, m_storm = 0, m_window = 0, m_temp = 0;
+    double season_range_1 = 0;        // round(r_t, 1)：island.json 的 climate 摘要
+};
+
+struct Daily {                        // daily_curves：一年逐日的季节曲线
+    std::vector<int32_t> day, season;
+    std::vector<double> temp_c, precip_rel, precip_mm, storm, window, wind_u, wind_v;
+};
+
+struct SeasonParams {                 // weather.season_params
+    double f_wet = 0, f_rain_days = 0, p_ww = 0, p_dw = 0, mean_wet_mm = 0, storm_frac = 0, p_calm = 0, wind_u = 0, wind_v = 0, speed = 0;
+};
+
+struct WeatherYear {                  // weather.simulate_year 的数组
+    std::vector<int32_t> day, season, month, day_of_month, storm_event;
+    std::vector<int8_t> type;
+    std::vector<double> precip_mm, temp_c, wind_from_deg, wind_ms, temp_rim_c;
+    std::vector<uint8_t> sailable, wet, snow;
+};
+
 // 群状态（Python 版的 g）
 struct Group {
     NodeInputs inp;
@@ -150,6 +264,38 @@ struct Group {
     double P_mm = 0, river_thr = NaN, dz = 0, wind_u = 0, wind_v = 0, max_cut = 0;
     int n_falls = 0;
     double sec_hydro = 0;
+
+    // ---- 资源（build_resources）
+    bool has_resources = false;
+    Grid<uint8_t> zone;                              // terrain_zone
+    GridI patch_id;                                  // −1 = 无
+    std::array<GridI, 6> occ_lab;                    // 各类散的赋存区号（−1 = 无），层序同 res_field
+    std::array<Grid<uint8_t>, 6> res_field;          // 品位 × 255
+    Grid<uint8_t> resource;                          // 主导类（显示用）
+    Resources res;
+    double sec_resources = 0;
+
+    // ---- 四季、逐日曲线、天气（build_climate / daily_curves / build_weather）
+    bool has_climate = false, has_weather = false;
+    Climate clim;
+    Daily daily;
+    std::vector<SeasonParams> wparams;
+    WeatherYear weather;
+    int year = 0;
+    double sec_climate = 0;
+
+    // ---- 聚落（build_settlements）：记录直接成 JSON 的形（代码），栅格另存
+    bool has_settle = false;
+    Json settle;
+    Grid<uint8_t> settle_raster;     // 1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 6 桥头 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落
+    GridI settle_fields;             // 田块号（0 = 无）
+    double settle_pop = 0;
+    double sec_settle = 0;
 };
+
+// 水系之后把 island.json 的值备齐（rim / peak / cliff 按 Python 的 round，主岛再加台面校正 dz）
+void finalize_islands(Group& g);
+// entity_rng(seed, 21, "island:{node}:{部件}")
+Rng part_rng(const NodeInputs& inp, const std::string& part);
 
 }  // namespace skyisle::island

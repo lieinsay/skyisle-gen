@@ -52,6 +52,11 @@ double blas_ddot(const double* x, const double* y, size_t n);
 // np.convolve(a, v, "valid")：numpy 2.x 核长 < 12 用自己的顺序乘加，≥ 12 走 BLAS ddot
 std::vector<double> np_convolve_valid(const std::vector<double>& a, const std::vector<double>& v);
 double pyround(double x, int ndigits);             // Python 的 round(x, n)：二进制值的精确十进制舍入、逢半取偶
+// numpy 标量（np.float64）的 round(x, n)：rint(x · 10ⁿ) / 10ⁿ——Python 代码里凡被舍的数是 numpy 标量（数组元素、numpy 整数参与的算式）就是它，
+// 边界上（…5）与 pyround 差一位（聚落的田块形心、部分村址与主家候选的 km）
+double npround(double x, int ndigits);
+// Python 3.12 内置 sum() 对浮点：第一个 0 + x₀，其后 Neumaier 补偿求和，最后加上补偿量（builtin_sum_impl）——不是逐个相加
+double py_sum(const std::vector<double>& v);
 double pymod(double x, double m);                  // Python 的浮点 %（结果与除数同号）
 // 幂与斜边：numpy 数组的 a ** e / np.power(a, e) 对 e ∈ {−1, 0, 0.5, 1, 2} 走快路径（倒数 / 1 / sqrt / 原值 / 平方），
 // 其余调 C 的 pow；Python 浮点的 x ** e 一律 C 的 pow（ucrt 的 pow(x, 2) 与 x·x、pow(x, 0.5) 与 sqrt 偶有一位之差）。

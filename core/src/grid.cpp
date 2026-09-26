@@ -167,6 +167,26 @@ double np_median(std::vector<double> v) {
     return (lo + hi) / 2.0;
 }
 
+double py_sum(const std::vector<double>& v) {
+    if (v.empty()) return 0.0;
+    double f = 0.0 + v[0], c = 0.0;
+    for (size_t k = 1; k < v.size(); ++k) {
+        const double x = v[k];
+        const double t = f + x;
+        if (std::fabs(f) >= std::fabs(x)) c += (f - t) + x;
+        else c += (x - t) + f;
+        f = t;
+    }
+    if (c != 0.0 && std::isfinite(c)) f += c;
+    return f;
+}
+
+double npround(double x, int ndigits) {
+    double p = 1.0;
+    for (int k = 0; k < ndigits; ++k) p *= 10.0;       // numpy 的 power_of_ten（小 n 精确）
+    return std::nearbyint(x * p) / p;
+}
+
 double pyround(double x, int ndigits) {
     if (!std::isfinite(x)) return x;
     char buf[512];

@@ -83,3 +83,17 @@ def test_label_by_island_and_window_extrema():
         hi1, lo1 = G.window_extrema(h, 4, iid >= 0)
         hi2, lo2 = core.window_extrema(h, 4, iid >= 0)
         assert np.array_equal(hi1, hi2) and np.array_equal(lo1, lo2)
+
+
+def test_kmeans_split_matches():
+    """田块切分（settle._kmeans_split）：不放回抽初值 + 12 轮 Lloyd，均值沿 axis 0 顺序加。"""
+    from skyisle_gen.island.settle import _kmeans_split
+    rng = np.random.default_rng(5)
+    for t in range(40):
+        n = int(rng.integers(5, 3000))
+        ii, jj = rng.integers(0, 200, n), rng.integers(0, 200, n)
+        k = int(rng.integers(1, 12))
+        key = f"island:{t}:settle:fields"
+        a = _kmeans_split(entity_rng(7, 21, key), ii, jj, k)
+        b = core.kmeans_split(7, key, ii.astype(np.int32).tolist(), jj.astype(np.int32).tolist(), k)
+        assert np.array_equal(np.asarray(a), b), t

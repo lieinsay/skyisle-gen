@@ -9,6 +9,10 @@
 
 #include "bind_util.hpp"
 #include "skyisle/island/build.hpp"
+#include "skyisle/island/climate.hpp"
+#include "skyisle/island/generate.hpp"
+#include "skyisle/island/resources.hpp"
+#include "skyisle/island/settle.hpp"
 #include "skyisle/island/layout.hpp"
 #include "skyisle/island/terrain.hpp"
 #include "skyisle/island/territory.hpp"
@@ -59,6 +63,26 @@ NodeInputs inp_from(const nb::dict& d) {
     x.arable_frac = dget(d, "arable_frac");
     x.river_size = dget(d, "river_size");
     x.has_river = nb::cast<bool>(d["has_river"]);
+    // P6b：气候与聚落用（旧调用方没给就用缺省）
+    auto opt = [&](const char* k, double& dst) {
+        if (d.contains(k)) dst = dget(d, k);
+    };
+    opt("temp", x.temp);
+    opt("storm", x.storm);
+    opt("window", x.window);
+    opt("season_range", x.season_range);
+    opt("season_range_sea", x.season_range_sea);
+    opt("temp_winter", x.temp_winter);
+    opt("temp_summer", x.temp_summer);
+    opt("people_per_arable_km2", x.people_per_arable_km2);
+    if (d.contains("pop") && !d["pop"].is_none()) x.pop = dget(d, "pop");
+    if (d.contains("capital") && !d["capital"].is_none()) {
+        nb::dict cap = nb::cast<nb::dict>(d["capital"]);
+        x.is_capital = true;
+        x.state = nb::cast<int64_t>(cap["state"]);
+        x.state_pop = dget(cap, "state_pop");
+        x.reformer = nb::cast<bool>(cap["reformer"]);
+    }
     return x;
 }
 
@@ -97,7 +121,56 @@ PlanetView planet_from(const nb::dict& d) {
         p.wind_u = vget(q, "u");
         p.wind_v = vget(q, "v");
     }
+    if (d.contains("climate")) {   // ④ 的气候网格、局部带界、行星常数与历法（5.4 四季）
+        nb::dict q = nb::cast<nb::dict>(d["climate"]);
+        p.cg_grid = llg_from(q);
+        p.cg_precip = vget(q, "precip");
+        p.cg_storm = vget(q, "storm");
+        p.cg_window = vget(q, "window");
+        if (q.contains("continentality") && !q["continentality"].is_none()) p.cg_cont = vget(q, "continentality");
+        p.band_lons = vget(q, "band_lons");
+        p.band_eq_n = vget(q, "band_eq_n");
+        p.band_eq_s = vget(q, "band_eq_s");
+        p.tilt_deg = dget(q, "tilt_deg");
+        p.tau_land = dget(q, "tau_land");
+        p.tau_ocean = dget(q, "tau_ocean");
+        p.alt_cont = dget(q, "alt_cont");
+        nb::dict cal = nb::cast<nb::dict>(q["calendar"]);
+        p.cal.seasons = nb::cast<int>(cal["seasons"]);
+        p.cal.months_per_season = nb::cast<int>(cal["months_per_season"]);
+        p.cal.days_per_month = dget(cal, "days_per_month");
+        p.cal.days_per_season = dget(cal, "days_per_season");
+        p.cal.year_days = dget(cal, "year_days");
+        p.cal.offset = dget(cal, "day_offset_solstice_n");
+    }
     return p;
+}
+
+// JSON 值 → Python 对象（dict / list / str / int / float / bool / None）
+nb::object json_py(const Json& j) {
+    switch (j.type()) {
+        case Json::NUL: return nb::none();
+        case Json::BOOL: return nb::bool_(j.as_bool());
+        case Json::INT: return nb::int_(j.as_int());
+        case Json::NUM: return nb::float_(j.as_num());
+        case Json::STR: return nb::str(j.as_str().c_str());
+        case Json::ARR: {
+            nb::list l;
+            for (const Json& x : j.items()) l.append(json_py(x));
+            return l;
+        }
+        case Json::OBJ: {
+            nb::dict d;
+            for (const auto& kv : j.fields()) d[kv.first.c_str()] = json_py(kv.second);
+            return d;
+        }
+    }
+    return nb::none();
+}
+
+template <class T>
+nb::ndarray<nb::numpy, T> vec_np(const std::vector<T>& v) {
+    return to_np(std::vector<T>(v), {v.size()});
 }
 
 template <class T>
@@ -259,9 +332,188 @@ nb::dict hydro_dict(Group& g) {
     return d;
 }
 
+nb::dict resources_dict(Group& g) {
+    nb::dict d;
+    const size_t H = g.H, W = g.W;
+    d["terrain_zone"] = grid_np(Grid<uint8_t>(g.zone));
+    d["patch_id"] = grid_np(GridI(g.patch_id));
+    d["resource"] = grid_np(Grid<uint8_t>(g.resource));
+    std::vector<uint8_t> rf(6 * H * W);
+    for (int f = 0; f < 6; ++f) std::copy(g.res_field[f].v.begin(), g.res_field[f].v.end(), rf.begin() + static_cast<size_t>(f) * H * W);
+    d["res_field"] = to_np(std::move(rf), {static_cast<size_t>(6), H, W});
+    nb::list occ_lab;
+    for (int f = 0; f < 6; ++f) occ_lab.append(grid_np(GridI(g.occ_lab[f])));
+    d["occ_lab"] = occ_lab;
+    nb::list deps, occs, works, cells;
+    for (const Deposit& x : g.res.deposits) deps.append(json_py(deposit_json(x)));
+    for (const Occurrence& x : g.res.occ) {
+        occs.append(json_py(occurrence_json(x)));
+        cells.append(vec_np(x.cells));
+    }
+    for (const Working& x : g.res.works) works.append(json_py(working_json(x)));
+    d["deposits"] = deps;
+    d["occurrences"] = occs;
+    d["workings"] = works;
+    d["occ_cells"] = cells;
+    d["old_limestone"] = g.res.old_limestone;
+    d["geo_ore"] = g.res.geo_ore;
+    d["fs_rate"] = g.res.fs_rate;
+    d["kernel"] = g.res.kernel_j;
+    d["r_cells"] = g.res.r_cells;
+    nb::list thr;
+    for (double t : g.res.thr) thr.append(t);
+    d["thr"] = thr;
+    d["seconds"] = g.sec_resources;
+    return d;
+}
+
+nb::dict daily_dict(const Daily& D) {
+    nb::dict d;
+    d["day"] = vec_np(D.day);
+    d["temp_c"] = vec_np(D.temp_c);
+    d["season"] = vec_np(D.season);
+    d["precip_rel"] = vec_np(D.precip_rel);
+    d["precip_mm"] = vec_np(D.precip_mm);
+    d["storm"] = vec_np(D.storm);
+    d["window"] = vec_np(D.window);
+    d["wind_u"] = vec_np(D.wind_u);
+    d["wind_v"] = vec_np(D.wind_v);
+    return d;
+}
+
+nb::dict weather_dict(const WeatherYear& Y, const std::vector<SeasonParams>& P) {
+    nb::dict d;
+    d["day"] = vec_np(Y.day);
+    d["season"] = vec_np(Y.season);
+    d["month"] = vec_np(Y.month);
+    d["day_of_month"] = vec_np(Y.day_of_month);
+    d["type"] = vec_np(Y.type);
+    d["precip_mm"] = vec_np(Y.precip_mm);
+    d["temp_c"] = vec_np(Y.temp_c);
+    d["wind_from_deg"] = vec_np(Y.wind_from_deg);
+    d["wind_ms"] = vec_np(Y.wind_ms);
+    d["sailable"] = bool_np(std::vector<uint8_t>(Y.sailable), {Y.sailable.size()});
+    d["storm_event"] = vec_np(Y.storm_event);
+    d["wet"] = bool_np(std::vector<uint8_t>(Y.wet), {Y.wet.size()});
+    d["temp_rim_c"] = vec_np(Y.temp_rim_c);
+    d["snow"] = bool_np(std::vector<uint8_t>(Y.snow), {Y.snow.size()});
+    nb::list pl;
+    for (const SeasonParams& p : P) {
+        nb::dict e;
+        e["f_wet"] = p.f_wet;
+        e["f_rain_days"] = p.f_rain_days;
+        e["p_ww"] = p.p_ww;
+        e["p_dw"] = p.p_dw;
+        e["mean_wet_mm"] = p.mean_wet_mm;
+        e["storm_frac"] = p.storm_frac;
+        e["p_calm"] = p.p_calm;
+        e["wind_u"] = p.wind_u;
+        e["wind_v"] = p.wind_v;
+        e["speed"] = p.speed;
+        pl.append(e);
+    }
+    d["params"] = pl;
+    return d;
+}
+
+nb::dict lod_dict(LodBlock&& B) {
+    nb::dict d;
+    const size_t H = B.H, W = B.W;
+    d["land"] = to_np(std::move(B.land), {H, W});
+    d["height"] = to_np(std::move(B.height), {H, W});
+    d["peak"] = to_np(std::move(B.peak), {H, W});
+    d["island"] = to_np(std::move(B.island), {H, W});
+    d["landcover"] = to_np(std::move(B.landcover), {H, W});
+    d["water"] = to_np(std::move(B.water), {H, W});
+    return d;
+}
+
+using ArrU2 = nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+
 }  // namespace
 
 void bind_island(nb::module_& m) {
+    // ---------------------------------------------------------------- 整群生成（P6b）：地形 → 水系 → 资源 → 四季 → 天气 → 聚落
+    m.def("generate", [](nb::dict inp, nb::dict planet, nb::dict cfg, int year, int steps, double res_m, int threads) {
+        const NodeInputs ni = inp_from(inp);
+        const PlanetView pv = planet_from(planet);
+        const Config c = cfg_from(cfg);
+        Group g;
+        {
+            nb::gil_scoped_release rel;
+            g = generate(ni, pv, c, year, steps, res_m, threads);
+        }
+        nb::dict d;
+        d["terrain"] = terrain_dict(g);
+        if (g.has_hydro) d["hydro"] = hydro_dict(g);
+        if (g.has_resources) d["resources"] = resources_dict(g);
+        if (g.has_climate) {
+            d["climate"] = json_py(climate_json(g.clim));
+            d["daily"] = daily_dict(g.daily);
+        }
+        if (g.has_weather) d["weather"] = weather_dict(g.weather, g.wparams);
+        if (g.has_settle) {
+            d["settle"] = json_py(g.settle);
+            d["settle_raster"] = grid_np(Grid<uint8_t>(g.settle_raster));
+            d["settle_fields"] = grid_np(GridI(g.settle_fields));
+            d["settle_pop"] = g.settle_pop;
+        }
+        d["seconds"] = nb::make_tuple(g.sec_total, g.sec_hydro, g.sec_resources, g.sec_climate, g.sec_settle);
+        return d;
+    }, "inp"_a, "planet"_a, "cfg"_a, "year"_a = 0, "steps"_a = 5, "res_m"_a = 0.0, "threads"_a = 1);
+
+    // 粗版的块降采样（lod._block_reduce）：输入群栅格的 island_id / height / landcover / river / lake
+    m.def("block_reduce", [](ArrS2 island_id, ArrD2 height, ArrU2 landcover, ArrU2 river, ArrB2 lake, int f) {
+        Group g;
+        g.H = static_cast<int>(island_id.shape(0));
+        g.W = static_cast<int>(island_id.shape(1));
+        g.island_id = Grid<int16_t>(g.H, g.W);
+        std::memcpy(g.island_id.v.data(), island_id.data(), g.island_id.v.size() * sizeof(int16_t));
+        g.height = grid_from(height);
+        g.landcover = Grid<uint8_t>(g.H, g.W);
+        std::memcpy(g.landcover.v.data(), landcover.data(), g.landcover.v.size());
+        g.river = Grid<uint8_t>(g.H, g.W);
+        std::memcpy(g.river.v.data(), river.data(), g.river.v.size());
+        g.lake = mask_from(lake);
+        LodBlock B;
+        {
+            nb::gil_scoped_release rel;
+            B = block_reduce(g, f);
+        }
+        return lod_dict(std::move(B));
+    });
+
+    // 只算四季（island stats 全量季型用）与多年逐日天气（IS-daily）
+    m.def("climate_only", [](nb::dict inp, nb::dict planet, nb::dict cfg) {
+        const NodeInputs ni = inp_from(inp);
+        const PlanetView pv = planet_from(planet);
+        const Config c = cfg_from(cfg);
+        return json_py(climate_json(build_climate(ni, pv, c)));
+    });
+    m.def("weather_years", [](nb::dict inp, nb::dict planet, nb::dict cfg, double rim_m, int years) {
+        const NodeInputs ni = inp_from(inp);
+        const PlanetView pv = planet_from(planet);
+        const Config c = cfg_from(cfg);
+        std::vector<double> P, F;
+        std::vector<SeasonParams> par;
+        {
+            nb::gil_scoped_release rel;
+            const Climate clim = build_climate(ni, pv, c);
+            const Daily daily = daily_curves(clim, ni);
+            par = season_params(clim, c);
+            multi_year(ni, clim, daily, par, rim_m, c, years, P, F);
+        }
+        const size_t ns = par.size();
+        std::vector<double> frd;
+        for (const SeasonParams& p : par) frd.push_back(p.f_rain_days);
+        return nb::make_tuple(to_np(std::move(P), {static_cast<size_t>(years), ns}), to_np(std::move(F), {static_cast<size_t>(years), ns}),
+                              to_np(std::move(frd), {ns}));
+    });
+    m.def("kmeans_split", [](uint64_t seed, const std::string& key, std::vector<int32_t> ii, std::vector<int32_t> jj, int k) {
+        Rng r = entity_rng(seed, ISLAND_STREAM, key);
+        return vec_np(kmeans_split(r, ii, jj, k));
+    });
+
     m.def("build_terrain", [](nb::dict inp, nb::dict planet, nb::dict cfg, double res_m, int threads) {
         const NodeInputs ni = inp_from(inp);
         const PlanetView pv = planet_from(planet);
