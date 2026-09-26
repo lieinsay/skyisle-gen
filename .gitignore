@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 *.pyc
 *.egg-info/
+build/
+skyisle_gen/_core*.pyd
+skyisle_gen/_core*.so
