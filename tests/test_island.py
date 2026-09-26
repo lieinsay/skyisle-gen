@@ -90,7 +90,7 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert (P[P[:, 3] > 0, 2] > 0).all()
         if c["has_river"]["actual"]:
             assert any(max(q[3] for q in L["pts"]) > 0 and L["island"] == 0 for L in RV["lines"])
-        # 资源：地形区覆盖全部陆地；矿点在所属岛的陆地、不在水面，资源栅格上有标记
+        # 资源：地形区覆盖全部陆地；点与片在所属岛的陆地、不在水面，主导栅格上有标记，片的代表格在自己的 patch_id 上
         Rj = json.loads((out / "resources.json").read_text(encoding="utf-8"))
         assert (z["terrain_zone"][land] > 0).all() and (z["terrain_zone"][~land] == 0).all()
         assert abs(sum(Rj["zones"]["share"].values()) - 1.0) < 1e-3
@@ -99,7 +99,25 @@ def test_island_deterministic_and_consistent(small_ctx):
                 continue
             i, j = d["cell"]
             assert z["island_id"][i, j] == d["island"] and z["river"][i, j] == 0 and not z["lake"][i, j] and z["resource"][i, j] > 0
-        assert any(d["kind"] == "quarry" and d["island"] == 0 for d in Rj["deposits"])
+            assert d["form"] != "patch" or z["patch_id"][i, j] == d["id"]
+        # 片的面积 = patch_id 的格数（林场不再重复计数），林木合计不超过林地
+        ck = (J1["raster"]["res_m"] / 1000.0) ** 2
+        tim = [d for d in Rj["deposits"] if d["kind"] == "timber"]
+        assert abs(sum(d["area_km2"] for d in tim) - np.isin(z["patch_id"], [d["id"] for d in tim]).sum() * ck) < 0.01 * max(1, len(tim))
+        # 散：赋存场 [6, H, W]；岩类（金属矿 / 石料 / 硫磺）的场不上耕地、不上湿地；赋存区与采场的格有效
+        RF = z["res_field"]
+        assert RF.shape == (len(Rj["fields"]["kinds"]),) + z["height"].shape and (RF[:, ~land] == 0).all()
+        for k in Rj["fields"]["rock_kinds"]:
+            f = RF[Rj["fields"]["kinds"].index(k)] > 0
+            assert not (f & (z["arable"] > 0)).any() and not (f & (z["landcover"] == 9)).any()
+        assert Rj["occurrences"], "至少有石料 / 黏土 / 砂砾之一的赋存区"
+        for o in Rj["occurrences"]:
+            i, j = o["cell"]
+            assert z["island_id"][i, j] == o["island"] and RF[Rj["fields"]["kinds"].index(o["kind"]), i, j] > 0
+        for w in Rj["workings"]:
+            i, j = w["cell"]
+            assert Rj["occurrences"][w["occurrence"]]["kind"] == w["kind"]
+            assert z["arable"][i, j] == 0 and z["landcover"][i, j] != 4 and z["river"][i, j] == 0 and not z["lake"][i, j] and not z["cliff"][i, j]
     if STEPS >= 3:
         C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
         a, m = C["annual"], C["means_check"]                                                 # IS-season

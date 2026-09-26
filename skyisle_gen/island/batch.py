@@ -58,6 +58,13 @@ def run_batch(ctx, sample: int = 30, year: int = 0, sets: list[str] | None = Non
                "forest": J["landcover"]["share"].get("林地", 0.0), "arable_err": round(abs(J["constraints"]["arable_frac"]["actual"] - J["constraints"]["arable_frac"]["target"]), 5),
                "storm_days": J["weather"].get("storm_days", J["weather"]["types"].get("风暴", 0)), "snow_days": J["weather"].get("snow_days", 0), "fog_days": J["weather"]["types"].get("云海漫顶", 0),
                "sailable_days": J["weather"]["sailable_days"], "code": code, "fails": fails}
+        R = g.get("resources")
+        if R:                            # 资源（四点二十一）：赋存区 / 采场计数、村有采石场的占比、林木外占陆地
+            wk = g.get("settle", {}).get("workings", {})
+            row["resources"] = {"occ": {k: v for k, v in R["counts"].items() if R["resources"]["forms"].get(k) == "field"},
+                                "workings": R["workings_counts"], "non_timber_share": R["non_timber_share"],
+                                "quarry_village_share": wk.get("采石场", {}).get("villages_share"),
+                                "clay_village_share": wk.get("土坑", {}).get("villages_share")}
         rows.append(row)
         print(f"  #{node:<5} {row['seconds']:5.1f}s  {row['res_m']:.0f} m  {row['rows']}×{row['cols']:<5} 陆地 {row['area_km2']:8.0f} 主岛 {row['main_km2']:7.0f} "
               f"{row['n_islands']:2d} 岛 {row['age_zh']} {row['lat']:6.1f}° {row['season_type']} 温差 {row['season_range_c']:.0f} 雨 {row['precip_mm']:.0f} "
@@ -75,6 +82,7 @@ def run_batch(ctx, sample: int = 30, year: int = 0, sets: list[str] | None = Non
         "storm_days_median": int(np.median([r["storm_days"] for r in rows])),
         "sailable_days_median": int(np.median([r["sailable_days"] for r in rows])),
         "worst_code": worst, "failed_nodes": [r["node"] for r in rows if r["code"]],
+        "resources": _res_summary(rows),
         "rows": rows,
     }
     p = ctx.out_dir / "islands" / "batch.json"
@@ -83,5 +91,24 @@ def run_batch(ctx, sample: int = 30, year: int = 0, sets: list[str] | None = Non
           f"季型 {summary['season_types']}；分辨率 {summary['res_m']}；岛数中位 {summary['n_islands']['median']}；"
           f"有湖 {summary['lakes_share']:.0%}，≥2 大盆地 {summary['large_basins_share']:.0%}；"
           f"雾日中位 {summary['fog_days_median']}，风暴日中位 {summary['storm_days_median']}，可出航中位 {summary['sailable_days_median']}")
+    rs = summary["resources"]
+    if rs:
+        print(f"资源：有采石场的村中位 {rs['quarry_village_share_median']:.0%}（P10 {rs['quarry_village_share_p10']:.0%}），有土坑的村中位 {rs['clay_village_share_median']:.0%}；"
+              f"有金属矿的群 {rs['ore_groups']}/{len(rows)}，矿化带合计 {rs['ore_belts']}；采场合计 {rs['workings']}")
     print("结果：" + ("全过" if worst == 0 else f"失败 {summary['failed_nodes']}") + f" → {p}")
     return worst
+
+
+def _res_summary(rows: list[dict]) -> dict:
+    rr = [r["resources"] for r in rows if r.get("resources")]
+    if not rr:
+        return {}
+    q = np.array([x["quarry_village_share"] for x in rr if x["quarry_village_share"] is not None] or [np.nan])
+    cl = np.array([x["clay_village_share"] for x in rr if x["clay_village_share"] is not None] or [np.nan])
+    tot: Counter = Counter()
+    for x in rr:
+        tot.update(x["workings"])
+    return {"quarry_village_share_median": round(float(np.nanmedian(q)), 3), "quarry_village_share_p10": round(float(np.nanquantile(q, 0.1)), 3),
+            "clay_village_share_median": round(float(np.nanmedian(cl)), 3),
+            "ore_groups": sum(1 for x in rr if x["occ"].get("金属矿")), "ore_belts": sum(x["occ"].get("金属矿", 0) for x in rr),
+            "workings": dict(tot)}

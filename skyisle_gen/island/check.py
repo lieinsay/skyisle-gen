@@ -1,7 +1,7 @@
 """第六节：岛群生成器的一致性校验（`skyisle island check <节点>`）。
 
 IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-link / IS-det / IS-iso 为硬项，IS-daily 为软项；
-资源 RES-site / RES-geo 为硬项，RES-quarry 为软项；
+资源 RES-site / RES-occ / RES-work / RES-geo 为硬项，RES-quarry 为软项；
 聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
 """
@@ -84,30 +84,54 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             "全有 / ≥ 0.95", ok_wd and below >= 0.95)
     R = g.get("resources")
     if R is not None:
+        from .resources import FIELD_KINDS, RES_INDEX, rock_site_mask
         bad_site, bad_geo = [], []
         ages = {i["id"]: i["age_zh"] for i in J["islands"]}
         lith = R["geology"]["old_island_lithology"]
+        water = (g["river"] > 0) | g["lake"]
         for d in R["deposits"]:
             if d.get("cleared"):
                 continue                        # 整片被村周开垦掉的林场
             i, j_ = d["cell"]
-            wet = bool(g["river"][i, j_] > 0 or g["lake"][i, j_])
             on_cliff_ok = d["kind"] in ("cave", "floatstone", "guano")
-            if (g["island_id"][i, j_] != d["island"] or wet or (g["cliff"][i, j_] and not on_cliff_ok)
-                    or g["resource"][i, j_] == 0):
+            marked = (g["patch_id"][i, j_] == d["id"]) if d["form"] == "patch" else (g["resource"][i, j_] == RES_INDEX[d["kind"]])
+            if g["island_id"][i, j_] != d["island"] or water[i, j_] or (g["cliff"][i, j_] and not on_cliff_ok) or not marked:
                 bad_site.append(d["id"])
+        for d in R["deposits"] + R["occurrences"]:
             a = ages.get(d["island"])
             sub = d.get("subtype")
             if ((sub == "熔岩管" and a != "新岛") or (str(sub).startswith("熔岩管") and a == "老岛")
                     or (sub in ("溶洞", "落水洞", "地下河") and (a != "老岛" or lith != "石灰岩"))
                     or (d["kind"] == "sulfur" and a != "新岛") or (d["kind"] == "hotspring" and a == "老岛")
-                    or (d["kind"] == "quarry" and sub != {"新岛": "玄武岩", "中年": "安山岩 / 凝灰岩", "老岛": lith}.get(a))):
-                bad_geo.append(d["id"])
-        add("RES-site", "矿点在所属岛的陆地上、不在水面；除崖洞 / 浮石 / 鸟粪外不在崖缘；资源栅格上有标记", {"bad": bad_site[:10], "n": len(R["deposits"])},
-            "bad = 0", not bad_site)
-        add("RES-geo", "矿点与地质背景一致（完整熔岩管 / 硫磺只在新岛、塌陷熔岩管不在老岛，溶洞只在石灰岩老岛，老岛无温泉，石料岩性随岛龄）", {"bad": bad_geo[:10]}, "bad = 0", not bad_geo)
-        nq = sum(1 for d in R["deposits"] if d["kind"] == "quarry" and d["island"] == 0)
-        add("RES-quarry", "主岛至少一处采石场（有石料盖城）", nq, "≥ 1", nq >= 1, hard=False)
+                    or (d["kind"] == "stone" and sub != {"新岛": "玄武岩", "中年": "安山岩 / 凝灰岩", "老岛": lith}.get(a))):
+                bad_geo.append(f"{d['kind']}:{d['id']}")
+        add("RES-site", "点与片在所属岛的陆地上、不在水面；除崖洞 / 浮石 / 鸟粪外不在崖缘；片的代表格在自己的 patch_id 上、点在主导栅格上",
+            {"bad": bad_site[:10], "n": len(R["deposits"])}, "bad = 0", not bad_site)
+        # 赋存：岩类的场只在岩类可放区（山地 / 高山 / 丘陵陡坡 / 裸岩，非耕、非湿地、非漫滩、非平地林）；每个赋存区的峰值格在本类场的阈值以上
+        RF, thr = g["res_field"], R["fields"]["thr"]
+        rock = rock_site_mask(g, g["terrain_zone"], float(R["fields"]["rock_hill_slope_deg"]))
+        outside = {k: int(((RF[FIELD_KINDS.index(k)] > 0) & ~rock).sum()) for k in R["fields"]["rock_kinds"]}
+        bad_occ = []
+        for o in R["occurrences"]:
+            i, j_ = o["cell"]
+            if (g["island_id"][i, j_] != o["island"] or water[i, j_]
+                    or int(RF[FIELD_KINDS.index(o["kind"])][i, j_]) < int(round(thr[o["kind"]] * 255.0)) - 1):
+                bad_occ.append(o["id"])
+        add("RES-occ", "岩类（金属矿 / 石料 / 硫磺）的赋存场不出岩类可放区；赋存区的峰值格在所属岛陆地、不在水面、品位 ≥ 阈值",
+            {"rock_outside_cells": outside, "bad_occ": bad_occ[:10], "n": len(R["occurrences"])}, "全 0", not bad_occ and not any(outside.values()))
+        # 采场：不上田、不上林（林坡上的岩类采场已改裸岩）、不在水上崖上，在本类场里且挂着同类的赋存区
+        bad_w = []
+        for w in R["workings"]:
+            i, j_ = w["cell"]
+            o = R["occurrences"][w["occurrence"]] if 0 <= w["occurrence"] < len(R["occurrences"]) else None
+            if (o is None or o["kind"] != w["kind"] or g["island_id"][i, j_] != w["island"] or water[i, j_] or g["cliff"][i, j_]
+                    or g["arable"][i, j_] > 0 or g["landcover"][i, j_] == 4 or RF[FIELD_KINDS.index(w["kind"])][i, j_] == 0):
+                bad_w.append(w["id"])
+        add("RES-work", "采场（矿坑 / 硫磺坑 / 淘金点 / 采石场 / 土坑 / 采砂场）不在耕地、林地、水面、崖缘上，落在本类的赋存场里、挂着同类赋存区",
+            {"bad": bad_w[:10], "n": len(R["workings"])}, "bad = 0", not bad_w)
+        add("RES-geo", "资源与地质背景一致（完整熔岩管 / 硫磺只在新岛、塌陷熔岩管不在老岛，溶洞只在石灰岩老岛，老岛无温泉，石料岩性随岛龄）", {"bad": bad_geo[:10]}, "bad = 0", not bad_geo)
+        nq = sum(1 for o in R["occurrences"] if o["kind"] == "stone" and o["island"] == 0)
+        add("RES-quarry", "主岛至少一处石料赋存区（有石料盖城）", nq, "≥ 1", nq >= 1, hard=False)
     if C is not None:
         an, mc = C["annual"], C["means_check"]
         errs = {"precip": abs(mc["precip_rel"] - an["precip_rel"]) / max(1e-9, an["precip_rel"]),

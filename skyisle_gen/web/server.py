@@ -289,6 +289,10 @@ class Handler(BaseHTTPRequestHandler):
                       ("floodplain", np.uint8), ("terrain_zone", np.uint8), ("resource", np.uint8)):
             if k in arrs:
                 out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
+        if "res_field" in arrs:       # 散资源的赋存场 [K, H, W]（品位 × 255），层序见 resources.json 的 fields.kinds
+            rf = np.ascontiguousarray(arrs["res_field"][:, ::step, ::step]).astype(np.uint8)
+            out["res_field_u8"] = base64.b64encode(rf.tobytes()).decode("ascii")
+            out["res_field_k"] = int(rf.shape[0])
         if "river_width_m" in arrs:   # 河宽 / 4 m、水深 × 10（u8：到 1020 m / 25.5 m）
             out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_width_m"]) / 4.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
             out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_depth_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")

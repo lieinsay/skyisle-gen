@@ -94,7 +94,7 @@ def write_terrain(out: Path, g: dict) -> None:
     g["json"]["raster"]["height_png_scale_m_per_unit"] = round(1.0 / scale, 6)
     arrays = {"height": h.astype(np.float32), "island_id": g["island_id"].astype(np.int16), "cliff": g["cliff"]}
     for k in ("flowacc_km2", "river", "lake", "landcover", "arable", "slope_deg", "stream", "river_width_m", "river_depth_m", "floodplain",
-              "terrain_zone", "resource"):
+              "terrain_zone", "resource", "res_field", "patch_id"):
         if k in g:
             arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)

@@ -64,6 +64,9 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     depth_m = np.zeros((H, W), dtype=np.float32)
     floodplain = np.zeros((H, W), dtype=bool)
     cut_m = np.zeros((H, W), dtype=np.float32)       # 河道 / 河谷下切了多少米（资源层找峡谷壁用）
+    recv_i = np.full((H, W), -1, dtype=np.int32)      # 群栅格上的 D8 下游格（−1 = 出口或无）与路由面：资源层按上游累积（砂金）用
+    recv_j = np.full((H, W), -1, dtype=np.int32)
+    route_h = np.full((H, W), np.nan)
     basin_info = {}
     rivers_info = []
     river_lines = []                                 # 河道中心线折线（矢量渲染用，rivers.json）
@@ -114,6 +117,10 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
         hr = priority_fill(np.where(mk, hf + meander[sl] + tilt[sl], np.nan), mk, eps=float(hc["fill_eps_m"]))
         ri, rj, slope, _ = d8(hr, mk, res_m)
         A = accumulate(hr, mk, ri, rj)
+        ok_r = mk & (ri >= 0)
+        recv_i[sl] = np.where(ok_r, ri + int(r0), recv_i[sl])
+        recv_j[sl] = np.where(ok_r, rj + int(c0), recv_j[sl])
+        route_h[sl] = np.where(mk, hr, route_h[sl])
         Akm = A * cell_km2
         filled[sl][mk] = hf[mk]
         acc_km2[sl][mk] = Akm[mk]
@@ -264,7 +271,8 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     g.update({"river_width_m": np.where(land, width_m, 0).astype(np.float32), "river_depth_m": np.where(land, depth_m, 0).astype(np.float32),
               "floodplain": floodplain & land & (river == 0) & ~lake, "cut_m": np.where(land, np.maximum(cut_m, 0), 0).astype(np.float32)})
     g.update({"flowacc_km2": acc_km2.astype(np.float32), "river": river, "stream": stream, "lake": lake,
-              "landcover": cover, "arable": arable, "slope_deg": slope.astype(np.float32), "filled": filled})
+              "landcover": cover, "arable": arable, "slope_deg": slope.astype(np.float32), "filled": filled,
+              "recv_i": recv_i, "recv_j": recv_j, "route_h": route_h})
     from .output import LANDCOVER_CLASSES
     share = {LANDCOVER_CLASSES[i]: round(float(((cover == i) & land).sum()) / max(1, n_land), 4) for i in range(1, 12)}
     J = g["json"]

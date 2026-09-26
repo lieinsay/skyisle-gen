@@ -623,22 +623,31 @@ valley_slope_deg = 5.0        # 河谷：漫滩 + 河道两格内坡度 < 此值
 min_island_km2 = 3.0          # 小于此面积的岛不放露天矿 / 硫磺
 patch_km = 1.5                # 斑块噪声特征尺度（矿点成团、品位起伏）
 patch_sep_km = 1.5            # 同类斑块状矿点的最小间距
-density_per_100km2 = { spring = 1.5, peat = 0.6, gravel = 1.5, ore = 0.25, hotspring = 0.8, sulfur = 0.4, lava_tube = 1.0, karst = 1.2, gorge_cave = 1.0, fracture_cave = 0.3, cliff_cave = 0.25, underside_cave = 0.1 }
-                              # 每 100 km² 陆地的期望个数（泊松）；cliff_cave / underside_cave 是每 10 km 岸崖。采石场 / 黏土不在这里：按覆盖铺（bulk_block_km）
+density_per_100km2 = { spring = 1.5, peat = 0.6, ore = 0.25, hotspring = 0.8, sulfur = 0.4, lava_tube = 1.0, karst = 1.2, gorge_cave = 1.0, fracture_cave = 0.3, cliff_cave = 0.25, underside_cave = 0.1 }
+                              # 每 100 km² 陆地的期望个数（泊松）；cliff_cave / underside_cave 是每 10 km 岸崖。石料 / 黏土 / 砂砾 / 砂金是赋存场，不在这里
+# 资源三形态（DESIGN-NOTES 四点二十一）：点（泉眼 / 温泉 / 洞穴）、片（林木 / 泥炭 / 浮石露头 / 鸟粪）、散（金属矿 / 石料 / 黏土 / 砂砾 / 砂金 / 硫磺）。
+# 散 = 赋存场（每类每格 0–1 品位，可叠）→ 赋存区（≥ occ_thr 的连通块）→ 采场（矿坑 / 硫磺坑在这里挑；采石场 / 土坑 / 采砂场 / 淘金点在聚落之后按村挑，见 [island.settle]）
+rock_hill_slope_deg = 8.0     # 岩类（金属矿 / 石料 / 硫磺）只放在山地、高山、裸岩 / 高山草甸，或丘陵且坡 ≥ 此值：林坡算（采场那格改裸岩），平地林、耕地、湿地、漫滩不算（2026-09-26 拍板）
+stone_slope_lo_deg = 12.0     # 石料按露头算：品位 = max(clip((坡 − lo) / (hi − lo)), 裸岩 / 高山草甸 / 峡谷壁的 stone_exposed_grade) × (0.75 + 0.25 × 斑块) × 林坡 stone_forest_mult
+stone_slope_hi_deg = 30.0     #（旧键 stone_slope_full_deg：8° 林坡就算石料区，#1165 占陆地 31%、看上去全岛都是石头——可放区 ≠ 赋存区）
+stone_exposed_grade = 0.6
+stone_forest_mult = 0.8
+stone_slope_max_deg = 40.0    # 再陡就是崖面，开不了
+occ_thr = { ore = 0.15, sulfur = 0.15, placer = 0.15, clay = 0.3, gravel = 0.3, stone = 0.4 }
+                              # 赋存区 = 品位 ≥ 此值的连通块（不跨岛）；矿化带 / 硫磺按各自的核成区（可重叠）
+occ_min_cells = 3             # 赋存区至少这么多格，且（石料 / 黏土 / 砂砾 / 砂金）面积 ≥ occ_min_km2
+occ_min_km2 = 0.05
+occ_merge_cells = 1           # 石料 / 黏土 / 砂砾 / 砂金：隔这么多格以内的碎块算同一个赋存区（坡度、噪声把一片切碎了）
+gravel_bank_cells = 1         # 砂砾 = 常年河 / 大溪（汇流 ≥ gravel_acc_km2）边这么多格内的缓坡滩地；沉积类（黏土 / 砂砾 / 砂金）的赋存可以压在田下，坑不上田不上林
+placer_gain = 8.0             # 砂金品位 = 砂砾品位 × min(1, 此值 × 上游汇水里金 / 铜矿化带的平均品位)：金是从上游冲下来的
 ore_gain = { "汇聚" = 4.0, "走滑" = 2.0, "离散" = 1.2 }   # 露天矿倍率 = max(ore_floor, 增益 × 边界核) × 叠层 ore_layered_gain × 岛龄（新 0.6 / 中 1 / 老 1.2）
 ore_floor = 0.03              # 板块内部（核 ≈ 0）的岛：现实的热点岛（夏威夷、冰岛）没有可采金属矿，岛弧（日本、菲律宾）才多
 ore_layered_gain = 1.5
 ore_elongation = 3.0          # 矿化带顺板块走向的长短轴比
 ore_pits_max = 5              # 每条矿化带里的矿坑数上限（1 + 泊松(面积 km²)）
-ore_slope_min_deg = 15.0      # 「裸露基岩」：裸岩 / 高山草甸 / 灌丛，或坡 ≥ 此值；且坡 ≤ ore_slope_max_deg（崖面开不了露天矿）
-ore_slope_max_deg = 40.0
-ore_km2 = 2.0                 # 矿化带面积中位数（对数正态 σ 0.6）：现实里一个矿区 1–5 km²，真正开挖的是带里几个坑
+ore_slope_max_deg = 40.0      # 矿化带只在岩类可放区里、坡 ≤ 此值（崖面开不了露天矿）
+ore_km2 = 2.0                 # 矿化带（顺走向的椭圆核，裁到岩类可放区）面积中位数（对数正态 σ 0.6）：现实里一个矿区 1–5 km²，真正开挖的是带里几个坑
 ore_sep_km = 3.0
-bulk_block_km = 4.0           # 散装建材按覆盖铺：可居住的地（坡 < habitable_slope_deg）切成此边长的块，每块一处石坑、一处土坑（前工业时代每个村附近都有）
-habitable_slope_deg = 15.0
-quarry_slope_min_deg = 8.0    # 采石场：中陡坡非耕地（块里没有就退到块里最陡的非耕地）；岩性按岛龄（新岛玄武岩 / 中年安山岩凝灰岩 / 老岛石灰岩或砂岩）
-quarry_slope_max_deg = 40.0
-quarry_km2 = 0.03             # 村级石坑：零点零几 km²
 floatstone_expose = 0.35      # 浮石露头率（崖面 / 峡谷壁里露出的比例）× (1 + 汇聚增益 × 边界核) × 叠层 × 岛龄（新 1.2 / 中 1 / 老 0.6），夹 [0.02, 0.95]
 floatstone_convergent_gain = 1.0
 floatstone_layered_gain = 1.4
@@ -649,15 +658,12 @@ gorge_slope_deg = 15.0
 lava_tube_mid_mult = 0.4      # 中年岛熔岩管 = 新岛 × 此值（多处塌成天窗）；老岛没有
 waterfall_cave_p = 0.5        # 主岛每条常年河的河口有「瀑布后洞」的概率
 old_limestone_p = 0.6         # 老岛岩性为石灰岩（才有溶洞 / 落水洞 / 地下河）的概率，一群抽一次
-clay_slope_max_deg = 5.0      # 黏土：按覆盖铺；先找漫滩 / 湖滨 / 湿地边，没有就退到溪边 clay_stream_cells 格内的缓坡
+clay_slope_max_deg = 5.0      # 黏土：漫滩 / 湖滨 / 湿地边（河湖黏土，品位高）与溪边 clay_stream_cells 格内（溪边黏土，品位约一半）的缓坡
 clay_stream_cells = 3
-clay_km2 = 0.05
 peat_km2 = 0.4
 peat_temp_max_c = 12.0        # 年均温低于此值的湿地成泥炭，否则芦苇荡
 gravel_acc_km2 = 10.0         # 汇流 ≥ 此值的溪涧也算（常年河一律算）
 gravel_slope_max_deg = 6.0
-gravel_km2 = 0.12
-placer_p = 0.25               # 本岛有金 / 铜露天矿时，每处砂砾成砂金的概率
 mid_hot_mult = 0.2            # 中年岛的温泉期望 = 新岛 × 此值；老岛没有
 sulfur_peak_frac = 0.8        # 硫磺：新岛近峰（高出岸缘到峰高的此比例以上）
 sulfur_km2 = 0.1
@@ -745,6 +751,14 @@ kiln_forest_km = 2.0
 charcoal_min_km2 = 8.0        # 伐木烧炭营：林场 ≥ 此面积且离最近的村 > charcoal_far_km；户数 = clip(面积 × 0.5, 5, 30)，每岛 ≤ 3
 charcoal_far_km = 3.0
 hotspring_hh = 8              # 温泉地（汤治 / 寺社）：每处温泉一个
+# 村的采场（开垦之后挑，DESIGN-NOTES 四点二十一）：石料 / 黏土 / 砂砾就近取。每村（按户数降序）先合用 working_share_km 内已有的同类采场，
+# 否则在 *_reach_km 内按 品位 × exp(−距离 / working_decay_km) 挑格新开（跨岛也行：飞船）；格必须在赋存区里、非耕、非林、非水非崖
+quarry_reach_km = 5.0           # 石料按露头算之后（四点二十一第二轮），林茂的低地 3 km 内常常没有能开的石头；飞船运石 5 km 不算远
+clay_reach_km = 2.0
+gravel_reach_km = 2.0
+working_share_km = 1.5
+working_decay_km = 1.0
+placer_link_km = 3.0          # 淘金点（每个砂金区一处）挂到此半径内最近的村；没有就是季节性的外来淘金客
 # 村周开垦：林地在聚落半径内改成草坡（内圈，田边牧场 / 草场）与灌丛（外圈，薪炭林）
 clear_base_km = 1.5           # 半径 = clear_base_km × √(户数 / 40)，夹 [clear_min_km, clear_max_km]；镇 × town_clear_mult
 clear_min_km = 0.3

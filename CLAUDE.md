@@ -61,8 +61,8 @@ skyisle_gen/
   viz.py / probe.py / web/(server.py bundle.py static/index.html static/vendor/globe.gl.min.js)
                  操作台数据通道：/api/world、/api/fields、/api/grid（② 风 / ④ 气候的 1° 网格场，R2）、/api/texture；单文件版全部内嵌于 INLINE
                  /api/island?run=&node= 按需生成岛群并返回摘要，/api/island/preview 取总览图（探针折叠区「岛群生成器」；单文件版不支持）
-                 **岛群调试台** `static/island.html`（`/island.html?run=&node=[&year=]`，探针里有链接）：2D canvas 图层（地形 / 晕渲 / 地表 / 坡度 / 汇流 / 岛号 / 当日海拔温度 / 地形区 / 资源分布；`&base=zone|resource&res=1&fly=行,列,缩放&day=N` 可直接打开；拉远时季相层 / 河道矢量自动降级）、
-                 滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水与河宽水深 / 地形区 / 资源 / 当日温度）、资源点位与漫滩叠加层、主岛河流表（点按钮飞到河口）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
+                 **岛群调试台** `static/island.html`（`/island.html?run=&node=[&year=]`，探针里有链接）：2D canvas 图层（地形 / 晕渲 / 地表 / 坡度 / 汇流 / 岛号 / 当日海拔温度 / 地形区 / 资源分布（主导，或某一类的赋存品位）；`&base=zone|resource&rk=stone&res=1&fly=行,列,缩放&day=N` 可直接打开；拉远时季相层 / 河道矢量自动降级）、
+                 滚轮缩放拖动、悬停读格（高程 / 坡 / 汇流 / 地表 / 水与河宽水深 / 地形区 / 主导资源与各类赋存品位 / 当日温度）、资源点位（采场 / 点 / 片，拉近标赋存区）与漫滩叠加层、主岛河流表（点按钮飞到河口）、约束对照、四季表与图、逐日天气图 + 日期滑杆 / 播放、改年份重生成、`island.*` 参数覆盖重生成；
                  「季相与水情」日图层（积雪 / 雪线、植被枯荣、作物阶段、溪涧按基流水库逐段断流 / 接回、河道涨水漫滩、冰按度日封冻 / 开河、云海漫顶；河道永远画，断流是干河床，四点二十）与「天气特效」（雨雪风暴云雾风粒子）都在浏览器里按逐日天气推，不改产物（DESIGN-NOTES 四点十四）；
                  数据通道 /api/island/data（island.json + climate.json 含 weather.days）、/api/island/raster（terrain.npz 定型数组 base64，> 160 万格抽稀）、POST /api/island/regen
   island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`skyisle island <节点>`，按需生成、不进十步管线、不回灌
@@ -76,18 +76,23 @@ skyisle_gen/
                            流向在「路由面」上算（填平面 + 弯曲噪声 + 朝岸缘微倾：河在缓坡上蜿蜒、不贴崖边平行跑），湖与抬洼仍按原填平面
                  river     5.3b 河道成形（DESIGN-NOTES 四点十六）：水力几何 w = 5·Q^0.5 × 8、d = 0.35·Q^0.4 × 3（夸张系数设 1 = 真实比例）→ 河宽 ≥ 2 格时加宽；
                            河床下切并向下游单调、河口切豁口成瀑布；两岸压成「漫滩 + 谷坡」剖面（峡谷 32° → 宽谷 9°，随 log Q）；溪涧浅切、按比降接到干流上
-                 resources 5.3c 地形区（高山 / 山地 / 丘陵 / 台地平原 / 河谷 / 崖缘 / 水域）+ 13 类资源（林木、泉眼、黏土、泥炭芦苇、砂砾、砂金、采石场、露天矿、
-                           温泉、硫磺、洞穴、鸟粪石、浮石），按岛龄 / 板块边界类型与远近 / 叠层 / 坡度 / 地表 / 水系推（四点十七）：金属矿是矿化带、板块内部几乎没有；
-                           石坑 / 土坑按 4 km 块覆盖铺；浮石 = 岛体，崖面与峡谷壁按露头率露出、可开采不影响浮空；→ resources.json / png、terrain_zone.png、preview_resources.png
+                 resources 5.3c 地形区（高山 / 山地 / 丘陵 / 台地平原 / 河谷 / 崖缘 / 水域）+ 13 类资源分三形态（四点十七 / **四点二十一**）：
+                           **点**（泉眼、温泉、洞穴）与**片**（林木、泥炭芦苇、浮石露头、鸟粪石）记在 deposits，片占的格写 patch_id（面积一律按它数：sync_resources）；
+                           **散**（金属矿、石料、黏土、砂砾、砂金、硫磺）= 赋存场 res_field（uint8 [6,H,W] 品位，可叠）→ 赋存区 occurrences（≥ occ_thr 的连通块）→ 采场 workings
+                           （矿坑 / 硫磺坑在这里挑；采石场 / 土坑 / 采砂场 / 淘金点在聚落之后按村挑，tiers.village_workings）。**岩类（矿 / 石 / 硫磺）只在岩类可放区**：
+                           山地、高山、裸岩 / 高山草甸、丘陵且坡 ≥ 8°，林坡算（采场格改裸岩），平地林、耕地、湿地、漫滩不算；沉积类赋存可压田，坑不上田不上林（用户拍板）。
+                           金属矿是顺板块走向的矿化带、板块内部几乎没有；砂金 = 砂砾 × 上游金 / 铜矿化带的平均品位（hydro 存了群栅格的 D8 下游 recv_i/j 与路由面 route_h）；
+                           浮石 = 岛体，崖面与峡谷壁按露头率露出、可开采不影响浮空。resource（uint8）只是显示用的主导类（稀的盖常的）；→ resources.json / png、terrain_zone.png、preview_resources.png
                  climate   5.4 四季：带界随太阳摆动（Δφ = k_shift·倾角·A_sea·cos）取样再缩放到年均；温度 = 年均 + season_range/2·cos(相位 − 滞后)；季型分类命名
                  weather   5.5 逐日：马尔可夫晴雨 + 伽马雨量（风暴日计入预算）、风暴事件、AR(1) 风温、云海漫顶、岸缘 ≤ 0.5 °C 记为雪（小雪 / 大雪 / 暴风雪）；multi_year_stats 供 IS-daily
-                 output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz（含 river_width_m / river_depth_m / floodplain / terrain_zone / resource）/ climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）；
+                 output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz（含 river_width_m / river_depth_m / floodplain / terrain_zone / resource / res_field / patch_id）/ climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）；
                            water.png 值 6 = 漫滩；河道格的 height 是河床，水面 = 河床 + 水深；rivers.json = 河道中心线折线（调试台 / preview 按河宽画平滑矢量，栅格上河只有一两格宽）；调试台拉近后停手会「细化渲染」当前视口（连续量双线性、分类图扰动 + 加权投票，纯显示）
                  settle    聚落（PLAN-SETTLE，DESIGN-NOTES 四点十五 / 四点十八）：人口只读 ⑨ → 户（10% 非农）；可耕地连通块切田块（k-means 按 80 户地量分）；村址评分；桥头 / 导水槽；蓄水池 / 取水点；
                            前哨、三个主家候选、都与城（城居人口 = 本邑 × 城居率 + 邦 × 集聚率，郭沿索桥，仓城 = 主泊场，祭台）→ settlements.json / png
                  tiers     聚落层级（四点十八）：**飞船取代车船、随处可停 → 没有码头**；专业聚落（矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地，按资源量、封顶非农 40%）、
-                           集镇（中心地：6 km 直线跨岛服务半径、镇距 ≥ 10 km、邑治必为镇）、每个聚落旁一块泊场、村周开垦（林地 → 草坡 / 灌丛薪炭林，同步林木资源）
-                 check     第六节 IS-area/surface/arable/river/channel/season/link/det/iso（硬）+ RES-site/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
+                           集镇（中心地：6 km 直线跨岛服务半径、镇距 ≥ 10 km、邑治必为镇）、每个聚落旁一块泊场、村周开垦（林地 → 草坡 / 灌丛薪炭林，林场 patch_id 划掉）、
+                           村的采场（开垦之后：石 / 土 / 砂就近取，先合用 1.5 km 内已有的，再在 5 / 2 / 2 km 内按品位 × 距离挑；矿镇矿村改读金属矿赋存区）
+                 check     第六节 IS-area/surface/arable/river/channel/season/link/det/iso（硬）+ RES-site/occ/work/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
@@ -158,7 +163,11 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
   雨日比例 0.12 + 0.30 × (季雨量/1000)^0.7、湿→湿持续 0.45、伽马形状 0.8、风暴日比例 0.35 × 强度^1.2（布尔覆盖率反解事件数）、云海漫顶只在峰高 < 800 m 的群。
   IS-daily 用 60 年样本：30 年时单季标准误约 5%，和 5% 的阈值同量级（DESIGN-NOTES 四点十四）。
   聚落 `[island.settle]`：5 人/户、村 8–80 户（邑治田块可到 300）、村址离田 ≤ 800 m、村间距 1 km（软）、蓄水池只给 ≥ 5% 岛面积的盆地、
-  都的城居率 0.3 / 集聚率 0.05（变法之国 0.10）、郭 5 km；非农 10%、镇距 10 km / 服务半径 6 km、泊场 6 格内坡 ≤ 4°、开垦半径 1.5 km × √(户/40)（1 km 时林地只降到 74%）。
+  都的城居率 0.3 / 集聚率 0.05（变法之国 0.10）、郭 5 km；非农 10%、镇距 10 km / 服务半径 6 km、泊场 6 格内坡 ≤ 4°、开垦半径 1.5 km × √(户/40)（1 km 时林地只降到 74%）；
+  村取石 5 km（石料按露头算之后林茂的低地 3 km 内常常没有能开的石头；飞船运石）、取土 / 砂 2 km，1.5 km 内已有采场就合用。
+  资源 `[island.resources]`（四点二十一）：赋存区阈值 矿 / 硫磺 / 砂金 0.15、黏土 / 砂砾 0.3、石料 0.4，隔一格的碎块算一处、≥ 0.05 km²（不合并时 #1165 有 1,940 区，合并后 736）；
+  岩类可放区的丘陵坡门槛 8°（「严格按地表、林地一律不放」在林多的群只剩 1–5% 的地、九成以上的村取不到石头，用户选了按地形判）；
+  **可放区 ≠ 石料区**：石料按露头算，坡 12° 起算、30° 满，裸岩 / 高山草甸 / 峡谷壁至少 0.6，林坡 × 0.8，> 40° 算崖面（第一版 8° 林坡就算，#1165 石料区 31%、看上去全岛是石头）；砂金增益 8。
   季型判定的分数 = 差异 / 该项门槛（温度按冷暖两季的 8 °C，不是 20），取 ≥ 1 的最大者；三 seed 全量：四季分明 57–60%、冷暖两季 19–23%、风暴季 18%、雨旱季 1.5%、常夏 1%，
   西风带以北 100% 四季分明，信风带一半冷暖两季一半风暴季。
 
@@ -166,7 +175,7 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
 
 - Monte Carlo 引擎（`s08.engine="mc"` 只留接口）、软先到权重（`first_arrival_weight` 默认关未实现）
 - 季节窗口进模型（现只有 `seasonal` 标志与 ④ 的窗口比例；岛群生成器已给出每季窗口，但管线不读它）；政治性障碍只支持经纬矩形覆盖
-- 岛群生成器：资源不进聚落选址（采石村 / 矿村未做）、没有地下水与岩性栅格；河宽是夸张后的数，不是水文模型；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四
+- 岛群生成器：资源不进村址选择（村定了再去找石 / 土，矿镇落在矿旁）、赋存区的储量只有面积 × 品位没有吨位、没有地下水与岩性栅格（岩性一岛一种）；河宽是夸张后的数，不是水文模型；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四
 - 九格表 ④ 特有种 / ⑦ 外观 标【待填】；⑨ 文本量词与归因还比较模板化。⑧ 的世仇 = 接壤且势均力敌、界边最多的邻邦（启发式）
 - 政治层：兼并史是静态快照 + 逐邦顺序（无年内事件、无分裂/复国）；附庸只一层；邦名是 `邦NNN` 占位；南圈与 NW 圈不发生变法（docs/11 §八）
 - 操作台：路径计算需服务端（单文件版不可用）；边层默认只画流量前 N；无撤销/对比两个 run 的差分视图；气象层没有粒子动画（流线虚线已够用）；水汽 q / 抬升 uplift 已在网格通道里

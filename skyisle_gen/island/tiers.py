@@ -5,7 +5,8 @@
 烧炭营、温泉地；封顶非农户的 special_cap_frac），余下按服务户数分给集镇（中心地：半径内户数最多的村升镇，镇距 ≥ town_spacing_km，邑治必为镇）。
 农户照旧按田块分到村。Σ 村农户 + 散户 + 镇的非农户 + 专业聚落户 = 总户数（SET-pop）。
 
-纯函数：输入数组与记录，返回新记录；开垦直接改 g["landcover"] / g["resource"] 并同步占比（在 settle 的末尾调用）。
+纯函数：输入数组与记录，返回新记录；开垦直接改 g["landcover"] / g["patch_id"]，开采（village_workings）往 g["resources"]["workings"] 里加采场，
+两者之后 settle 调 resources.sync_resources 重数片的面积、主导栅格与地表占比。
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import math
 
 import numpy as np
 
-from .grid import binary_dilate, label_by_island, nearest_propagate
+from .grid import binary_dilate, nearest_propagate
 
 LC_FOREST, LC_SHRUB, LC_GRASS = 4, 5, 6
 GRADE_W = {"上": 1.5, "中": 1.0, "下": 0.5}
@@ -40,20 +41,20 @@ def special_settlements(g, sc, villages, nonfarm_hh: int, ok_site, km, res_km) -
         return []
     island_id = g["island_id"]
     dep = R["deposits"]
+    occ = R["occurrences"]
     reach = int(round(1.0 / res_km))
     vcells = np.array([v["cell"] for v in villages], dtype=float) if villages else np.zeros((0, 2))
-    res = g["resource"]
-    from .resources import RES_INDEX
-    timber = res == RES_INDEX["timber"]
-    near_forest = binary_dilate(timber, max(1, int(round(float(sc["kiln_forest_km"]) / res_km))))
+    near_forest = binary_dilate(g["landcover"] == LC_FOREST, max(1, int(round(float(sc["kiln_forest_km"]) / res_km))))
     want = []
-    # 矿镇 / 矿村：每条矿化带一个，落在第一个矿坑旁
-    for d in dep:
-        if d["kind"] == "ore":
-            hh = float(sc["ore_hh_per_km2"]) * d["area_km2"] * GRADE_W.get(d["grade"], 1.0)
-            cell = d["pits"][0] if d.get("pits") else d["cell"]
-            want.append({"kind": "矿镇" if hh >= float(sc["mine_town_hh"]) else "矿村", "resource": d["id"], "subtype": d["subtype"],
-                         "island": d["island"], "at": cell, "hh": hh, "note": f"{d['subtype']}矿化带 {d['area_km2']:.1f} km²（{d['grade']}品），吃粮靠外运"})
+    # 矿镇 / 矿村：每条矿化带（金属矿赋存区）一个，落在第一个矿坑旁；带里的矿坑记到它名下
+    for o in occ:
+        if o["kind"] == "ore":
+            hh = float(sc["ore_hh_per_km2"]) * o["area_km2"] * GRADE_W.get(o["grade"], 1.0)
+            pits = [w for w in R["workings"] if w["occurrence"] == o["id"]]
+            cell = pits[0]["cell"] if pits else o["cell"]
+            want.append({"kind": "矿镇" if hh >= float(sc["mine_town_hh"]) else "矿村", "resource": None, "occurrence": o["id"], "subtype": o["subtype"],
+                         "island": o["island"], "at": cell, "hh": hh,
+                         "note": f"{o['subtype']}矿化带 {o['area_km2']:.1f} km²（{o['grade']}品，{len(pits)} 坑），吃粮靠外运"})
     # 浮石采石村：每岛最大的几段露头
     by_isl: dict[int, list] = {}
     for d in dep:
@@ -64,16 +65,16 @@ def special_settlements(g, sc, villages, nonfarm_hh: int, ok_site, km, res_km) -
         for d in lst[: int(sc["floatstone_sites_main"]) if k == 0 else 1]:
             want.append({"kind": "浮石采石村", "resource": d["id"], "subtype": d["subtype"], "island": k, "at": d["cell"],
                          "hh": min(60.0, float(sc["floatstone_hh_per_km2"]) * d["area_km2"]), "note": f"{d['subtype']} {d['area_km2']:.2f} km²；飞船就地装运"})
-    # 窑村：上等黏土 + 近林（燃料）
+    # 窑村：上等黏土区（品位高、面积大的先）+ 近林（燃料）
     n_kiln: dict[int, int] = {}
-    for d in dep:
-        if d["kind"] == "clay" and d["grade"] == "上" and near_forest[d["cell"][0], d["cell"][1]]:
-            k = d["island"]
+    for o in sorted((o for o in occ if o["kind"] == "clay"), key=lambda o: (-o["grade_peak"], -o["area_km2"], o["id"])):
+        if o["grade"] == "上" and near_forest[o["cell"][0], o["cell"][1]]:
+            k = o["island"]
             if n_kiln.get(k, 0) >= (2 if k == 0 else 1):
                 continue
             n_kiln[k] = n_kiln.get(k, 0) + 1
-            want.append({"kind": "窑村", "resource": d["id"], "subtype": d["subtype"], "island": k, "at": d["cell"], "hh": float(sc["kiln_hh"]),
-                         "note": "上等黏土，附近有林可烧"})
+            want.append({"kind": "窑村", "resource": None, "occurrence": o["id"], "subtype": o["subtype"], "island": k, "at": o["cell"], "hh": float(sc["kiln_hh"]),
+                         "note": f"上等{o['subtype']}（{o['area_km2']:.2f} km²），附近有林可烧"})
     # 伐木烧炭营：离村远的大林场
     n_ch: dict[int, int] = {}
     far = float(sc["charcoal_far_km"]) / res_km
@@ -106,10 +107,14 @@ def special_settlements(g, sc, villages, nonfarm_hh: int, ok_site, km, res_km) -
         if hh < int(sc["special_min_hh"]):
             continue
         cell = w["cell"]
-        out.append({"id": len(out) + 1, "kind": w["kind"], "resource": w["resource"], "subtype": w["subtype"], "island": w["island"],
-                    "cell": cell, "km": km(*cell), "households": hh, "note": w["note"]})
+        out.append({"id": len(out) + 1, "kind": w["kind"], "resource": w["resource"], "occurrence": w.get("occurrence"), "subtype": w["subtype"],
+                    "island": w["island"], "cell": cell, "km": km(*cell), "households": hh, "note": w["note"]})
     for s in out:
         s["name"] = f"{s['kind']}{s['id']:02d}"
+        if s["kind"] in ("矿镇", "矿村"):
+            for wk in R["workings"]:
+                if wk["occurrence"] == s["occurrence"]:
+                    wk["special"] = s["id"]
     return out
 
 
@@ -219,30 +224,119 @@ def clear_forest(g, sc, villages, hamlets, specials, res_km) -> dict:
     from .output import LANDCOVER_CLASSES
     J["landcover"]["share"] = {LANDCOVER_CLASSES[i]: round(float(((cover == i) & land).sum()) / n_land, 4) for i in range(1, 12)}
     J["landcover"]["note_clearing"] = "林地在村 / 镇 / 专业聚落半径内已开垦：内圈草坡（牧场草场）、外圈灌丛（薪炭林）"
-    # 林木资源：栅格里被开垦的格清零，各林场面积按剩下的格重算（林场 = 开垦前林木栅格的连通块）
-    if "resource" in g and g.get("resources"):
-        from .resources import RES_INDEX
-        tim = g["resource"] == RES_INDEX["timber"]
-        lab, _ = label_by_island(tim, island_id, 8)       # 不跨岛：两岛贴着时林场会被并到别的岛（seed 7 #418：33 → 201 km²、代表格挪到邻岛）
-        g["resource"][tim & hit] = 0
-        keep = tim & ~hit
-        cnt = np.bincount(lab[keep].ravel(), minlength=int(lab.max()) + 1)
-        R = g["resources"]
-        for d in R["deposits"]:
-            if d["kind"] != "timber":
-                continue
-            L = int(lab[d["cell"][0], d["cell"][1]])
-            d["area_before_clearing_km2"] = d["area_km2"]
-            d["area_km2"] = round(float(cnt[L]) * cell_km2, 3) if L else 0.0
-            if L and not keep[d["cell"][0], d["cell"][1]] and cnt[L]:
-                ii, jj = np.where(keep & (lab == L))
-                t = int(np.argmin((ii - ii.mean()) ** 2 + (jj - jj.mean()) ** 2))
-                d["cell"] = [int(ii[t]), int(jj[t])]
-            if d["area_km2"] <= 0:
-                d["cleared"] = True             # 整片开垦掉了：留在表里（编号不变），不再计数
-                d["note"] = "已开垦殆尽（村周草坡 / 薪炭林）"
-        R["area_km2"]["林木"] = round(sum(d["area_km2"] for d in R["deposits"] if d["kind"] == "timber"), 3)
-        R["counts"]["林木"] = sum(1 for d in R["deposits"] if d["kind"] == "timber" and not d.get("cleared"))
+    # 林木资源：林场的格（patch_id）里被开垦的划掉；面积、代表格、主导栅格由 settle 随后调的 sync_resources 按 patch_id 重数
+    #（旧做法按林木栅格重新分块：资源层 4 连通、这里 8 连通，斜角相连的几片林场被并成一块、每片都记整块的面积，#1165 林木合计 9,334 km² > 陆地）
+    if g.get("resources") and "patch_id" in g:
+        pid = g["patch_id"]
+        tids = [d["id"] for d in g["resources"]["deposits"] if d["kind"] == "timber"]
+        for d in g["resources"]["deposits"]:
+            if d["kind"] == "timber":
+                d["area_before_clearing_km2"] = d["area_km2"]
+        pid[np.isin(pid, tids) & hit] = -1
     return {"cleared_km2": round(float(hit.sum()) * cell_km2, 2), "to_grass_km2": round(float(inner.sum()) * cell_km2, 2),
             "to_shrub_km2": round(float((hit & ~inner).sum()) * cell_km2, 2),
             "forest_share_before": round(float(forest0.sum()) / n_land, 4), "forest_share_after": round(float(((cover == LC_FOREST) & land).sum()) / n_land, 4)}
+
+
+def village_workings(g, sc, villages, specials, km, res_km) -> dict:
+    """村的采场（开垦之后，DESIGN-NOTES 四点二十一）：石料 / 黏土 / 砂砾就近取，窑村在自己的黏土区里开土坑，砂金区各一处淘金点。
+    往 g["resources"]["workings"] 里加采场、给村记 workings；返回摘要。每村（按户数降序）先合用 working_share_km 内已有的同类采场，
+    否则在 *_reach_km 内按 品位 × exp(−距离 / working_decay_km) 挑格——挑中的格离已有采场也在 working_share_km 内就合用那一处，不另开。
+    格必须在该类的赋存区里、非耕、非水非崖；沉积类（黏土 / 砂砾 / 砂金）不上林，石料可在林坡上（那格改裸岩）。跨岛也行（飞船）。"""
+    from .resources import FIELD_KINDS, WORK_ZH, _group_cells, open_working
+    R = g.get("resources")
+    if not R or "occ_lab" not in g:
+        return {}
+    island_id = g["island_id"]
+    land = island_id >= 0
+    H, W = land.shape
+    water = (g["river"] > 0) | g["lake"]
+    base_ok = land & ~water & ~g["cliff"] & (g["arable"] == 0)
+    RF = g["res_field"]
+    occ = R["occurrences"]
+    works = R["workings"]
+    decay = float(sc["working_decay_km"])
+    share = float(sc["working_share_km"])
+    order = sorted(villages, key=lambda v: (-v["households"], v["id"]))
+
+    def new_work(kind, a, b, fk, lab):
+        w = {"id": len(works), "kind": kind, "kind_zh": WORK_ZH[kind], "occurrence": int(lab[a, b]), "island": int(island_id[a, b]),
+             "cell": [a, b], "km": km(a, b), "grade": round(float(fk[a, b]), 3), "villages": [], "special": None}
+        works.append(w)
+        if kind == "stone":
+            open_working(g, a, b)
+        return w
+
+    def nearest(mine, i, j):
+        best, bd = None, share
+        for (a, b, w) in mine:
+            d = math.hypot(a - i, b - j) * res_km
+            if d <= bd:
+                best, bd = w, d
+        return best
+
+    out = {}
+    for kind, reach_key in (("stone", "quarry_reach_km"), ("clay", "clay_reach_km"), ("gravel", "gravel_reach_km")):
+        lab = g["occ_lab"][kind]
+        fk = RF[FIELD_KINDS.index(kind)].astype(np.float64) / 255.0
+        elig = base_ok & (lab >= 0)
+        if kind != "stone":
+            elig &= g["landcover"] != LC_FOREST
+        reach = float(sc[reach_key])
+        rc_ = int(math.ceil(reach / res_km))
+        mine = [(w["cell"][0], w["cell"][1], w) for w in works if w["kind"] == kind]
+        users = [(v, "village") for v in order]
+        if kind == "clay":
+            users += [(x, "special") for x in specials if x["kind"] == "窑村"]
+        served = 0
+        for v, role in users:
+            i, j = v["cell"]
+            w = nearest(mine, i, j) if role == "village" else None
+            if w is None:
+                r0, r1, c0, c1 = max(0, i - rc_), min(H, i + rc_ + 1), max(0, j - rc_), min(W, j + rc_ + 1)
+                ok = elig[r0:r1, c0:c1]
+                if role == "special":            # 窑村只在自己的黏土区里挖
+                    ok = ok & (lab[r0:r1, c0:c1] == v["occurrence"])
+                if ok.any():
+                    ii, jj = np.nonzero(ok)
+                    d = np.hypot(ii + r0 - i, jj + c0 - j) * res_km
+                    score = np.where(d <= reach, fk[r0:r1, c0:c1][ii, jj] * np.exp(-d / decay), -1.0)
+                    t = int(np.argmax(score))
+                    if score[t] > 0:
+                        a, b = int(ii[t] + r0), int(jj[t] + c0)
+                        w = nearest(mine, a, b) if role == "village" else None
+                        if w is None:
+                            w = new_work(kind, a, b, fk, lab)
+                            mine.append((a, b, w))
+            if w is None:
+                continue
+            if role == "village":
+                w["villages"].append(v["id"])
+                v.setdefault("workings", []).append(w["id"])
+                served += 1
+            else:
+                w["special"] = v["id"]
+                v["working"] = w["id"]
+        out[WORK_ZH[kind]] = {"n": sum(1 for x in works if x["kind"] == kind), "villages_served": served,
+                              "villages_share": round(served / max(1, len(villages)), 3), "reach_km": reach}
+    # 淘金点：每个砂金区在非耕非林的滩地上挑品位最高的一格，挂到 placer_link_km 内最近的村（没有就是季节性的外来淘金客）
+    lab = g["occ_lab"]["placer"]
+    fk = RF[FIELD_KINDS.index("placer")].astype(np.float64) / 255.0
+    elig = base_ok & (g["landcover"] != LC_FOREST) & (lab >= 0)
+    vc = np.array([v["cell"] for v in villages], dtype=float) if villages else np.zeros((0, 2))
+    n_pl = 0
+    for oid, (ii, jj) in sorted(_group_cells(lab, elig).items()):
+        t = int(np.argmax(fk[ii, jj]))
+        a, b = int(ii[t]), int(jj[t])
+        w = new_work("placer", a, b, fk, lab)
+        n_pl += 1
+        if vc.shape[0]:
+            dv = np.hypot(vc[:, 0] - a, vc[:, 1] - b) * res_km
+            q = int(np.argmin(dv))
+            if dv[q] <= float(sc["placer_link_km"]):
+                w["villages"].append(villages[q]["id"])
+                villages[q].setdefault("workings", []).append(w["id"])
+                continue
+        w["note"] = "附近没有村：季节性的外来淘金客"
+    out[WORK_ZH["placer"]] = {"n": n_pl, "occurrences": sum(1 for o in occ if o["kind"] == "placer")}
+    return out
