@@ -67,6 +67,17 @@ NB_MODULE(_core, m) {
     // ---------------------------------------------------------------- 小工具
     m.def("np_sum", [](ArrD1 a) { return np_sum(a.data(), a.shape(0)); });
     m.def("pyround", [](double x, int nd) { return pyround(x, nd); });
+    m.def("math_fns", [](ArrD1 x, ArrD1 y) {   // 测试用：np_pow(x, y[0]) / c_pow / np_hypot / py_hypot
+        const size_t n = x.shape(0);
+        std::vector<double> a(n), b(n), c(n), d(n);
+        for (size_t k = 0; k < n; ++k) {
+            a[k] = np_pow(x.data()[k], y.data()[0]);
+            b[k] = c_pow(x.data()[k], y.data()[0]);
+            c[k] = np_hypot(x.data()[k], y.data()[k]);
+            d[k] = py_hypot(x.data()[k], y.data()[k]);
+        }
+        return nb::make_tuple(to_np(std::move(a), {n}), to_np(std::move(b), {n}), to_np(std::move(c), {n}), to_np(std::move(d), {n}));
+    });
     m.def("grid_interp", [](ArrD2 field, double lat0, double dlat, double lon0, double dlon, double lat, double lon) {
         LatLonGrid g{lat0, dlat, lon0, dlon, static_cast<int>(field.shape(0)), static_cast<int>(field.shape(1))};
         std::vector<double> f(field.data(), field.data() + field.size());

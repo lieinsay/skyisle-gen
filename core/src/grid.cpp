@@ -48,6 +48,63 @@ double pyround(double x, int ndigits) {
     return std::strtod(buf, nullptr);
 }
 
+double np_pow(double x, double e) {
+    if (e == 2.0) return x * x;
+    if (e == 0.5) return std::sqrt(x);
+    if (e == 1.0) return x;
+    if (e == 0.0) return 1.0;
+    if (e == -1.0) return 1.0 / x;
+    return c_pow(x, e);
+}
+
+double c_pow(double x, double e) {
+    volatile double ev = e;   // 不让编译器把常数指数的 pow 化成乘法 / 开方
+    return std::pow(x, static_cast<double>(ev));
+}
+
+double np_hypot(double x, double y) { return std::hypot(x, y); }
+
+double py_hypot(double x, double y) {
+    // CPython 3.12 mathmodule.c 的 vector_norm（n = 2）：无损缩放 + 补偿求和 + 一步微分修正
+    double v[2] = {std::fabs(x), std::fabs(y)};
+    const bool found_nan = std::isnan(v[0]) || std::isnan(v[1]);
+    double max = 0.0;
+    for (double a : v)
+        if (a > max) max = a;
+    if (std::isinf(max)) return max;
+    if (found_nan) return NaN;
+    if (max == 0.0) return max;
+    int max_e;
+    std::frexp(max, &max_e);
+    if (max_e < -1023) {
+        const double dmin = 2.2250738585072014e-308;
+        return dmin * py_hypot(v[0] / dmin, v[1] / dmin);
+    }
+    const double scale = std::ldexp(1.0, -max_e);
+    double csum = 1.0, frac1 = 0.0, frac2 = 0.0;
+    for (double a : v) {
+        const double xs = a * scale;
+        const double hi = xs * xs;
+        const double lo = std::fma(xs, xs, -hi);
+        const double s = csum + hi;
+        const double sl = (csum - s) + hi;
+        csum = s;
+        frac1 += lo;
+        frac2 += sl;
+    }
+    double h = std::sqrt(csum - 1.0 + (frac1 + frac2));
+    const double phi = -h * h;
+    const double plo = std::fma(-h, h, -phi);
+    const double s = csum + phi;
+    const double sl = (csum - s) + phi;
+    csum = s;
+    frac1 += plo;
+    frac2 += sl;
+    const double xx = csum - 1.0 + (frac1 + frac2);
+    h += xx / (2.0 * h);
+    return h / scale;
+}
+
 double pymod(double x, double m) {
     double mod = std::fmod(x, m);
     if (mod != 0.0) {

@@ -43,6 +43,13 @@ double np_sum(const double* a, size_t n);          // numpy 的成对求和（np
 double np_median(std::vector<double> v);           // np.median（偶数个取中间两个的平均）
 double pyround(double x, int ndigits);             // Python 的 round(x, n)：二进制值的精确十进制舍入、逢半取偶
 double pymod(double x, double m);                  // Python 的浮点 %（结果与除数同号）
+// 幂与斜边：numpy 数组的 a ** e / np.power(a, e) 对 e ∈ {−1, 0, 0.5, 1, 2} 走快路径（倒数 / 1 / sqrt / 原值 / 平方），
+// 其余调 C 的 pow；Python 浮点的 x ** e 一律 C 的 pow（ucrt 的 pow(x, 2) 与 x·x、pow(x, 0.5) 与 sqrt 偶有一位之差）。
+// np.hypot = C 的 hypot；Python 的 math.hypot 是 CPython 自己的算法（py_hypot）。
+double np_pow(double x, double e);
+double c_pow(double x, double e);
+double np_hypot(double x, double y);
+double py_hypot(double x, double y);
 inline double smoothstep(double t) { return t * t * (3.0 - 2.0 * t); }
 inline double clip(double x, double lo, double hi) { return x < lo ? lo : (x > hi ? hi : x); }
 

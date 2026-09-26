@@ -22,6 +22,12 @@ add_library(skyisle_core STATIC
   src/grid.cpp
   src/flow.cpp
   src/config.cpp
+  src/island/layout.cpp
+  src/island/territory.cpp
+  src/island/terrain.cpp
+  src/island/river.cpp
+  src/island/hydro.cpp
+  src/island/build.cpp
 )
 target_include_directories(skyisle_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(skyisle_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
