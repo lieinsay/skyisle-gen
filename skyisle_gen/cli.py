@@ -7,7 +7,7 @@ skyisle probe <node|path|edge|trait> ...
 skyisle check --run out/seed42 [--calibrate]
 skyisle ninegrid --run out/seed42 [--region K]
 skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
-skyisle island check <节点> | batch --sample 30 | stats
+skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N]
 """
 from __future__ import annotations
 
@@ -88,6 +88,12 @@ def main(argv=None):
     p_isl.add_argument("--set", action="append", default=[], dest="sets", help="island.a.b=value 覆盖")
     p_isl.add_argument("--sample", type=int, default=30, help="batch：抽样岛群数")
     p_isl.add_argument("--steps", type=int, default=9, help="只做到第几步（开发用）")
+    p_isl.add_argument("--lod-res", default="1000", help="lod：粗版分辨率 m，逗号分隔可多个（按原生分辨率生成再降采样）")
+    p_isl.add_argument("--nodes", default=None, help="lod：只跑这些节点（逗号分隔）")
+    p_isl.add_argument("--near", type=int, default=None, help="lod：只跑这个节点周围 --radius km 内的群")
+    p_isl.add_argument("--radius", type=float, default=600.0)
+    p_isl.add_argument("--jobs", type=int, default=0, help="lod：进程数（0 = CPU 数 − 2）")
+    p_isl.add_argument("--force", action="store_true", help="lod：已有的也重跑")
 
     p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
     p_serve.add_argument("--out", default="out")
@@ -148,6 +154,12 @@ def main(argv=None):
             from .island.climate import classify_all, print_stats
             print_stats(classify_all(ctx, isl.island_config(ctx, a.sets)))
             return 0
+        if a.what == "lod":
+            import os
+            from .island.lod import run_lod, select_nodes
+            res_list = [float(x) for x in a.lod_res.split(",") if x.strip()]
+            jobs = a.jobs if a.jobs > 0 else max(1, (os.cpu_count() or 4) - 2)
+            return run_lod(ctx, res_list, select_nodes(ctx, a.nodes, a.near, a.radius), jobs, force=a.force, sets=a.sets)
         isl.generate(ctx, int(a.what), year=a.year, res_m=a.res, export=a.export, sets=a.sets, steps=a.steps)
         return 0
     return 1

@@ -321,3 +321,41 @@ def test_territory_off_leaves_unconstrained_groups_identical(small_ctx):
     assert np.array_equal(g1["island_id"], g2["island_id"])
     assert np.array_equal(np.nan_to_num(g1["height"], nan=-1.0), np.nan_to_num(g2["height"], nan=-1.0))
     assert t.get("violation_km", -1.0) <= 0.0
+
+
+def test_lod_block_reduce():
+    """粗版降采样：陆地占比、块内平均高 / 最高、岛号与地表取众数。"""
+    from skyisle_gen.island.lod import _block_reduce
+    iid = np.full((4, 4), -1, dtype=np.int16)
+    iid[0:2, 0:2] = 0
+    iid[0, 2] = 1
+    h = np.where(iid >= 0, 100.0, np.nan)
+    h[0, 0] = 300.0
+    lc = np.where(iid >= 0, 4, 0).astype(np.uint8)
+    lc[1, 1] = 6
+    g = {"island_id": iid, "height": h, "landcover": lc, "river": np.zeros((4, 4), np.uint8), "lake": np.zeros((4, 4), bool)}
+    r = _block_reduce(g, 2)
+    assert r["land"][0, 0] == 255 and r["land"][0, 1] == 64 and r["land"][1, 1] == 0
+    assert r["height"][0, 0] == pytest.approx(150.0) and r["peak"][0, 0] == pytest.approx(300.0)
+    assert np.isnan(r["height"][1, 1])
+    assert r["island"][0, 0] == 0 and r["island"][0, 1] == 1 and r["island"][1, 1] == -1
+    assert r["landcover"][0, 0] == 4
+
+
+def test_lod_keeps_land_and_layout(small_ctx):
+    """粗版 = 原生分辨率生成再降采样：陆地面积与原生一样（占比按格加总），岛数、各岛的岸缘 / 峰原样带过去。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.lod import build_lod
+    node = _pick_node(small_ctx)
+    c = isl.island_config(small_ctx)
+    out = build_lod(small_ctx, node, c, [1600.0, 3200.0], native_res_m=400.0)
+    inp = isl._node_inputs(small_ctx, node)
+    g = isl.build_terrain(small_ctx, node, c, inp, res_m=400.0, log=lambda *a: None)
+    native_km2 = float((g["island_id"] >= 0).sum()) * 0.16
+    for res, (arr, meta) in out.items():
+        land_km2 = float(arr["land"].astype(np.float64).sum()) / 255.0 * (meta["raster"]["res_m"] / 1000.0) ** 2
+        assert meta["raster"]["factor"] == round(res / 400.0)
+        assert abs(land_km2 - native_km2) <= 0.01 * native_km2, (res, land_km2, native_km2)
+        assert len(meta["islands"]) == len(g["json"]["islands"])
+        assert [i["center_km"] for i in meta["islands"]] == [i["center_km"] for i in g["json"]["islands"]]   # 岸缘等水系之后会改，岛心不会
+        assert np.nanmax(arr["peak"]) == pytest.approx(float(np.nanmax(g["height"])), abs=5.0)   # 水系（填洼、河道）会动几米
