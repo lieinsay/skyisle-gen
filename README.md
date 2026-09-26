@@ -80,6 +80,16 @@ python -m skyisle_gen.cli check --run out/seed42 # 单独重跑验收
   归一化后每点每槽位是恒正的比例分布（原则己）。
   高隔离连通分量还会生成「本地起源」特征。
 
+## 岛群（第三层，按需生成）
+
+```bash
+python -m skyisle_gen.cli island 2051 --run out/seed42            # 一个岛群的全部产物 → out/seed42/islands/2051/（5–40 s）
+python -m skyisle_gen.cli island check 2051 --run out/seed42      # IS-* / RES-* / SET-* 校验（含重跑比哈希、势力范围 IS-terr）
+python -m skyisle_gen.cli island lod --run out/seed42 --lod-res 2000,1000   # 全行星粗版（原生分辨率生成再降采样，多进程）
+```
+
+邻群的陆地不许叠：每群与邻群按陆地规模分界、各退半道缝，越界了才重摆（DESIGN-NOTES 四点二十二）。
+
 ## 可视化（调试全靠看中间层）
 
 ```bash

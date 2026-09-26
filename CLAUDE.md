@@ -26,6 +26,9 @@
   $py -m skyisle_gen.cli island check 1165 --run out/seed42   # IS-* / SET-* / RES-* 校验（含重跑比哈希）
   $py -m skyisle_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
   $py -m skyisle_gen.cli island stats --run out/seed42   # 全量季型统计（只算气候，8000 群 4 s）→ islands/season_stats.json；操作台气候视角「季型」着色读它
+  $py -m skyisle_gen.cli island lod --run out/seed42 --lod-res 2000,1000 [--nodes a,b | --near 2051 --radius 600] [--jobs N] [--force]
+                                                  # 岛群粗版（远处看的低模）：原生分辨率生成再按块降采样 → islands_lod/<分辨率>/<节点>.npz + index.json；
+                                                  # 已有的跳过；全行星 28 进程约两小时（Zhouzhu 的 tools/export_planet.py 读它打行星包）
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
@@ -92,7 +95,10 @@ skyisle_gen/
                  tiers     聚落层级（四点十八）：**飞船取代车船、随处可停 → 没有码头**；专业聚落（矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地，按资源量、封顶非农 40%）、
                            集镇（中心地：6 km 直线跨岛服务半径、镇距 ≥ 10 km、邑治必为镇）、每个聚落旁一块泊场、村周开垦（林地 → 草坡 / 灌丛薪炭林，林场 patch_id 划掉）、
                            村的采场（开垦之后：石 / 土 / 砂就近取，先合用 1.5 km 内已有的，再在 5 / 2 / 2 km 内按品位 × 距离挑；矿镇矿村改读金属矿赋存区）
-                 check     第六节 IS-area/surface/arable/river/channel/season/link/det/iso（硬）+ RES-site/occ/work/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
+                 territory 势力范围（四点二十二）：与每个邻群按等效半径 √(陆地/π) 分界、各退 gap/2；build_terrain 的 _fit_territory 照旧摆、越界了才重摆
+                           （主岛挪进来 → 转向 → 拉长；其余岛带约束重摆），没越界的群产物逐字节不变
+                 lod       岛群粗版（四点二十二）：原生分辨率跑布局 + 地形 + 水系再降采样——不能在粗分辨率上生成，布局随分辨率变
+                 check     第六节 IS-area/surface/arable/river/channel/season/link/terr/det/iso（硬）+ RES-site/occ/work/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key）slots.toml（槽位→模式/阻力档）production_templates.toml（④⑤⑥模板）
 ```
 
@@ -170,6 +176,8 @@ config/default.toml（所有参数；[web] 段只管操作台显示，不进缓�
   **可放区 ≠ 石料区**：石料按露头算，坡 12° 起算、30° 满，裸岩 / 高山草甸 / 峡谷壁至少 0.6，林坡 × 0.8，> 40° 算崖面（第一版 8° 林坡就算，#1165 石料区 31%、看上去全岛是石头）；砂金增益 8。
   季型判定的分数 = 差异 / 该项门槛（温度按冷暖两季的 8 °C，不是 20），取 ≥ 1 的最大者；三 seed 全量：四季分明 57–60%、冷暖两季 19–23%、风暴季 18%、雨旱季 1.5%、常夏 1%，
   西风带以北 100% 四季分明，信风带一半冷暖两季一半风暴季。
+  势力范围 `[island.territory]`（四点二十二）：缝 3 km（两边各退 1.5）、看群心距 ≤ 3 × 等效半径之和 + 40 km 的邻群、主岛转 8 个走向、拉长 1.6 / 2.4、重摆时群内最小岸距 0.3 km；
+  seed 42 全行星重摆 67%（密接几乎全部、中疏 68%），仍越过分界线的 34 群（③ 里群心挤在一起的，第三层摆不开）；IS-terr 硬 / IS-terr-gap 软。
 
 ## 未做 / 可改进（按价值排序）
 
