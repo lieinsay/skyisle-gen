@@ -727,6 +727,58 @@ Zhouzhu 要把整颗行星画出来（它的 `docs/PLAN-PLANET.md`）：第三�
 - **粗分辨率的两处小修**（给 `--res` 的粗跑，默认 100 m 碰不到）：比半格还小的礁 `island_shape` 留一格（原来是空的 mask），
   贴进群栅格时被别的岛全压掉的 `shoreline_gaps` 跳过（原来对空数组取 min 崩）。
 
+## 四点二十三、生成器后端换 C++：核心库骨架 + 第三层地形段（2026-09-27，Zhouzhu 行星计划 P6a）
+
+Zhouzhu 的 PLAN-PLANET 定了 D3 / D16：生成器的算法整体移植成一个不含 Python、不含 Godot 的 C++ 核心库（`core/`），Python 前端经绑定调它，
+游戏以子模块只编它。按段移，每段加 `[engine] backend = python | cpp` 开关、两边都能跑、对照过了再往下。这一期（P6a）移第三层的地形段。设计稿 `docs/PLAN-CORE.md`。
+
+- **做了什么**：`core/`（CMake + C++17，静态库 `skyisle_core` + nanobind 扩展 `skyisle_gen._core` + ctest 自检，`core/build.py` 一键构建；Windows 自动进 VS 2022 的 x64 环境）；
+  移了 grid（噪声、连通分量、形态学、倒角传播、重采样、坡度）、terrain 的水文核心（优先泛洪、迭代填洼、D8、随机流向、汇流）与侵蚀、layout、territory、island_shape / base_form / sculpt_island、
+  `build_terrain`（含 `_fit_territory`）、hydro（湖、路由面、河 / 溪、盆地、台面校正、地表 12 类、可耕地）、river（河道成形、中心线）。
+  前端 `island/engine.py`：分派点只在 `build_terrain` 与 `hydro.build_hydro` 的第一行（generate / lod / check / batch / 操作台都经过）；cpp 后端把原始的数拼回与 Python 版同形的 g 与
+  island.json（键序、round 位数照抄），后面的步（资源、气候、天气、聚落、出图）照旧 Python。`[engine]` 的读法同 `[island]`（default.toml ← run 快照 ← `--set engine.x=v`，
+  `island … --backend cpp` 是简写），不进任何缓存 key。对照工具 `island compare`（`--timing` 只量用时）。nanobind 3.1 用 pip 装进 Python 3.12，没遇到问题，没换 pybind11。
+- **随机流与 numpy 逐位一致（比计划多做的）**：计划说追不上，实际 numpy 的几样都是公开定式——SeedSequence（hashmix / mix）→ PCG64（128 位 LCG、XSL-RR、先步进后输出；
+  MSVC 没有 `__int128`，用 `_umul128`）；`random()` = (u64 >> 11)·2⁻⁵³；`integers` 是 32 位 Lemire 且与 numpy 一样缓存半个 64 位字；`choice(k, p)` = cumsum / cdf[-1] 再 searchsorted 右侧；
+  伽马（Marsaglia–Tsang）、贝塔（两伽马之比）照 distributions.c。难的是正态：numpy 用 256 层 ziggurat，表（ziggurat_constants.h）不在发行包里。
+  **探表**：把 PCG64 的状态设成「下一个原始输出 = 指定值」（输出 = rotr(hi ^ lo, s >> 122)：取 s 高 6 位为 0、lo = hi ^ 目标值，再乘 LCG 乘数的逆元倒退一步），
+  于是 standard_normal 读到的 64 位完全由我们定——rabs = 1 时输出就是 wi[层]，二分 rabs 找快 / 慢路径的分界就是 ki[层]，fi = exp(−x²/2)。第 1 层 ki = 0（恒走慢路径），另处理。
+  `core/tools/probe_ziggurat.py` 生成 `ziggurat_tables.inc`；测试里 20 万个正态、2 万个贝塔与 numpy 逐位相同。
+- **浮点次序也追上了（踩坑表，都在 grid.hpp 里有同式函数）**：
+  - ucrt 的 `pow(x, 2)` ≠ `x·x`、`pow(x, 0.5)` ≠ `sqrt(x)`（10 万个里各差一位约 100 个）。numpy 数组的 `a ** e` / `np.power(a, e)` 对 e ∈ {−1, 0, 0.5, 1, 2} 走快路径
+    （倒数 / 1 / sqrt / 原值 / 平方），其余调 C 的 pow → `np_pow`；Python 浮点的 `x ** e` 一律 C 的 pow → `c_pow`（指数经 volatile 传，免得编译器把 pow(x, 2.0) 化成乘法）。
+    侵蚀的 `np.power(A, carve_m = 0.5)`、河宽的 `Q ** width_b (0.5)` 都走 sqrt 快路径，`(0.25·R) ** 2`（Python 浮点）却是 pow。
+  - `np.hypot` = C 的 hypot，`math.hypot` 是 CPython 自己的 vector_norm（无损缩放 + 补偿求和 + 一步修正），17% 的输入差一位 → `np_hypot` / `py_hypot` 分开用（place_islands 用后者）。
+  - `np.sum` 是成对求和（8 路展开、128 一块）；块均值 `mean(axis=(1, 3))` 是块内逐行成对求和再顺序相加；`axis=0` 的和是逐层顺序加。
+  - Python 的 `round(x, n)` 是二进制值的精确十进制舍入、逢半取偶 → `printf("%.*f")` + `strtod`（UCRT 自 Win10 2004、glibc 都正确舍入）。
+    Python 版有几处读的是 island.json 里**已四舍五入**的值：hydro 的 origin_km（噪声坐标）、rim_m / keel_m（河口豁口与瀑布落差）、age（土层），导水槽 Prim 堆里比的是 round(gap, 3)——C++ 照取。
+  - 势力范围的 Dykstra：`y @ U[i]`（长 2 的点积走 BLAS ddot）= fma(y₁, u₁, y₀·u₀)，`U @ x`（dgemv）两行以上 = fma(u₀, x₀, u₁·x₁)、一行时同点积。
+    贴着分界线时越界量是 ±1e−15，`v ≤ 0` 差一位就挑了另一个走向：第一轮 30 群对照里 #591、#1176 就是这样分叉的（主岛转 135° vs 157.5°，峰差 0.4%，河长差 7% / 16%，校验照样全过）。
+  - 按高度排序的循环（汇流、隐式下切、盆地出口）换成拓扑序：每格只依赖下游格的终值，结果与排序版逐位相同，省掉 O(N log N)；汇流是格数（整数），加的次序无关。
+    倒角传播与迭代填洼只重算「上一次同向平移之后变过」的格，与整体迭代逐位相同。连通分量按光栅扫描首次出现编号（= 行程并查集 + np.unique 的次序）。
+  - MSVC 默认 `/fp:precise`、不开 `/arch:AVX2`（乘加不会被合并成 FMA）；GCC / Clang 加 `-ffp-contract=off`。
+- **结果**：见下「实测」。两个后端的产物在抽到的群上**逐位相同**（cpp 后端的 island.json 只在 meta 多 `"engine": "cpp"`），2051 整套产物（含资源、聚落、预览图）也逐字节相同。
+  这不是保证：C 库换了（Linux 的 glibc）、numpy 换了大版本（快路径、BLAS 内核）都可能差一位、再在某个阈值上翻过去。所以验收仍按统计对照，逐位相同只是现在的常态。
+- **线程**：群内各岛的岛形、地形、水系按岛并行（各岛自己的随机流、只写自己的格，合并按岛号次序），`[engine] threads = 4`；结果与线程数无关（pytest 断言）。
+- **P6b 从哪接**：`core/include/skyisle/island/types.hpp` 的 `Group` 已是 g 的 C++ 形，build_hydro 留下了资源层要的 recv / route_h / cut_m / slope；
+  下一段移 resources（赋存场 → 赋存区 → 采场、点与片；`accumulate` 带权重时 Python 是按高度降序加，拓扑序加的次序不同，要么照排序、要么证明无关）、
+  settle / tiers、climate / weather（又会碰到 numpy 的 gamma、searchsorted、quantile）、lod 的降采样；然后 `generate` 整个进 C++（写产物仍在前端）。
+  行星层（P6c / P6d）时 `[engine]` 要并进阶段缓存 key。
+
+### 实测（P6a）
+
+- **30 群对照**（seed 42，`island compare --sample 30 --jobs 10`，抽样同 `island batch` 的主岛面积四分位分层）：**30 / 30 全过、30 群逐位相同**——陆地与主岛都按目标
+  （IS-area 两边都过）、岛数、峰高、河长（主岛常年河中心线总长）、可耕率、地表 12 类占比、湖数、河口数全同；两个后端的 island check 全过（0 硬 0 软，前 3 群含 IS-det 重跑）。
+  第一轮（Dykstra 还没照 BLAS 的乘加次序时）28 / 30 逐位相同，#591 / #1176 在主岛挑走向时分叉，仍在容差内（峰差 0.4%，河长 −7% / −16%，校验照样全过）。
+- **更大范围**（只跑地形 + 水系、随机抽）：seed 42 120 群、seed 7 60 群、seed 2026 60 群，**240 / 240 逐位相同**，其中被势力范围约束重摆过的 158 群。
+- **2051**：cpp 后端的整套产物（terrain.npz、各 png、resources / settlements / rivers / climate.json、天气 csv）与 python 后端逐字节相同，island.json 只多 `meta.engine`；
+  python 后端的产物与改动前逐字节相同（除了本来就每次不同的 `meta.seconds`）。粗版（`build_lod` 2 km）2051 与 #343（重摆过、仍越界 14 km 的那个）两个后端相同。
+- **用时**（`island compare --timing`：顺序跑、先热身一次不计读行星层 npz；同 30 群；Ryzen 9 9950X3D，同机另有进程在跑）：地形 + 水系中位
+  **python 4.83 s（最长 14.7 s，#833 的 245 万格）→ cpp 单线程 0.71 s（最长 1.85 s）→ cpp 4 线程 0.41 s（最长 0.97 s）**，逐群加速中位 ×11.4。
+  整群 `generate`（10 进程并跑、群内 1 线程）中位 python 22.3 s → cpp 13.4 s：剩下的全是还没移的资源、气候、天气、聚落与出图（P6b 的活），离「一群 ≤ 3 s」还差这一段。
+- pytest 76 个全过（新增 `tests/test_core_engine.py` 23 个：随机流 / 幂 / 斜边 / 求和 / round 逐位、栅格与水文公共件逐位、岛形与三种岛龄的侵蚀（粗网格与原网格两条路）逐位、
+  势力范围与 Dykstra 逐位、小世界两后端同形、cpp 确定性与线程数无关、cpp 下 generate 过校验）；三个 seed 的 `check` 照旧 0 硬 0 软 0 报警。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。

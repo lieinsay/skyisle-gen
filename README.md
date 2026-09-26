@@ -90,6 +90,31 @@ python -m skyisle_gen.cli island lod --run out/seed42 --lod-res 2000,1000   # �
 
 邻群的陆地不许叠：每群与邻群按陆地规模分界、各退半道缝，越界了才重摆（DESIGN-NOTES 四点二十二）。
 
+## C++ 核心库（生成器后端，行星计划 P6）
+
+生成器的算法正在整体移植成 `core/` 里的 C++17 核心库（不含 Python、不含 Godot；Zhouzhu 以后以子模块只编它），
+Python 前端经 nanobind 扩展 `skyisle_gen._core` 调它，命令与产物格式不变。设计稿 `docs/PLAN-CORE.md`，实测 DESIGN-NOTES 四点二十三。
+**P6a（已做）**：第三层的地形段——布局（含势力范围）、岛形、地形、水系、河道成形；资源、气候、天气、聚落与行星层照旧走 Python。
+
+构建（要 CMake ≥ 3.20、C++17 编译器；Windows 用 VS 2022 的 MSVC，脚本自己进 x64 环境；Linux 直接 cmake，有 Ninja 用 Ninja）：
+
+```bash
+python -m pip install nanobind       # 3.x，装在要用的那个 Python 里
+python core/build.py                 # Release → skyisle_gen/_core.cp312-win_amd64.pyd（Linux 为 .so；已 gitignore）
+python core/build.py --test          # 另跑 C++ 自检（ctest）；--debug 调试版；--clean 重来
+```
+
+用哪个后端由 `[engine] backend` 定（默认 `"python"`，这一期不切默认）：
+
+```bash
+python -m skyisle_gen.cli island 2051 --run out/seed42 --backend cpp        # = --set engine.backend=cpp；check / batch / lod 同样
+python -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --jobs 10   # 两个后端对照 → islands/compare.json（产物在 islands_compare/）
+python -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --timing    # 只量地形 + 水系的用时 → islands/timing.json
+```
+
+随机流与 numpy 逐位一致（PCG64 / SeedSequence / ziggurat 正态 …），浮点运算次序也照 numpy 做，所以两个后端的产物通常逐位相同
+（cpp 后端的 island.json 在 meta 里多一个 `"engine": "cpp"`）；地形 + 水系快约 10 倍。扩展没编时选 cpp 会报错并提示构建命令。
+
 ## 可视化（调试全靠看中间层）
 
 ```bash
@@ -201,6 +226,7 @@ A/B/C/D 应基本吻合（D 只取紧贴 D 两缘、在文明核心纬度的节�
 
 ```
 config/           default.toml · slots.toml · production_templates.toml · (traits.toml)
+core/             C++ 核心库（CMake；build.py 一键构建；include/skyisle/、src/、python/ 绑定、tests/ 自检、tools/ 探 numpy 的 ziggurat 表）
 skyisle_gen/
   stages/         s01_planet … s10_output（十步；s09_polity 为第四批 R7 的政治层）
   polity.py       政治层产物的只读封装（邦名 / 状态 / 探针行 / 摘要）

@@ -68,7 +68,7 @@ C++ 里的字符串一律 ASCII（枚举与键名），中文名（新岛 / 中�
 - `standard_gamma`（Marsaglia–Tsang，形状 > 1）、`beta`（两伽马之比；a、b ≤ 1 时 Jöhnk）、`choice(k, p)`（累积和 + searchsorted 右侧）与 numpy 的 C 源同式。
 
 **不保证**两边结果逐位一致：exp / log / pow / atan2 在 numpy（SIMD）与 C 库之间可能差最后一位，numpy 的求和是成对求和（前端里用到的地方 C++ 照做了），
-差一位就可能让某个阈值判断翻过去、之后整个群分叉（例如 place 流在某次尝试上接受与否不同）。所以验收仍按统计对照，逐群一致只是常态、不是约束。
+差一位就可能让某个阈值判断翻过去、之后整个群分叉（例如 place 流在某次尝试上接受与否不同）。所以验收仍按统计对照，逐群一致只是常态、不是约束。（实测：P6a 抽到的 270 群地形 + 水系全部逐位相同，见 DESIGN-NOTES 四点二十三。）
 
 ## 五、绑定接口（`skyisle_gen._core`）
 
@@ -78,7 +78,7 @@ C++ 里的字符串一律 ASCII（枚举与键名），中文名（新岛 / 中�
 |---|---|---|
 | `build_terrain(inp, planet, cfg, res_m=None, threads=0)` | inp：本群标量（节点号、seed、lat / lon、陆地、主岛、台面、岛龄、叠层、keel 余隙）；planet：板块网格（lat0 / dlat / lon0 / dlon + K + btype + lats / lons）、全体群的 lat / lon / 陆地、行星半径；cfg：展平的 [island] | dict：H / W / res_km / x0 / y0、height（f64，虚空 NaN）/ island_id（i16）/ cliff（bool）、各岛记录（面积格数、目标、岛心、台面、起伏目标、岸缘、峰、岛底、岛龄、类别、外框）、links、导水槽树、势力范围记录、masks_pos、轴向 / 边界核 / 类型、用时 |
 | `build_hydro(state, planet, cfg, threads=0)` | state：build_terrain 的数组与各岛的 rim / keel / age（**用 island.json 里已四舍五入的值**，与 Python 版同口径）、origin_km（同样是四舍五入后的）；planet：局地风网格、年长秒数；inp 的降水 / 海面温 / 直减率 / 有河 / 河级 / 可耕率 | dict：height（改后）、filled、flowacc、river / stream / lake、宽 / 深 / 漫滩 / 下切、recv_i / recv_j / route_h、landcover、arable、slope、各岛水系摘要、主岛盆地、河口表、河道折线、台面校正量 dz |
-| 公共件 | `rng_raw / rng_draw`（各分布）、`fractal_noise`、`label_components`、`largest_component`、`binary_erode`、`distance_bands`、`nearest_propagate`、`priority_fill`、`fill_iter`、`d8`、`d8_random`、`accumulate`、`island_shape`、`radial_profile`、`territory_limits`、`grid_interp` | 同 Python 版的返回 |
+| 公共件 | `rng_raw / rng_draw / rng_choice_p`（各分布）、`crc32`、`np_sum`、`pyround`、`math_fns`（numpy 同式的幂与斜边）、`grid_interp`、`fractal_noise`、`label_components`、`largest_component`、`binary_erode / dilate`、`distance_bands`、`nearest_propagate`、`block_mean / any`、`upsample_bilinear`、`smooth121`、`laplacian`、`slope_deg`、`priority_fill`、`fill_iter`、`d8`、`d8_random`、`accumulate`、`island_shape`、`radial_profile`、`sculpt_island`、`territory_limits`、`nearest_fit`、`boundary_axis` | 同 Python 版的返回 |
 
 配置用**扁平键值表**：前端把 `[island]` 段展平成 `{"layout.n0": 30.0, "territory.stretch": [1.0, 1.6, 2.4], "territory.enabled": 1.0, …}`（布尔 → 0 / 1，字符串跳过），
 C++ 按键取、缺键抛异常。以后游戏从 TOML / 行星包读同一张表。`[engine] threads`（默认 4）控制群内各岛并行的线程数，结果与线程数无关（每岛自己的随机流、写各自的格）。
@@ -112,7 +112,7 @@ Linux（ME Pro）：直接 `cmake -G Ninja`（没有 Ninja 用 Makefiles）。�
 - 陆地、主岛：两个后端都按目标精确（IS-area < 2%）；岛数相同；
 - 峰高 ±10%；河长（主岛常年河中心线总长）±20%；可耕率（都 = 目标 ± 0.005）、地表 12 类占比、湖数、河口数也报出来；
 - 两边的 island check 全过；
-- 用时：每群地形、水系分开记（进程里计时，另用 `--jobs 1` 跑一遍取干净的数）。
+- 用时：每群地形、水系分开记（进程里计时）；干净的数另用 `island compare --timing` 顺序跑（python、cpp 1 线程、cpp 4 线程各一遍，先热身）。
 
 另：pytest 加 `tests/test_core_engine.py`（扩展没编就跳过）——随机数逐位、公共件同输入对照、小世界上两个后端的 build_terrain / build_hydro 对照、cpp 后端 IS-det、线程数不影响结果。
 
