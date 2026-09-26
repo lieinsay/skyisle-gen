@@ -98,10 +98,12 @@ double nearest_fit(const std::vector<double>& support, const std::vector<Limit>&
     std::vector<double> b(m), P0(m, 0.0), P1(m, 0.0);
     for (size_t i = 0; i < m; ++i) b[i] = lim[i].limit_km - support[i];
     double x0 = 0.0, x1 = 0.0;
+    // numpy 的 y @ U[i]（长 2 的点积走 BLAS ddot）= fma(y1, u1, y0·u0)；U @ x（dgemv）行数 ≥ 2 时 = fma(u0, x0, u1·x1)、1 行时同点积。
+    // 越界量 v 在「恰好贴着分界线」时是 ±1e−15 量级，v ≤ 0 的判断差一位就翻（主岛挑哪个走向），所以照 numpy 的乘加次序算。
     for (int it = 0; it < iters; ++it)
         for (size_t i = 0; i < m; ++i) {
             const double y0 = x0 + P0[i], y1 = x1 + P1[i];
-            const double s = (y0 * lim[i].ux + y1 * lim[i].uy) - b[i];
+            const double s = std::fma(y1, lim[i].uy, y0 * lim[i].ux) - b[i];
             const double f = std::max(0.0, s);
             const double n0 = y0 - f * lim[i].ux, n1 = y1 - f * lim[i].uy;
             P0[i] = y0 - n0;
@@ -112,7 +114,10 @@ double nearest_fit(const std::vector<double>& support, const std::vector<Limit>&
     ox = x0;
     oy = x1;
     double worst = -INF;
-    for (size_t i = 0; i < m; ++i) worst = std::max(worst, (lim[i].ux * x0 + lim[i].uy * x1) - b[i]);
+    for (size_t i = 0; i < m; ++i) {
+        const double ux = m >= 2 ? std::fma(lim[i].ux, x0, lim[i].uy * x1) : std::fma(x1, lim[i].uy, x0 * lim[i].ux);
+        worst = std::max(worst, ux - b[i]);
+    }
     return worst;
 }
 

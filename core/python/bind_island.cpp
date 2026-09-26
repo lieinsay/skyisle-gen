@@ -343,6 +343,13 @@ void bind_island(nb::module_& m) {
         }
         return out;
     });
+    m.def("nearest_fit", [](std::vector<double> support, std::vector<std::vector<double>> lims) {   // lims：[(ux, uy, limit_km)]
+        std::vector<Limit> lim;
+        for (const auto& L : lims) lim.push_back({0, 0.0, L[0], L[1], L[2]});
+        double ox, oy;
+        const double v = nearest_fit(support, lim, ox, oy);
+        return nb::make_tuple(ox, oy, v);
+    });
     m.def("boundary_axis", [](nb::dict planet, double lat, double lon) {
         const PlanetView pv = planet_from(planet);
         double axis, kernel;
