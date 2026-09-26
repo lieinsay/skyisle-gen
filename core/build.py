@@ -49,7 +49,8 @@ def _msvc_env() -> dict:
     bat = _vcvars()
     if bat is None:
         sys.exit("找不到 Visual Studio 2022 的 vcvars64.bat（装「使用 C++ 的桌面开发」工作负载，或在「x64 Native Tools」命令行里运行本脚本）")
-    out = subprocess.run(f'cmd /s /c ""{bat}" >nul && set"', capture_output=True, text=True, shell=True)
+    # cmd 的 set 按控制台代码页（中文 Windows 是 cp936）输出；PYTHONUTF8=1 时 text=True 会按 UTF-8 解码失败，环境变量整段丢掉
+    out = subprocess.run(f'cmd /s /c ""{bat}" >nul && set"', capture_output=True, text=True, shell=True, encoding="oem", errors="replace")
     for line in out.stdout.splitlines():
         if "=" in line:
             k, v = line.split("=", 1)
@@ -69,6 +70,8 @@ def main() -> int:
     if a.clean and bdir.exists():
         shutil.rmtree(bdir)
     env = _msvc_env() if os.name == "nt" else dict(os.environ)
+    if os.name == "nt":
+        env.setdefault("VSLANG", "1033")   # 编译器报错用英文（中文版 VS 的报错是 GBK，经管道读出来是乱码）
     gen = "Ninja" if shutil.which("ninja", path=env.get("PATH")) else ("NMake Makefiles" if os.name == "nt" else "Unix Makefiles")
     try:
         import nanobind

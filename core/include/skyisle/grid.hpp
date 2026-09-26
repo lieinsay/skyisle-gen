@@ -41,6 +41,16 @@ constexpr double PI = 3.141592653589793;
 // ---------------------------------------------------------------- 与 numpy / Python 同式的小工具
 double np_sum(const double* a, size_t n);          // numpy 的成对求和（np.sum / ndarray.sum 的 1 维）
 double np_median(std::vector<double> v);           // np.median（偶数个取中间两个的平均）
+float np_sum_f32(const float* a, size_t n);        // float32 的成对求和（float 累加器）
+inline double np_mean(const std::vector<double>& v) { return np_sum(v.data(), v.size()) / static_cast<double>(v.size()); }
+double np_quantile(std::vector<double> v, double q);   // np.quantile(v, q)（method="linear"，q 是 Python 浮点）
+// np.interp（xp 升序、无左右填充参数）：与 numpy 的 C 实现同式（x == xp[j] 直接取 fp[j]，斜率先算好）
+std::vector<double> np_interp(const std::vector<double>& x, const std::vector<double>& xp, const std::vector<double>& fp);
+// OpenBLAS 的 ddot（本机 = SkylakeX 内核：4 路 512 位 FMA 累加 → 折成 256 位 → 16 一组的 256 位 FMA → 横向加，尾部顺序 FMA）；
+// np.dot / np.convolve 走它。换了 CPU 架构（Haswell 内核）次序就不同，见 DESIGN-NOTES 四点二十四
+double blas_ddot(const double* x, const double* y, size_t n);
+// np.convolve(a, v, "valid")：numpy 2.x 核长 < 12 用自己的顺序乘加，≥ 12 走 BLAS ddot
+std::vector<double> np_convolve_valid(const std::vector<double>& a, const std::vector<double>& v);
 double pyround(double x, int ndigits);             // Python 的 round(x, n)：二进制值的精确十进制舍入、逢半取偶
 double pymod(double x, double m);                  // Python 的浮点 %（结果与除数同号）
 // 幂与斜边：numpy 数组的 a ** e / np.power(a, e) 对 e ∈ {−1, 0, 0.5, 1, 2} 走快路径（倒数 / 1 / sqrt / 原值 / 平方），
@@ -79,12 +89,16 @@ private:
 // ---------------------------------------------------------------- 连通分量
 // 4 / 8 连通分量标号：labels 0 = 背景，1..n 按光栅扫描首次出现的次序（与 grid.label_components 同）。返回 n。
 int label_components(const Mask& mask, int connectivity, GridI& labels);
+// 不跨岛的连通分量（grid.label_by_island）：先连通分量，再按（分量号, 岛号）升序重新编号；返回分量数
+int label_by_island(const Mask& mask, const Grid<int16_t>& island_id, int connectivity, GridI& labels);
 Mask largest_component(const Mask& mask, int* count = nullptr);
 
 // ---------------------------------------------------------------- 形态学
 Mask binary_erode(const Mask& m, int iterations = 1, int connectivity = 8);
 Mask binary_dilate(const Mask& m, int iterations = 1, int connectivity = 8);
 GridI distance_bands(const Mask& mask, int max_iter);
+// (2r+1)² 方窗内的最大 / 最小（只看 mask 内的格，窗外 / 掩膜外不计；grid.window_extrema）
+void window_extrema(const GridD& a, int r, const Mask& mask, GridD& hi, GridD& lo);
 // 倒角距离传播（grid.nearest_propagate）：dist（step_m 为单位，出界 inf）与最近种子的扁平下标 src（无则 −1）
 void nearest_propagate(const Mask& seed, int max_iter, double step_m, const Mask* within, GridD& dist, Grid<int64_t>& src);
 

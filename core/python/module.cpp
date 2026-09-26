@@ -33,7 +33,7 @@ Rng rng_of(uint64_t seed, uint64_t stream, const std::string& key) {
 
 NB_MODULE(_core, m) {
     m.doc() = "skyisle-gen 的 C++ 核心（docs/PLAN-CORE.md）";
-    m.def("version", []() { return std::string("p6a-1"); });
+    m.def("version", []() { return std::string("p6b-1"); });
 
     // ---------------------------------------------------------------- 随机数
     m.def("rng_raw", [](uint64_t seed, uint64_t stream, const std::string& key, size_t n) {
@@ -50,6 +50,10 @@ NB_MODULE(_core, m) {
             else if (kind == "uniform") x = r.uniform(a, b);
             else if (kind == "normal") x = r.normal(a, b);
             else if (kind == "gamma") x = r.standard_gamma(a);
+            else if (kind == "gamma2") x = r.gamma(a, b);
+            else if (kind == "exponential") x = r.standard_exponential();
+            else if (kind == "lognormal") x = r.lognormal(a, b);
+            else if (kind == "poisson") x = static_cast<double>(r.poisson(a));
             else if (kind == "beta") x = r.beta(a, b);
             else if (kind == "integers") x = static_cast<double>(r.integers(static_cast<int64_t>(a), static_cast<int64_t>(b)));
             else throw std::invalid_argument("rng_draw: unknown kind " + kind);
@@ -62,7 +66,31 @@ NB_MODULE(_core, m) {
         for (auto& x : out) x = r.choice_p(p);
         return to_np(std::move(out), {n});
     }, "seed"_a, "stream"_a, "key"_a, "p"_a, "n"_a);
+    m.def("rng_choice_noreplace", [](uint64_t seed, uint64_t stream, const std::string& key, int64_t pop, int64_t size, int reps) {
+        Rng r = rng_of(seed, stream, key);
+        std::vector<int64_t> out;
+        for (int t = 0; t < reps; ++t) {
+            const std::vector<int64_t> v = r.choice_noreplace(pop, size);
+            out.insert(out.end(), v.begin(), v.end());
+        }
+        const size_t n = out.size();
+        return to_np(std::move(out), {n});
+    });
     m.def("crc32", [](const std::string& s) { return crc32(s); });
+    m.def("np_quantile", [](ArrD1 a, double q) { return np_quantile(std::vector<double>(a.data(), a.data() + a.shape(0)), q); });
+    m.def("np_interp", [](ArrD1 x, ArrD1 xp, ArrD1 fp) {
+        std::vector<double> r = np_interp(std::vector<double>(x.data(), x.data() + x.shape(0)), std::vector<double>(xp.data(), xp.data() + xp.shape(0)),
+                                          std::vector<double>(fp.data(), fp.data() + fp.shape(0)));
+        const size_t n = r.size();
+        return to_np(std::move(r), {n});
+    });
+    m.def("np_convolve_valid", [](ArrD1 a, ArrD1 v) {
+        std::vector<double> r = np_convolve_valid(std::vector<double>(a.data(), a.data() + a.shape(0)), std::vector<double>(v.data(), v.data() + v.shape(0)));
+        const size_t n = r.size();
+        return to_np(std::move(r), {n});
+    });
+    m.def("blas_ddot", [](ArrD1 a, ArrD1 b) { return blas_ddot(a.data(), b.data(), a.shape(0)); });
+    m.def("np_sum_f32", [](nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> a) { return np_sum_f32(a.data(), a.shape(0)); });
 
     // ---------------------------------------------------------------- 小工具
     m.def("np_sum", [](ArrD1 a) { return np_sum(a.data(), a.shape(0)); });
@@ -107,6 +135,18 @@ NB_MODULE(_core, m) {
     m.def("binary_dilate", [](ArrB2 mask, int it, int conn) { return mask_np(binary_dilate(mask_from(mask), it, conn)); },
           "mask"_a, "iterations"_a = 1, "connectivity"_a = 8);
     m.def("distance_bands", [](ArrB2 mask, int max_iter) { return grid_np(distance_bands(mask_from(mask), max_iter)); });
+    m.def("label_by_island", [](ArrB2 mask, ArrS2 island_id, int conn) {
+        Grid<int16_t> ii(static_cast<int>(island_id.shape(0)), static_cast<int>(island_id.shape(1)));
+        std::memcpy(ii.v.data(), island_id.data(), ii.v.size() * sizeof(int16_t));
+        GridI lab;
+        const int n = label_by_island(mask_from(mask), ii, conn, lab);
+        return nb::make_tuple(grid_np(std::move(lab)), n);
+    });
+    m.def("window_extrema", [](ArrD2 a, int r, ArrB2 mask) {
+        GridD hi, lo;
+        window_extrema(grid_from(a), r, mask_from(mask), hi, lo);
+        return nb::make_tuple(grid_np(std::move(hi)), grid_np(std::move(lo)));
+    });
     m.def("nearest_propagate", [](ArrB2 seed, int max_iter, double step_m, std::optional<ArrB2> within) {
         GridD dist;
         Grid<int64_t> src;

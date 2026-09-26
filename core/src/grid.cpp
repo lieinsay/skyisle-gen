@@ -31,6 +31,132 @@ double np_sum(const double* a, size_t n) {
     return np_sum(a, n2) + np_sum(a + n2, n - n2);
 }
 
+float np_sum_f32(const float* a, size_t n) {
+    if (n < 8) {
+        float res = 0.0f;
+        for (size_t i = 0; i < n; ++i) res += a[i];
+        return res;
+    }
+    if (n <= 128) {
+        float r[8];
+        for (int j = 0; j < 8; ++j) r[j] = a[j];
+        size_t i = 8;
+        for (; i < n - (n % 8); i += 8)
+            for (int j = 0; j < 8; ++j) r[j] += a[i + j];
+        float res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
+        for (; i < n; ++i) res += a[i];
+        return res;
+    }
+    size_t n2 = n / 2;
+    n2 -= n2 % 8;
+    return np_sum_f32(a, n2) + np_sum_f32(a + n2, n - n2);
+}
+
+double np_quantile(std::vector<double> v, double q) {
+    const size_t n = v.size();
+    if (n == 0) return NaN;
+    const double vi = static_cast<double>(n - 1) * q;
+    double a, b, t;
+    if (vi >= static_cast<double>(n - 1)) {
+        a = b = *std::max_element(v.begin(), v.end());
+        t = vi + 1.0;
+    } else if (vi < 0) {
+        a = b = *std::min_element(v.begin(), v.end());
+        t = vi;
+    } else {
+        const size_t p = static_cast<size_t>(std::floor(vi));
+        std::nth_element(v.begin(), v.begin() + p, v.end());
+        a = v[p];
+        b = *std::min_element(v.begin() + p + 1, v.end());
+        t = vi - static_cast<double>(p);
+    }
+    const double diff = b - a;
+    return t >= 0.5 ? b - diff * (1 - t) : a + diff * t;
+}
+
+std::vector<double> np_interp(const std::vector<double>& x, const std::vector<double>& xp, const std::vector<double>& fp) {
+    const size_t n = xp.size();
+    std::vector<double> out(x.size());
+    std::vector<double> slopes;
+    if (n <= x.size() && n >= 2) {
+        slopes.resize(n - 1);
+        for (size_t i = 0; i + 1 < n; ++i) slopes[i] = (fp[i + 1] - fp[i]) / (xp[i + 1] - xp[i]);
+    }
+    for (size_t i = 0; i < x.size(); ++i) {
+        const double xv = x[i];
+        if (std::isnan(xv)) {
+            out[i] = xv;
+            continue;
+        }
+        if (n == 1 || xv > xp[n - 1]) {
+            out[i] = fp[n - 1];
+            continue;
+        }
+        if (xv < xp[0]) {
+            out[i] = fp[0];
+            continue;
+        }
+        // 最大的 j 使 xp[j] <= xv
+        const size_t j = static_cast<size_t>(std::upper_bound(xp.begin(), xp.end(), xv) - xp.begin()) - 1;
+        if (j == n - 1 || xp[j] == xv) {
+            out[i] = fp[j];
+            continue;
+        }
+        const double slope = !slopes.empty() ? slopes[j] : (fp[j + 1] - fp[j]) / (xp[j + 1] - xp[j]);
+        double r = slope * (xv - xp[j]) + fp[j];
+        if (std::isnan(r)) {
+            r = slope * (xv - xp[j + 1]) + fp[j + 1];
+            if (std::isnan(r) && fp[j] == fp[j + 1]) r = fp[j];
+        }
+        out[i] = r;
+    }
+    return out;
+}
+
+double blas_ddot(const double* x, const double* y, size_t n) {
+    const size_t n1 = n & ~static_cast<size_t>(15);
+    double dot = 0.0;
+    if (n1) {
+        double z[4][8] = {};
+        const size_t n32 = n1 & ~static_cast<size_t>(31);
+        size_t i = 0;
+        for (; i < n32; i += 32)
+            for (int a = 0; a < 4; ++a)
+                for (int l = 0; l < 8; ++l) z[a][l] = std::fma(x[i + 8 * a + l], y[i + 8 * a + l], z[a][l]);
+        double acc[4][4];
+        for (int a = 0; a < 4; ++a)
+            for (int l = 0; l < 4; ++l) acc[a][l] = z[a][l] + z[a][l + 4];
+        for (; i < n1; i += 16)
+            for (int a = 0; a < 4; ++a)
+                for (int l = 0; l < 4; ++l) acc[a][l] = std::fma(x[i + 4 * a + l], y[i + 4 * a + l], acc[a][l]);
+        double a0[4];
+        for (int l = 0; l < 4; ++l) a0[l] = ((acc[0][l] + acc[1][l]) + acc[2][l]) + acc[3][l];
+        dot = (a0[0] + a0[2]) + (a0[1] + a0[3]);
+    }
+    for (size_t i = n1; i < n; ++i) dot = std::fma(y[i], x[i], dot);
+    return dot;
+}
+
+std::vector<double> np_convolve_valid(const std::vector<double>& a_in, const std::vector<double>& v_in) {
+    const std::vector<double>* a = &a_in;
+    const std::vector<double>* v = &v_in;
+    if (v->size() > a->size()) std::swap(a, v);
+    std::vector<double> vr(v->rbegin(), v->rend());
+    const size_t n1 = a->size(), n2 = vr.size();
+    std::vector<double> out(n1 - n2 + 1);
+    // numpy 2.x：核长 < 12 走自己的顺序乘加（不合并 FMA），≥ 12 走 BLAS ddot（本机实测的分界）
+    for (size_t i = 0; i < out.size(); ++i) {
+        double sum = 0.0;
+        if (n2 < 12) {
+            for (size_t k = 0; k < n2; ++k) sum += (*a)[i + k] * vr[k];
+        } else {
+            sum += blas_ddot(a->data() + i, vr.data(), n2);
+        }
+        out[i] = sum;
+    }
+    return out;
+}
+
 double np_median(std::vector<double> v) {
     if (v.empty()) return NaN;
     const size_t n = v.size(), h = n / 2;
@@ -223,6 +349,36 @@ int label_components(const Mask& mask, int connectivity, GridI& labels) {
     return n;
 }
 
+int label_by_island(const Mask& mask, const Grid<int16_t>& island_id, int connectivity, GridI& labels) {
+    GridI lab;
+    const int n = label_components(mask, connectivity, lab);
+    labels = GridI(mask.H, mask.W, 0);
+    if (!n) return 0;
+    // 每个分量里出现的岛号（升序去重）；新号 = （分量号, 岛号）的升序名次
+    std::vector<std::vector<int>> ids(static_cast<size_t>(n) + 1);
+    for (size_t k = 0; k < lab.v.size(); ++k) {
+        const int32_t L = lab.v[k];
+        if (!L) continue;
+        const int id = island_id.v[k];
+        auto& s = ids[L];
+        if (std::find(s.begin(), s.end(), id) == s.end()) s.push_back(id);
+    }
+    std::vector<int32_t> base(static_cast<size_t>(n) + 2, 0);
+    int32_t next = 1;
+    for (int L = 1; L <= n; ++L) {
+        std::sort(ids[L].begin(), ids[L].end());
+        base[L] = next;
+        next += static_cast<int32_t>(ids[L].size());
+    }
+    for (size_t k = 0; k < lab.v.size(); ++k) {
+        const int32_t L = lab.v[k];
+        if (!L) continue;
+        const auto& s = ids[L];
+        labels.v[k] = base[L] + static_cast<int32_t>(std::lower_bound(s.begin(), s.end(), static_cast<int>(island_id.v[k])) - s.begin());
+    }
+    return next - 1;
+}
+
 Mask largest_component(const Mask& mask, int* count) {
     GridI lab;
     const int n = label_components(mask, 4, lab);
@@ -323,6 +479,46 @@ GridI distance_bands(const Mask& mask, int max_iter) {
         active.swap(next);
     }
     return d;
+}
+
+namespace {
+// 一维滑窗最大 / 最小：窗 [x − r, x + r]，出界不计；单调队列
+void sliding_ext(const double* in, double* out, int n, int r, ptrdiff_t stride, bool want_max) {
+    std::vector<int> dq(static_cast<size_t>(n));
+    int head = 0, tail = 0;
+    int next = 0;
+    for (int x = 0; x < n; ++x) {
+        const int hi = std::min(n - 1, x + r);
+        while (next <= hi) {
+            const double v = in[next * stride];
+            while (tail > head && (want_max ? v >= in[dq[tail - 1] * stride] : v <= in[dq[tail - 1] * stride])) --tail;
+            dq[tail++] = next;
+            ++next;
+        }
+        while (dq[head] < x - r) ++head;
+        out[x * stride] = in[dq[head] * stride];
+    }
+}
+}  // namespace
+
+void window_extrema(const GridD& a, int r, const Mask& mask, GridD& hi, GridD& lo) {
+    const int H = a.H, W = a.W;
+    GridD h1(H, W), l1(H, W);
+    for (size_t k = 0; k < a.v.size(); ++k) {
+        h1.v[k] = mask.v[k] ? a.v[k] : -INF;
+        l1.v[k] = mask.v[k] ? a.v[k] : INF;
+    }
+    GridD h2(H, W), l2(H, W);
+    for (int j = 0; j < W; ++j) {       // 先沿行方向（axis 0）
+        sliding_ext(&h1.v[j], &h2.v[j], H, r, W, true);
+        sliding_ext(&l1.v[j], &l2.v[j], H, r, W, false);
+    }
+    hi = GridD(H, W);
+    lo = GridD(H, W);
+    for (int i = 0; i < H; ++i) {       // 再沿列方向
+        sliding_ext(&h2.v[static_cast<size_t>(i) * W], &hi.v[static_cast<size_t>(i) * W], W, r, 1, true);
+        sliding_ext(&l2.v[static_cast<size_t>(i) * W], &lo.v[static_cast<size_t>(i) * W], W, r, 1, false);
+    }
 }
 
 void nearest_propagate(const Mask& seed, int max_iter, double step_m, const Mask* within, GridD& dist, Grid<int64_t>& src) {

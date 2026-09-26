@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 #if defined(_MSC_VER) && defined(_M_X64)
 #include <intrin.h>
@@ -16,6 +17,7 @@ namespace {
 
 constexpr double ZIG_NOR_R = 3.6541528853610087963519472518;
 constexpr double ZIG_NOR_INV_R = 0.27366123732975827203338247596;
+constexpr double ZIG_EXP_R = 7.69711747013104972;
 
 // ---------------------------------------------------------------- 128 位运算
 inline void mul64(uint64_t a, uint64_t b, uint64_t& hi, uint64_t& lo) {
@@ -222,8 +224,120 @@ double Rng::standard_normal() {
 }
 
 double Rng::standard_exponential() {
-    // 第三层用不到指数分布的 ziggurat（gamma 形状 = 1 才走这里）；按反函数给出，不追 numpy 的位。
-    return -std::log1p(-bg_.next_double());
+    // numpy 的 256 层 ziggurat（random_standard_exponential）：ri = 原始 >> 3，低 8 位是层号，其上 53 位；表是探出来的（probe_ziggurat.py）
+    for (;;) {
+        uint64_t ri = bg_.next_u64();
+        ri >>= 3;
+        const int idx = static_cast<int>(ri & 0xFF);
+        ri >>= 8;
+        const double x = static_cast<double>(ri) * ZIG_WE[idx];
+        if (ri < ZIG_KE[idx]) return x;
+        if (idx == 0) return ZIG_EXP_R - std::log1p(-bg_.next_double());
+        if ((ZIG_FE[idx - 1] - ZIG_FE[idx]) * bg_.next_double() + ZIG_FE[idx] < std::exp(-x)) return x;
+    }
+}
+
+int64_t Rng::poisson(double lam) {
+    // random_poisson：λ ≥ 10 走 PTRS（Hörmann 1993），λ = 0 得 0，其余乘积法
+    if (lam >= 10) {
+        const double slam = std::sqrt(lam), loglam = std::log(lam);
+        const double b = 0.931 + 2.53 * slam;
+        const double a = -0.059 + 0.02483 * b;
+        const double invalpha = 1.1239 + 1.1328 / (b - 3.4);
+        const double vr = 0.9277 - 3.6224 / (b - 2);
+        for (;;) {
+            const double U = bg_.next_double() - 0.5;
+            const double V = bg_.next_double();
+            const double us = 0.5 - std::fabs(U);
+            const int64_t k = static_cast<int64_t>(std::floor((2 * a / us + b) * U + lam + 0.43));
+            if ((us >= 0.07) && (V <= vr)) return k;
+            if ((k < 0) || ((us < 0.013) && (V > us))) continue;
+            if ((std::log(V) + std::log(invalpha) - std::log(a / (us * us) + b)) <= (-lam + static_cast<double>(k) * loglam - loggam(static_cast<double>(k + 1))))
+                return k;
+        }
+    }
+    if (lam == 0) return 0;
+    const double enlam = std::exp(-lam);
+    int64_t X = 0;
+    double prod = 1.0;
+    for (;;) {
+        prod *= bg_.next_double();
+        if (prod > enlam) X += 1;
+        else return X;
+    }
+}
+
+double Rng::loggam(double x) {
+    // random_loggam（distributions.c）
+    static const double a[10] = {8.333333333333333e-02, -2.777777777777778e-03, 7.936507936507937e-04, -5.952380952380952e-04,
+                                 8.417508417508418e-04, -1.917526917526918e-03, 6.410256410256410e-03, -2.955065359477124e-02,
+                                 1.796443723688307e-01, -1.39243221690590e+00};
+    if ((x == 1.0) || (x == 2.0)) return 0.0;
+    int64_t n = 0;
+    if (x < 7.0) n = static_cast<int64_t>(7 - x);
+    double x0 = x + static_cast<double>(n);
+    const double x2 = (1.0 / x0) * (1.0 / x0);
+    const double lg2pi = 1.8378770664093453e+00;
+    double gl0 = a[9];
+    for (int k = 8; k >= 0; k--) {
+        gl0 *= x2;
+        gl0 += a[k];
+    }
+    double gl = gl0 / x0 + 0.5 * lg2pi + (x0 - 0.5) * std::log(x0) - x0;
+    if (x < 7.0) {
+        for (int64_t k = 1; k <= n; k++) {
+            gl -= std::log(x0 - 1.0);
+            x0 -= 1.0;
+        }
+    }
+    return gl;
+}
+
+std::vector<int64_t> Rng::choice_noreplace(int64_t pop, int64_t size) {
+    // Generator.choice(pop, size, replace=False, shuffle=True)：总体 > 10000 且 size > pop // 50 时尾部洗牌，否则 Floyd + 洗牌
+    std::vector<int64_t> idx;
+    if (size <= 0) return idx;
+    if (size > pop) throw std::invalid_argument("choice: size > pop");
+    if (pop > 10000 && size > pop / 50) {
+        std::vector<int64_t> all(static_cast<size_t>(pop));
+        for (int64_t i = 0; i < pop; ++i) all[i] = i;
+        shuffle_int(all.data(), pop, std::max<int64_t>(pop - size, 1));
+        idx.assign(all.begin() + (pop - size), all.end());
+        return idx;
+    }
+    idx.resize(static_cast<size_t>(size));
+    uint64_t mask = static_cast<uint64_t>(1.2 * static_cast<double>(size));
+    mask |= mask >> 1;
+    mask |= mask >> 2;
+    mask |= mask >> 4;
+    mask |= mask >> 8;
+    mask |= mask >> 16;
+    mask |= mask >> 32;
+    const uint64_t EMPTY = ~0ULL;
+    std::vector<uint64_t> hs(static_cast<size_t>(mask + 1), EMPTY);
+    for (int64_t j = pop - size; j < pop; ++j) {
+        const uint64_t val = bounded_u64(0, static_cast<uint64_t>(j));
+        uint64_t loc = val & mask;
+        while (hs[loc] != EMPTY && hs[loc] != val) loc = (loc + 1) & mask;
+        if (hs[loc] == EMPTY) {
+            hs[loc] = val;
+            idx[j - pop + size] = static_cast<int64_t>(val);
+        } else {
+            loc = static_cast<uint64_t>(j) & mask;
+            while (hs[loc] != EMPTY) loc = (loc + 1) & mask;
+            hs[loc] = static_cast<uint64_t>(j);
+            idx[j - pop + size] = j;
+        }
+    }
+    shuffle_int(idx.data(), size, 1);
+    return idx;
+}
+
+void Rng::shuffle_int(int64_t* data, int64_t n, int64_t first) {
+    for (int64_t i = n - 1; i >= first; --i) {
+        const int64_t j = static_cast<int64_t>(bounded_u64(0, static_cast<uint64_t>(i)));
+        std::swap(data[j], data[i]);
+    }
 }
 
 double Rng::standard_gamma(double shape) {

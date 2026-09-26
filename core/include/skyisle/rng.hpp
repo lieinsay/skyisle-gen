@@ -3,6 +3,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -54,14 +55,22 @@ public:
     int64_t integers(int64_t lo, int64_t hi);
     double standard_normal();
     double normal(double loc, double scale) { return loc + scale * standard_normal(); }
-    double standard_exponential();
+    double standard_exponential();                  // numpy 的指数 ziggurat
     double standard_gamma(double shape);
+    double gamma(double shape, double scale) { return scale * standard_gamma(shape); }
+    double lognormal(double mean, double sigma) { return std::exp(normal(mean, sigma)); }
+    int64_t poisson(double lam);                    // random_poisson：λ ≥ 10 走 PTRS，其余乘积法
+    // choice(pop, size, replace=False)（shuffle=True）：Floyd + 洗牌；总体 > 10000 且 size > pop // 50 时尾部洗牌
+    std::vector<int64_t> choice_noreplace(int64_t pop, int64_t size);
+    void shuffle_int(int64_t* data, int64_t n, int64_t first);   // _shuffle_int：i = n−1 … first，与 [0, i] 里的一个换
     double beta(double a, double b);
     // choice(k, p=p)：cdf = cumsum(p) / cdf[-1]，u = random()，searchsorted(cdf, u, 'right')
     int64_t choice_p(const std::vector<double>& p);
 
+    uint64_t bounded_u64(uint64_t off, uint64_t rng);   // random_bounded_uint64（Lemire，不用掩码）：[off, off + rng]
+    static double loggam(double x);
+
 private:
-    uint64_t bounded_u64(uint64_t off, uint64_t rng);
     Pcg64 bg_;
 };
 
