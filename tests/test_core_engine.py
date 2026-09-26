@@ -61,6 +61,20 @@ def test_rng_distributions_match_numpy(key):
     assert core.rng_choice_p(42, 21, key, p.tolist(), 4000).tolist() == ref
 
 
+def test_math_matches_numpy_and_python():
+    import math
+    rng = np.random.default_rng(9)
+    x = rng.random(100000) * 10 ** rng.uniform(-4, 4, 100000)
+    y = (rng.random(100000) - 0.5) * 10 ** rng.uniform(-4, 4, 100000)
+    for e in (2.0, 0.5, 1.5, 0.35, -1.0, 1.0):
+        a, b, c, d = core.math_fns(x, np.full(100000, e))
+        assert np.array_equal(a, x ** e), e                      # numpy 数组的幂（含快路径）
+        assert b.tolist() == [v ** e for v in x.tolist()], e     # Python 浮点的幂 = C pow
+    a, b, c, d = core.math_fns(x, y)
+    assert np.array_equal(c, np.hypot(x, y))
+    assert d.tolist() == [math.hypot(p, q) for p, q in zip(x.tolist(), y.tolist())]
+
+
 def test_np_sum_and_pyround():
     rng = np.random.default_rng(5)
     for n in (1, 7, 8, 9, 100, 128, 129, 1000, 4097):
@@ -144,3 +158,157 @@ def test_fill_d8_accumulate_match():
         ri, rj, tv = T.d8_random(pf, m, 100.0, entity_rng(42, 21, "island:1:terrain:0"), 1.5)
         ri2, rj2, tv2 = core.d8_random(np.nan_to_num(pf), m, 100.0, 42, 21, "island:1:terrain:0", 1.5)
         assert np.array_equal(ri, ri2) and np.array_equal(rj, rj2) and np.array_equal(tv, tv2)
+
+
+# ---------------------------------------------------------------- 岛形、地形、势力范围：同输入逐位对照
+def _island_cfg(**over):
+    import tomllib
+    with open(Path(__file__).resolve().parent.parent / "config" / "default.toml", "rb") as fh:
+        c = tomllib.load(fh)["island"]
+    for k, v in over.items():
+        sec, key = k.split("__")
+        c[sec] = dict(c[sec], **{key: v})
+    return c
+
+
+def test_island_shape_and_profile_match():
+    from skyisle_gen.island.engine import flat_config
+    from skyisle_gen.island.layout import radial_profile
+    c = _island_cfg()
+    for key, area, res, el, th in (("island:5:shape:0", 60.0, 0.2, 1.7, 0.4), ("island:9:shape:3", 3.1, 0.1, 1.0, -2.0),
+                                   ("island:1:shape:7", 0.3, 0.4, 2.1, 1.0)):      # 最后一个比半格还小：留一格
+        mask, inside, X, Y = T.island_shape(entity_rng(42, 21, key), area, res, el, th, c["terrain"])
+        m2, in2, xs = core.island_shape(42, key, area, res, el, th, flat_config(c))
+        assert np.array_equal(m2, mask) and np.array_equal(in2, inside) and np.array_equal(xs, X[0])
+        ctr, prof = radial_profile(mask, res)
+        ctr2, prof2 = core.radial_profile(mask, res)
+        assert np.array_equal(prof2, prof) and tuple(ctr2) == tuple(ctr)
+
+
+@pytest.mark.parametrize("age", [0.1, 0.5, 0.9])
+def test_sculpt_island_matches(age):
+    """三种岛龄基形 + 侵蚀（粗网格 f > 1 与 f = 1 两条路）+ 仿射拟合，与 numpy 版逐位相同。"""
+    from skyisle_gen.island.engine import flat_config
+    for emc in (40, 320):
+        c = _island_cfg(terrain__erosion_max_cells=emc)
+        area, res = 40.0, 0.2
+        mask, inside, X, Y = T.island_shape(entity_rng(7, 21, "island:3:shape:1"), area, res, 1.4, 0.3, c["terrain"])
+        h, kind, rim, peak = T.sculpt_island(entity_rng(7, 21, "island:3:terrain:1"), mask, inside, X, Y, age, area, res,
+                                             600.0, 900.0, 180.0, False, c["terrain"])
+        h2, kind2, rim2, peak2 = core.sculpt_island(7, "island:3:shape:1", "island:3:terrain:1", area, res, 1.4, 0.3, age,
+                                                    600.0, 900.0, 180.0, False, flat_config(c))
+        assert kind2 == kind and rim2 == rim and peak2 == peak
+        assert np.array_equal(h2, h, equal_nan=True), (age, emc, np.nanmax(np.abs(h2 - h)))
+
+
+def test_territory_limits_match():
+    from skyisle_gen.island.territory import limits
+    rng = np.random.default_rng(4)
+    n = 400
+    lat, lon = rng.uniform(-60, 60, n), rng.uniform(-180, 180, n)
+    area = rng.uniform(50, 5000, n).astype(np.float32)
+
+    class Ctx:
+        def load_npz(self, k, name):
+            return {"lat": lat, "lon": lon, "area_km2": area}
+    planet = {"radius_km": 6371.0, "year_s": 1.0, "islands": {"lat": lat, "lon": lon, "area": area.astype(np.float64)}}
+    for node in (0, 17, 399):
+        ref = limits(Ctx(), node, {"planet": {"radius_km": 6371.0}}, {"gap_km": 3.0, "reach": 30.0, "reach_km": 2000.0})
+        got = core.territory_limits(planet, node, 3.0, 30.0, 2000.0)
+        assert [L["node"] for L in ref] == [L["node"] for L in got]
+        for a, b in zip(ref, got):
+            assert a["dist_km"] == round(b["dist_km"], 3) and tuple(a["u"]) == tuple(b["u"]) and a["limit_km"] == b["limit_km"]
+
+
+# ---------------------------------------------------------------- 小世界：两个后端的 build_terrain / build_hydro
+SMALL = ["s03.islands.n_islands=1600"]
+
+
+@pytest.fixture(scope="module")
+def small_ctx(tmp_path_factory):
+    from skyisle_gen.config import load_config
+    from skyisle_gen.pipeline import Context, run
+    root = tmp_path_factory.mktemp("core")
+    cfg = load_config(sets=SMALL + ["run.id=core"])
+    out = run(cfg, 7, root, upto=4)
+    return Context(cfg, 7, out)
+
+
+def _nodes(ctx, k=3):
+    isl = ctx.load_npz(3, "islands")
+    cli = ctx.load_npz(4, "climate_islands")
+    ok = np.where(cli["has_river"] & (isl["main_area_km2"] < 2500) & (isl["main_area_km2"] > 200))[0]
+    return [int(x) for x in ok[:k]]
+
+
+def _build(ctx, node, backend, res_m=300.0, threads=4):
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.hydro import build_hydro
+    c = isl.island_config(ctx, [f"engine.backend={backend}", f"engine.threads={threads}"])
+    inp = isl._node_inputs(ctx, node)
+    g = isl.build_terrain(ctx, node, c, inp, res_m=res_m, log=lambda *a: None)
+    build_hydro(ctx, node, c, g, log=lambda *a: None)
+    return g
+
+
+GRIDS = ("island_id", "cliff", "height", "river", "stream", "lake", "landcover", "arable", "floodplain", "flowacc_km2",
+         "river_width_m", "river_depth_m", "cut_m", "slope_deg", "filled", "recv_i", "recv_j", "route_h")
+
+
+def test_small_world_backends_agree(small_ctx):
+    """同一个群两个后端：栅格同形同 dtype；陆地 / 主岛按目标、岛数、可耕率一致（这几个群实测逐位相同）。"""
+    for node in _nodes(small_ctx):
+        a, b = _build(small_ctx, node, "python"), _build(small_ctx, node, "cpp")
+        Ja, Jb = a["json"], b["json"]
+        assert Jb["meta"]["engine"] == "cpp" and "engine" not in Ja["meta"]
+        for k in GRIDS:
+            assert a[k].dtype == b[k].dtype and a[k].shape == b[k].shape, k
+        ca, cb = Ja["constraints"], Jb["constraints"]
+        for k in ("area_km2", "main_area_km2"):
+            assert abs(cb[k]["actual"] - cb[k]["target"]) <= 0.02 * cb[k]["target"]
+        assert len(Ja["islands"]) == len(Jb["islands"])
+        assert abs(cb["arable_frac"]["actual"] - cb["arable_frac"]["target"]) < 0.005
+        assert cb["has_river"]["actual"] == cb["has_river"]["target"]
+        assert abs(cb["peak_m"]["actual"] - ca["peak_m"]["actual"]) <= 0.1 * ca["peak_m"]["actual"]
+        same = all(np.array_equal(a[k], b[k], equal_nan=True) for k in GRIDS)
+        Ja["meta"].pop("engine", None), Jb["meta"].pop("engine", None)
+        assert same == (Ja == Jb), node                       # 栅格全同则 island.json 也全同（拼装与 Python 版同式）
+
+
+def test_cpp_deterministic_and_thread_independent(small_ctx):
+    node = _nodes(small_ctx, 1)[0]
+    g1 = _build(small_ctx, node, "cpp", threads=1)
+    g4 = _build(small_ctx, node, "cpp", threads=4)
+    g4b = _build(small_ctx, node, "cpp", threads=4)
+    for k in GRIDS:
+        assert np.array_equal(g1[k], g4[k], equal_nan=True) and np.array_equal(g4[k], g4b[k], equal_nan=True), k
+    assert g1["json"] == g4["json"] and g1["river_lines"] == g4["river_lines"]
+
+
+def test_cpp_generate_passes_checks(small_ctx):
+    """cpp 后端下整条 generate（资源、气候、天气、聚落照旧 Python）的产物照常写出、硬项全过、重跑哈希一致。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.check import evaluate, hash_products
+    node = _nodes(small_ctx, 1)[0]
+    s = ["engine.backend=cpp"]
+    out, g = isl.generate(small_ctx, node, res_m=300.0, sets=s, log=lambda *a: None, return_state=True)
+    h1 = hash_products(out)
+    isl.generate(small_ctx, node, res_m=300.0, sets=s, log=lambda *a: None)
+    items = evaluate(g, out, ctx=small_ctx, node=node, c=small_ctx.cfg["island"], det_hashes=(h1, hash_products(out)), daily_years=10)
+    bad = [i["id"] for i in items if not i["pass"] and i["hard"]]
+    assert not bad, bad
+    small_ctx.cfg["engine"]["backend"] = "python"
+
+
+def test_nearest_fit_matches_numpy():
+    """Dykstra 的越界量在贴线时是 ±1e−15 量级：乘加次序要与 numpy（BLAS 的 ddot / dgemv）一样，否则 v ≤ 0 的判断会翻。"""
+    from skyisle_gen.island.territory import nearest_fit
+    rng = np.random.default_rng(6)
+    for t in range(300):
+        m = int(rng.integers(1, 12))
+        az = rng.uniform(-np.pi, np.pi, m)
+        lim = [{"u": (float(np.sin(a)), float(np.cos(a))), "limit_km": float(rng.uniform(5, 60))} for a in az]
+        sup = rng.uniform(0, 70, m)
+        o, v = nearest_fit(sup, lim)
+        ox, oy, v2 = core.nearest_fit(sup.tolist(), [[L["u"][0], L["u"][1], L["limit_km"]] for L in lim])
+        assert (ox, oy, v2) == (float(o[0]), float(o[1]), float(v)), t

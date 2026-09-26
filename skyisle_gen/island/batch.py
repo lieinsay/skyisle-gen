@@ -85,7 +85,8 @@ def run_batch(ctx, sample: int = 30, year: int = 0, sets: list[str] | None = Non
         "resources": _res_summary(rows),
         "rows": rows,
     }
-    p = ctx.out_dir / "islands" / "batch.json"
+    from .engine import backend
+    p = ctx.out_dir / "islands" / ("batch.json" if backend(ctx) == "python" else "batch_cpp.json")   # cpp 后端另存，不盖 python 的
     p.write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"== 批跑 {len(rows)} 群：中位 {summary['seconds']['median']} s，最长 {summary['seconds']['max']} s，总 {summary['seconds']['total']} s；"
           f"季型 {summary['season_types']}；分辨率 {summary['res_m']}；岛数中位 {summary['n_islands']['median']}；"

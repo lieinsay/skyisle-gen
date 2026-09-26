@@ -8,6 +8,7 @@ skyisle check --run out/seed42 [--calibrate]
 skyisle ninegrid --run out/seed42 [--region K]
 skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
 skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N]
+skyisle island compare --sample 30 [--jobs N] [--timing]   # 两个后端（python / cpp）的对照；island 各命令加 --backend cpp 走 C++ 核心
 """
 from __future__ import annotations
 
@@ -79,7 +80,7 @@ def main(argv=None):
     p_pol.add_argument("--top", type=int, default=15)
 
     p_isl = sub.add_parser("island", help="岛群生成器（第三层）：生成 / check / batch")
-    p_isl.add_argument("what", help="节点号，或 check / batch / stats（全量季型统计）")
+    p_isl.add_argument("what", help="节点号，或 check / batch / stats（全量季型统计）/ lod / compare（两个后端对照）")
     p_isl.add_argument("node", nargs="?", type=int, default=None, help="check 时的节点号")
     p_isl.add_argument("--run", default="out/seed42")
     p_isl.add_argument("--year", type=int, default=0)
@@ -96,6 +97,7 @@ def main(argv=None):
     p_isl.add_argument("--force", action="store_true", help="lod：已有的也重跑")
     p_isl.add_argument("--backend", choices=["python", "cpp"], default=None,
                        help="生成器后端（= --set engine.backend=…；cpp 要先 python core/build.py）")
+    p_isl.add_argument("--timing", action="store_true", help="compare：只量地形 + 水系的用时（顺序跑，不写产物）")
 
     p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
     p_serve.add_argument("--out", default="out")
@@ -149,8 +151,10 @@ def main(argv=None):
         if a.backend:
             a.sets = list(a.sets) + [f"engine.backend={a.backend}"]
         if a.what == "compare":
-            from .island.compare import run_compare
+            from .island.compare import run_compare, run_timing
             nodes = [int(x) for x in a.nodes.split(",") if x.strip()] if a.nodes else None
+            if a.timing:
+                return run_timing(ctx, sample=a.sample, nodes=nodes, sets=a.sets)
             return run_compare(ctx, sample=a.sample, jobs=max(1, a.jobs), sets=a.sets, nodes=nodes)
         if a.what == "check":
             from .island.check import run_island_check
