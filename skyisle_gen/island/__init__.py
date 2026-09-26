@@ -22,13 +22,21 @@ def island_config(ctx, sets: list[str] | None = None) -> dict:
     """[island] 段：默认值 ← run 的 config.resolved.toml（若有）← --set。不进管线缓存 key。"""
     import tomllib
     with open(CONFIG_DIR / "default.toml", "rb") as fh:
-        base = tomllib.load(fh).get("island", {})
+        full = tomllib.load(fh)
+    base = full.get("island", {})
     cfg = _deep_merge(base, ctx.cfg.get("island", {}))
     if sets:
         tmp = {"island": cfg}
         apply_sets(tmp, [s for s in sets if s.startswith("island.")])
         cfg = tmp["island"]
     ctx.cfg["island"] = cfg
+    # [engine]（后端开关，engine.py）：同样是 default.toml ← run 的快照 ← --set engine.x=v，不进缓存 key
+    eng = _deep_merge(full.get("engine", {}), ctx.cfg.get("engine", {}))
+    if sets:
+        tmp = {"engine": eng}
+        apply_sets(tmp, [s for s in sets if s.startswith("engine.")])
+        eng = tmp["engine"]
+    ctx.cfg["engine"] = eng
     return cfg
 
 
@@ -122,6 +130,10 @@ def _fit_territory(ctx, node: int, c: dict, inp: dict, shapes: list, profiles: l
 
 def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None, log=print) -> dict:
     """第 1 步：布局 + 岛形 + 高程。返回群栅格字典 g（height / island_id / cliff / json / islands 列表）。"""
+    from .engine import backend
+    if backend(ctx) == "cpp":
+        from .engine import build_terrain_cpp
+        return build_terrain_cpp(ctx, node, c, inp, res_m=res_m, log=log)
     from .layout import (boundary_axis, island_count, links, place_islands, radial_profile, relief_targets,
                          shoreline_gaps, surface_heights, zipf_sizes)
     from .terrain import age_class, island_shape, sculpt_island
@@ -279,8 +291,9 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
 
 
 def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: str | None = None,
-             sets: list[str] | None = None, steps: int = 9, log=print, return_state: bool = False):
-    """生成一个岛群的全部产物，写到 out/<run>/islands/<node>/。返回目录。"""
+             sets: list[str] | None = None, steps: int = 9, log=print, return_state: bool = False, out_root: Path | None = None):
+    """生成一个岛群的全部产物，写到 out/<run>/islands/<node>/（out_root 给了就写到 out_root/<node>/，对照工具用）。返回目录。
+    g["timing"] 记地形、水系两步的用时（不进产物）。"""
     from .output import write_preview, write_preview_main, write_terrain
     c = island_config(ctx, sets)
     inp = _node_inputs(ctx, node)
@@ -288,11 +301,15 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     log(f"[island {node}] 陆地 {inp['area_km2']:.0f} km²（主岛 {inp['main_area_km2']:.0f}）台面 {inp['height_m']:.0f} m 可耕 {inp['arable_frac']:.3f} "
         f"河 {'有' if inp['has_river'] else '无'} 岛龄 {inp['age']:.2f} 降水 {inp['precip']:.2f} 温差 {inp['season_range']:.1f} °C")
     g = build_terrain(ctx, node, c, inp, res_m=res_m, log=log)
+    timing = {"terrain": time.perf_counter() - t0}
     if steps >= 2:
         from .hydro import build_hydro
         from .resources import build_resources
+        t1 = time.perf_counter()
         build_hydro(ctx, node, c, g, log=log)
+        timing["hydro"] = time.perf_counter() - t1
         build_resources(ctx, node, c, g, log=log)
+    g["timing"] = timing
     if steps >= 3:
         from .climate import build_climate, daily_curves
         build_climate(ctx, node, c, g, log=log)
@@ -303,7 +320,7 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     if steps >= 5:
         from .settle import build_settlements
         build_settlements(ctx, node, c, g, log=log)
-    out = ctx.out_dir / "islands" / str(node)
+    out = (ctx.out_dir / "islands" if out_root is None else Path(out_root)) / str(node)
     g["json"]["meta"]["seconds"] = round(time.perf_counter() - t0, 2)
     write_terrain(out, g)
     if "climate" in g:

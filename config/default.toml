@@ -7,6 +7,10 @@
 [run]
 # id = "my-run"        # 缺省为 seed<N>
 
+[engine]               # 生成器后端（docs/PLAN-CORE.md；行星计划 P6）：已移到 C++ 核心库的段按它分派，不进任何阶段的缓存 key
+backend = "python"     # "python" | "cpp"；P6a 移了第三层的地形段（布局、势力范围、岛形、地形、水系、河道成形），其余步照旧走 Python
+threads = 4            # cpp 后端群内各岛并行的线程数（结果与线程数无关）；批跑多进程时设 1
+
 [shared]
 day_range_km = 500.0   # 1 天 = 中性风因子下的航程
 grid_res_deg = 1.0

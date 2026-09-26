@@ -36,6 +36,10 @@ def _wind_exposure(H: int, W: int, u: float, v: float, slope_dir_x, slope_dir_y)
 
 
 def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
+    from .engine import backend
+    if backend(ctx) == "cpp":
+        from .engine import build_hydro_cpp
+        return build_hydro_cpp(ctx, node, c, g, log=log)
     hc = c["hydro"]
     lc = c["landcover"]
     inp = g["inp"]

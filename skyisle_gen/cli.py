@@ -94,6 +94,8 @@ def main(argv=None):
     p_isl.add_argument("--radius", type=float, default=600.0)
     p_isl.add_argument("--jobs", type=int, default=0, help="lod：进程数（0 = CPU 数 − 2）")
     p_isl.add_argument("--force", action="store_true", help="lod：已有的也重跑")
+    p_isl.add_argument("--backend", choices=["python", "cpp"], default=None,
+                       help="生成器后端（= --set engine.backend=…；cpp 要先 python core/build.py）")
 
     p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
     p_serve.add_argument("--out", default="out")
@@ -144,6 +146,12 @@ def main(argv=None):
         return 0
     if a.cmd == "island":
         from . import island as isl
+        if a.backend:
+            a.sets = list(a.sets) + [f"engine.backend={a.backend}"]
+        if a.what == "compare":
+            from .island.compare import run_compare
+            nodes = [int(x) for x in a.nodes.split(",") if x.strip()] if a.nodes else None
+            return run_compare(ctx, sample=a.sample, jobs=max(1, a.jobs), sets=a.sets, nodes=nodes)
         if a.what == "check":
             from .island.check import run_island_check
             return run_island_check(ctx, a.node, year=a.year, sets=a.sets)
@@ -159,6 +167,8 @@ def main(argv=None):
             from .island.lod import run_lod, select_nodes
             res_list = [float(x) for x in a.lod_res.split(",") if x.strip()]
             jobs = a.jobs if a.jobs > 0 else max(1, (os.cpu_count() or 4) - 2)
+            if jobs > 1 and not any(s.startswith("engine.threads=") for s in a.sets):
+                a.sets = list(a.sets) + ["engine.threads=1"]      # 多进程时 cpp 后端群内不再开线程
             return run_lod(ctx, res_list, select_nodes(ctx, a.nodes, a.near, a.radius), jobs, force=a.force, sets=a.sets)
         isl.generate(ctx, int(a.what), year=a.year, res_m=a.res, export=a.export, sets=a.sets, steps=a.steps)
         return 0
