@@ -389,7 +389,7 @@ void bind_civ(nb::module_& m) {
         const std::vector<double> wv(w.data(), w.data() + w.size());
         const Paths p = dijkstra(g, wv, ivec(sources), max_dist.is_none() ? INF : nb::cast<double>(max_dist));
         return nb::make_tuple(arr(p.dist), arr(p.pred_node), arr(p.pred_edge));
-    });
+    }, "n"_a, "src"_a, "dst"_a, "w"_a, "sources"_a, "max_dist"_a.none() = nb::none());
     m.def("graph_betweenness", [](int64_t n, nb::handle src, nb::handle dst, ArrD1 w, nb::handle sources, double c_min, int threads) {
         const CSR g = make_csr(n, anyvec<int64_t>(src), anyvec<int64_t>(dst));
         const std::vector<double> wv(w.data(), w.data() + w.size());
