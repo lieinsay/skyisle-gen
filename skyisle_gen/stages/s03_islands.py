@@ -6,11 +6,13 @@
        × 骨架修饰（D 空域、绕道岛弧、赤道无岛核心；骨架优先于板块）。
 陆地 area_km2 = 势力范围 T × 陆地占比 f（R8）；T 依赖 kNN，故 kNN 必须先于陆地计算。
 候选边 = kNN 并集 + 远程边（≤ 大船航程）+ 跨赤道远征边 + 连通性回退。
+cpp 后端（行星计划 P6c）：由 C++ 核心（core/src/planet/stage3.cpp）算，四个 npz 与摘要照旧由这里写（_write，两个后端共用）。
 """
 from __future__ import annotations
 
 import numpy as np
 
+from ..engine import backend
 from ..noise import fractal_noise
 from ..rng import stage_rng
 from ..skeleton import d_lat_range, lat_density
@@ -142,6 +144,12 @@ def _land(rng, s, scale, spacing_km, density_at):
 
 
 def run(ctx):
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, part, planet_config, put_part
+        c = core()
+        I = c.planet_stage3(c.make_config(planet_config(ctx.cfg)), int(ctx.seed), part(ctx, 1), part(ctx, 2))
+        put_part(ctx, 3, I)
+        return _write(ctx, c.islands_arrays(I))
     s = ctx.section(3)["islands"]
     ships = ctx.cfg["shared"]["ships"]
     planet = ctx.load_json(1, "planet")
@@ -307,26 +315,42 @@ def run(ctx):
     # 墙高 = 迎风截面的高度；低于间隙的岛当薄片（墙高 0）。只作几何量，不进社会推导（原则乙同高度）。
     wall = np.maximum(0.0, height - float(s["keel_clearance_m"]))
 
-    ctx.save_npz(3, "islands", lat=lat, lon=lon, xyz=xyz,
-                 area_km2=area.astype(np.float32), height_m=height.astype(np.float32),
+    return _write(ctx, {
+        "lat": lat, "lon": lon, "xyz": xyz, "area_km2": area, "height_m": height, "territory_km2": territory, "land_frac": land_frac,
+        "arable_frac": arable_frac, "main_frac": main_frac, "main_area_km2": main_area, "wall_m": wall, "age": age, "plate": plate_at,
+        "cls": cls, "layered": layered, "density_at": density_at, "mean_nn_days": mean_nn, "in_stack": in_stack,
+        "plates_lats": lats_g, "plates_lons": lons_g, "plate_id": tect["plate_id"], "btype": tect["btype"],
+        "boundary_kernel": tect["boundary_kernel"], "conv_kernel": tect["conv_kernel"], "plate_age": tect["age"], "factor": tect["factor"],
+        "seeds_xyz": tect["seeds_xyz"], "src": e_src, "dst": e_dst, "dist_days": e_dist, "kind": e_kind, "density": dens,
+        "n_exp": n_exp, "n_fallback": n_fallback, "n_chord": n_chord, "f0": f0})
+
+
+def _write(ctx, R: dict) -> dict:
+    """写 islands / plates / cand_edges / density_grid 四个 npz、出摘要（两个后端共用；R 里的浮点是双精度原值，这里照旧转 float32）。"""
+    s = ctx.section(3)["islands"]
+    scale = ctx.cfg["shared"]["scale"]
+    area, territory, land_frac, arable_frac = R["area_km2"], R["territory_km2"], R["land_frac"], R["arable_frac"]
+    main_area, wall, age, cls, layered = R["main_area_km2"], R["wall_m"], R["age"], R["cls"], R["layered"]
+    ctx.save_npz(3, "islands", lat=R["lat"], lon=R["lon"], xyz=R["xyz"],
+                 area_km2=area.astype(np.float32), height_m=R["height_m"].astype(np.float32),
                  territory_km2=territory.astype(np.float32),
                  land_frac=land_frac.astype(np.float32),
                  arable_frac=arable_frac.astype(np.float32),
-                 main_frac=main_frac.astype(np.float32),
+                 main_frac=R["main_frac"].astype(np.float32),
                  main_area_km2=main_area.astype(np.float32),
                  wall_m=wall.astype(np.float32),
-                 age=age.astype(np.float32), plate=plate_at.astype(np.int16),
-                 cls=cls, layered=layered, density_at=density_at.astype(np.float32),
-                 mean_nn_days=mean_nn.astype(np.float32))
-    ctx.save_npz(3, "plates", lats=lats_g, lons=lons_g,
-                 plate_id=tect["plate_id"], btype=tect["btype"],
-                 boundary_kernel=tect["boundary_kernel"].astype(np.float32),
-                 conv_kernel=tect["conv_kernel"].astype(np.float32),
-                 age=tect["age"].astype(np.float32), factor=tect["factor"].astype(np.float32),
-                 seeds_xyz=tect["seeds_xyz"])
-    ctx.save_npz(3, "cand_edges", src=e_src, dst=e_dst,
-                 dist_days=e_dist, kind=e_kind)
-    ctx.save_npz(3, "density_grid", lats=lats_g, lons=lons_g, density=dens.astype(np.float32))
+                 age=age.astype(np.float32), plate=R["plate"].astype(np.int16),
+                 cls=cls, layered=layered, density_at=R["density_at"].astype(np.float32),
+                 mean_nn_days=R["mean_nn_days"].astype(np.float32))
+    ctx.save_npz(3, "plates", lats=R["plates_lats"], lons=R["plates_lons"],
+                 plate_id=R["plate_id"], btype=R["btype"],
+                 boundary_kernel=R["boundary_kernel"].astype(np.float32),
+                 conv_kernel=R["conv_kernel"].astype(np.float32),
+                 age=R["plate_age"].astype(np.float32), factor=R["factor"].astype(np.float32),
+                 seeds_xyz=R["seeds_xyz"])
+    ctx.save_npz(3, "cand_edges", src=R["src"], dst=R["dst"],
+                 dist_days=R["dist_days"], kind=R["kind"])
+    ctx.save_npz(3, "density_grid", lats=R["plates_lats"], lons=R["plates_lons"], density=R["density"].astype(np.float32))
 
     share = {CLASS_NAMES[i]: round(float((cls == i).mean()), 3) for i in range(4)}
     area_by_cls = {CLASS_NAMES[i]: round(float(np.median(area[cls == i])), 1)
@@ -336,17 +360,17 @@ def run(ctx):
     arable_km2 = area * arable_frac
     # 口径自检（shared.scale）：25M km² × 0.10 × 100 人/km² ≈ 2.5 亿人。只是摘要，不进模型
     pop = float(arable_km2.sum() * float(scale["people_per_arable_km2"]))
-    return {"n_islands": n_target, "n_edges": len(keys), "n_expedition": n_exp,
-            "n_fallback": n_fallback, "n_g_chords": n_chord, "class_share": share,
+    return {"n_islands": int(R["lat"].size), "n_edges": int(R["src"].size), "n_expedition": int(R["n_exp"]),
+            "n_fallback": int(R["n_fallback"]), "n_g_chords": int(R["n_chord"]), "class_share": share,
             "layered_share": round(float(layered.mean()), 3),
             "main_area_median_km2": round(float(np.median(main_area)), 0),
-            "stack_share": round(float(in_stack.mean()), 3),
+            "stack_share": round(float(R["in_stack"].mean()), 3),
             "age_median": round(float(np.median(age)), 2),
             "wall_median_m": round(float(np.median(wall)), 0),
             "land_total_km2": round(float(area.sum()), 0),
             "land_target_km2": float(scale["total_land_km2"]),
             "territory_total_km2": round(float(territory.sum()), 0),
-            "land_frac_f0": round(f0, 5),
+            "land_frac_f0": round(float(R["f0"]), 5),
             "land_frac_mean": round(float(area.sum() / territory.sum()), 4),
             "land_frac_capped_share": round(
                 float((land_frac >= float(s["land_frac_cap"]) - 1e-6).mean()), 3),

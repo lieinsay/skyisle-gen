@@ -5,6 +5,9 @@
 `weather.multi_year_stats`（IS-daily 的逐年模拟）、`lod.build_lod` 的块降采样、`climate.classify_all`（全量季型）。
 cpp 后端调 `skyisle_gen._core`（core/，`python core/build.py` 编），这里把输入备好、把结果拼回与 Python 版同形的 g：
 数组同 dtype，island.json 同键序、同 round 位数（C++ 只给原始的双精度数与 ASCII 代码，中文由 decode.py 译回）；写产物仍在 Python。
+P6c：cpp 后端下行星层（PlanetView、本群的 NodeInputs）由 C++ 从 ①③④ 的产物对象直接给（_core.planet_view / node_inputs）：
+同一进程里刚用 cpp 后端跑过 ①–④ 就直接用内存里的对象，否则从 npz 读回成 C++ 对象（skyisle_gen/engine.py 的 part）；
+⑨ 的人口与邦都仍由这里从 polity.npz 填（P6d 再移）。旧 run 缺字段时退回按 npz 拼 dict 的 P6b 路径（值相同）。
 """
 from __future__ import annotations
 
@@ -20,10 +23,8 @@ _PLANET_OBJ: dict = {}
 
 
 def backend(ctx) -> str:
-    b = str((ctx.cfg.get("engine") or {}).get("backend", "python")).lower()
-    if b not in ("python", "cpp"):
-        raise ValueError(f"[engine] backend 只能是 python 或 cpp，得到 {b!r}")
-    return b
+    from ..engine import backend as _backend
+    return _backend(ctx.cfg)
 
 
 def threads(ctx) -> int:
@@ -31,12 +32,8 @@ def threads(ctx) -> int:
 
 
 def core():
-    try:
-        from .. import _core
-    except ImportError as e:            # 不静默退回 Python：免得以为跑的是 C++
-        raise RuntimeError("[engine] backend = \"cpp\"，但 C++ 扩展 skyisle_gen._core 没编：在仓库根下运行 "
-                           "`python core/build.py`（见 README「C++ 核心库」）") from e
-    return _core
+    from ..engine import core as _core
+    return _core()
 
 
 def flat_config(c: dict) -> dict:
@@ -111,20 +108,68 @@ def planet_view(ctx) -> dict:
     return pv
 
 
+def _run_key(ctx) -> tuple:
+    from ..engine import _stage_key
+    return (str(ctx.out_dir.resolve()),) + tuple(_stage_key(ctx, k) for k in (1, 2, 3, 4))
+
+
+def _parts(ctx):
+    """(① PlanetParams, ③ Islands, ④ Climate, 行星层配置对象) 或 None（扩展太旧 / 旧 run 缺字段）。按 run 与 ①–④ 的 key 缓存。"""
+    if not hasattr(core(), "planet_view"):
+        return None
+    key = ("parts",) + _run_key(ctx)
+    o = _PLANET_OBJ.get(key, False)
+    if o is False:
+        from .. import engine as E
+        try:
+            P, I, C = E.planet_parts(ctx)
+            o = (P, I, C, core().make_config(E.planet_config(ctx.cfg)))
+        except (KeyError, FileNotFoundError, ValueError, TypeError):
+            o = None
+        _PLANET_OBJ[key] = o
+    return o
+
+
 def planet_obj(ctx):
-    """planet_view 转成 C++ 的 PlanetView 对象（按 run 缓存）：各步每次调用不再把行星层网格重新拷进 C++（全量季型要调 8000 次）。"""
-    if not hasattr(core(), "make_planet"):        # 旧的扩展：各步也收 dict
+    """第三层的 PlanetView（C++ 对象，按 run 与 ①–④ 的 key 缓存）：P6c 起由 C++ 从 ①③④ 的产物对象直接给（_core.planet_view）；
+    扩展太旧或旧 run 缺字段时退回按 npz 拼 dict（planet_view）再转。各步每次调用不再把行星层网格重新拷进 C++（全量季型要调 8000 次）。"""
+    if not hasattr(core(), "make_planet"):        # 更旧的扩展：各步也收 dict
         return planet_view(ctx)
-    key = str(ctx.out_dir.resolve())
+    key = ("view",) + _run_key(ctx)
     o = _PLANET_OBJ.get(key)
     if o is None:
-        o = core().make_planet(planet_view(ctx))
-        _PLANET_OBJ.clear()
+        parts = _parts(ctx)
+        if parts is not None:
+            P, I, C, pc = parts
+            o = core().planet_view(P, I, C, pc)
+        else:
+            o = core().make_planet(planet_view(ctx))
+        for k in [k for k in _PLANET_OBJ if k[0] == "view"]:
+            del _PLANET_OBJ[k]
         _PLANET_OBJ[key] = o
     return o
 
 
 def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
+    """本群的 NodeInputs（dict）：P6c 起由 C++ 从 ③④ 的产物对象直接给（_core.node_inputs，与 _node_inputs 同值）；
+    退回路径按 Python 的 inp 拼。full：再加 ⑨ 的人口与邦都（仍在 Python）。"""
+    parts = _parts(ctx)
+    if parts is not None:
+        _P, I, C, pc = parts
+        d = core().node_inputs(I, C, int(node), int(ctx.seed), pc)
+    else:
+        d = inputs_py(ctx, node, inp)
+    if full:
+        # 聚落：人口只读 ⑨（没有 ⑨ 给 None，C++ 按可耕地 × 人口密度）；本群是不是某邦的都（settle._polity_role）
+        from .settle import _polity_role
+        d["pop"] = _polity_pop(ctx, node)
+        d["people_per_arable_km2"] = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
+        d["capital"] = _polity_role(ctx, node)
+    return d
+
+
+def inputs_py(ctx, node: int, inp: dict) -> dict:
+    """P6b 的拼法：从 Python 版 _node_inputs 的 inp 拼（退回路径；测试拿它与 C++ 的 node_inputs 对照）。"""
     d = {"node": int(node), "seed": int(ctx.seed), "lat": inp["lat"], "lon": inp["lon"], "area_km2": inp["area_km2"],
          "main_area_km2": inp["main_area_km2"], "height_m": inp["height_m"], "age": inp["age"], "layered": bool(inp["layered"]),
          "keel_clearance_m": inp["keel_clearance_m"], "area_median_km2": inp["area_median_km2"],
@@ -133,12 +178,6 @@ def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
     for k in ("temp", "storm", "window", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
         if k in inp:
             d[k] = float(inp[k])
-    if full:
-        # 聚落：人口只读 ⑨（没有 ⑨ 给 None，C++ 按可耕地 × 人口密度）；本群是不是某邦的都（settle._polity_role）
-        from .settle import _polity_role
-        d["pop"] = _polity_pop(ctx, node)
-        d["people_per_arable_km2"] = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
-        d["capital"] = _polity_role(ctx, node)
     return d
 
 

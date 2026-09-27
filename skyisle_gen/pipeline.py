@@ -1,7 +1,10 @@
 """阶段框架：注册、缓存 key 链、产物 IO、run/stage 执行。
 
-缓存规则：key_k = sha256(key_{k-1} ‖ config[s0k] ‖ config[shared] ‖ config[skeleton] ‖ seed ‖ STAGE_VERSION)。
+缓存规则：key_k = sha256(key_{k-1} ‖ config[s0k] ‖ config[shared] ‖ config[skeleton] ‖ seed ‖ STAGE_VERSION[‖ "+cpp"])。
 命中（_meta.json 的 stage_key 相同）则跳过；任一 miss，其后全部重算。
+后端（[engine] backend，行星计划 P6c）：有 C++ 实现的阶段（engine.CPP_STAGES，现为 ①–④）在 cpp 后端下 key 另混入 "+cpp"，
+python 后端的 key 与以前一字不差（旧 run 照旧命中）。两个后端的产物现在逐位相同，仍分开缓存：逐位只在本机验过（换平台可能差一位），
+切后端时要真的重算一遍，也免得拿另一个后端的产物去验 cpp 后端（DESIGN-NOTES 四点二十五）。
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ import numpy as np
 
 from . import __version__
 from .config import canonical, dump_toml, section_hash
+from .engine import backend, cpp_key_suffix
 
 STAGES = [
     (1, "s01_planet"),
@@ -50,6 +54,7 @@ class Context:
         self.seed = seed
         self.out_dir = Path(out_dir)
         self.summaries: dict[str, dict] = {}
+        self.stage_keys: list[str] | None = None   # 管线里由 run() 填：cpp 后端按 key 缓存各步的 C++ 对象（engine.part）
 
     def stage_dir(self, idx: int) -> Path:
         name = dict(STAGES)[idx]
@@ -90,7 +95,7 @@ def _stage_key_chain(cfg: dict, seed: int) -> list[str]:
     keys = []
     prev = "root"
     for idx, _name in STAGES:
-        prev = section_hash(prev, cfg, f"s{idx:02d}", seed, STAGE_VERSIONS[idx],
+        prev = section_hash(prev, cfg, f"s{idx:02d}", seed, STAGE_VERSIONS[idx] + cpp_key_suffix(cfg, idx),
                             STAGE_EXTRA_SECTIONS.get(idx, ()))
         keys.append(prev)
     return keys
@@ -105,6 +110,7 @@ def run(cfg: dict, seed: int, out_root: Path, upto: int = 10,
 
     ctx = Context(cfg, seed, out_dir)
     keys = _stage_key_chain(cfg, seed)
+    ctx.stage_keys = keys
     from .stages import (s01_planet, s02_wind, s03_islands, s04_climate, s05_barriers,
                          s06_routes, s07_centers, s08_diffusion, s09_polity, s10_output)
     impls = {1: s01_planet, 2: s02_wind, 3: s03_islands, 4: s04_climate, 5: s05_barriers,
@@ -142,6 +148,8 @@ def run(cfg: dict, seed: int, out_root: Path, upto: int = 10,
             "seconds": round(dt, 3),
             "summary": summary,
         }
+        if cpp_key_suffix(cfg, idx):
+            meta["engine"] = backend(cfg)
         meta_p.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True, indent=1),
                           encoding="utf-8")
         line = "; ".join(f"{k}={v}" for k, v in summary.items() if not isinstance(v, (dict, list)))

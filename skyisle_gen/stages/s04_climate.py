@@ -5,11 +5,13 @@
 后半 = 水汽追踪降水（moisture.py）：E − P 收支沿扰动后的风推进到稳态，雨影与纬度雨带都是算出来的（决定 4）；
 温度（纬度 + 直减率）、风暴（按局部带界的剪切带 + G，岛群略耗散）、季节窗口、集雨容量、河流（第三批 1）。
 产物：wind_local.npz（⑤⑥⑦ 与操作台从这里读风，不再读 ②）、band_local.npz（局部带界）、climate_grid.npz、climate_islands.npz。
+cpp 后端（行星计划 P6c）：由 C++ 核心（core/src/planet/stage4.cpp）算，四个 npz 与摘要照旧由这里写（_write，两个后端共用）。
 """
 from __future__ import annotations
 
 import numpy as np
 
+from ..engine import backend
 from ..localwind import EDGE_KEYS, band_displacement, edge_lats, obstacle_fields, perturb_wind
 from ..moisture import run_on_coarse
 from ..noise import fractal_noise
@@ -25,6 +27,14 @@ def _gauss(x, mu, sigma):
 
 
 def run(ctx):
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, part, planet_config, put_part
+        cc = core()
+        Cl = cc.planet_stage4(cc.make_config(planet_config(ctx.cfg)), int(ctx.seed), part(ctx, 1), part(ctx, 2), part(ctx, 3))
+        put_part(ctx, 4, Cl)
+        R = cc.climate_arrays(Cl)
+        R["moisture"] = {"dt_s": round(R.pop("dt_s"), 1), "n_steps": int(R.pop("n_steps"))}
+        return _write(ctx, R)
     c = ctx.section(4)["climate"]
     lw = ctx.section(4)["localwind"]
     w2 = ctx.section(2)["wind"]
@@ -49,14 +59,6 @@ def run(ctx):
     edges = np.stack([e0[k] + dphi[k] for k in EDGE_KEYS])   # [8, nlon] 签名纬度
     band_local = {"lons": lons, "edges": edges, "keys": np.array(EDGE_KEYS)}
     band_grid = band_id_of(LAT, LON, bands, band_local)
-    ctx.save_npz(4, "wind_local", lats=lats, lons=lons,
-                 u=u.astype(np.float32), v=v.astype(np.float32),
-                 u_bg=(u_bg + du).astype(np.float32), v_bg=(v_bg + dv).astype(np.float32),
-                 v_local=v_local.astype(np.float32), obstacle=O.astype(np.float32),
-                 land=L.astype(np.float32), wake=wake.astype(np.float32),
-                 lat_eff=lat_eff.astype(np.float32), band=band_grid.astype(np.int16))
-    ctx.save_npz(4, "band_local", lons=lons, edges=edges.astype(np.float32),
-                 keys=np.array(EDGE_KEYS), dphi=np.stack([dphi[k] for k in EDGE_KEYS]).astype(np.float32))
 
     # ---------- 温度（°C，海面）：日照驱动，按真实纬度 ----------
     a = np.abs(LAT)
@@ -134,14 +136,6 @@ def run(ctx):
     temp_i = (grid_interp(t, lats, lons, lat_i, lon_i)
               - float(c["lapse_c_per_km"]) * isl["height_m"] / 1000.0)
 
-    ctx.save_npz(4, "climate_grid", lats=lats, lons=lons,
-                 precip=precip.astype(np.float32), temp=t.astype(np.float32),
-                 storm=storm.astype(np.float32), storm_no_g=storm_no_g.astype(np.float32),
-                 stability=stability.astype(np.float32),
-                 window=window.astype(np.float32),
-                 q=q_norm.astype(np.float32), uplift=uplift.astype(np.float32),
-                 conv=conv.astype(np.float32), eps=eps.astype(np.float32),
-                 season_range=season.astype(np.float32), continentality=cont.astype(np.float32))
     # ---- 集雨容量（docs/02 §六）：catch = 可用地率 × 群陆地 × 降水（只用陆地、可用地率与降水，不含高度）----
     catch = (isl["arable_frac"].astype(np.float64) * isl["area_km2"].astype(np.float64)
              * precip_i)
@@ -155,24 +149,58 @@ def run(ctx):
     if bonus > 0 and has_river.any():
         catch = catch * (1.0 + bonus * river_size / float(np.median(river_size[has_river])))
 
+    return _write(ctx, {
+        "lats": lats, "lons": lons, "u": u, "v": v, "u_bg": u_bg + du, "v_bg": v_bg + dv, "v_local": v_local, "obstacle": O, "land": L,
+        "wake": wake, "lat_eff": lat_eff, "band": band_grid, "edges": edges, "dphi": np.stack([dphi[k] for k in EDGE_KEYS]),
+        "precip": precip, "temp": t, "storm": storm, "storm_no_g": storm_no_g, "stability": stability, "window": window, "q": q_norm,
+        "uplift": uplift, "conv": conv, "eps": eps, "season_range": season, "continentality": cont,
+        "islands": {"precip": precip_i, "temp": temp_i, "storm": storm_i, "stability": stability_i, "window": window_i, "catch": catch,
+                    "has_river": has_river, "river_size": river_size, "temp_sea": temp_sea_i, "season_range_sea": season_sea_i,
+                    "season_range": season_i, "temp_winter": temp_i - 0.5 * season_i, "temp_summer": temp_i + 0.5 * season_i},
+        "moisture": info})
+
+
+def _write(ctx, R: dict) -> dict:
+    """写 wind_local / band_local / climate_grid / climate_islands 四个 npz、出摘要（两个后端共用；R 里的浮点是双精度原值，这里照旧转 float32）。"""
+    f32 = np.float32
+    ctx.save_npz(4, "wind_local", lats=R["lats"], lons=R["lons"],
+                 u=R["u"].astype(f32), v=R["v"].astype(f32),
+                 u_bg=R["u_bg"].astype(f32), v_bg=R["v_bg"].astype(f32),
+                 v_local=R["v_local"].astype(f32), obstacle=R["obstacle"].astype(f32),
+                 land=R["land"].astype(f32), wake=R["wake"].astype(f32),
+                 lat_eff=R["lat_eff"].astype(f32), band=R["band"].astype(np.int16))
+    ctx.save_npz(4, "band_local", lons=R["lons"], edges=R["edges"].astype(f32),
+                 keys=np.array(EDGE_KEYS), dphi=R["dphi"].astype(f32))
+    ctx.save_npz(4, "climate_grid", lats=R["lats"], lons=R["lons"],
+                 precip=R["precip"].astype(f32), temp=R["temp"].astype(f32),
+                 storm=R["storm"].astype(f32), storm_no_g=R["storm_no_g"].astype(f32),
+                 stability=R["stability"].astype(f32),
+                 window=R["window"].astype(f32),
+                 q=R["q"].astype(f32), uplift=R["uplift"].astype(f32),
+                 conv=R["conv"].astype(f32), eps=R["eps"].astype(f32),
+                 season_range=R["season_range"].astype(f32), continentality=R["continentality"].astype(f32))
+    I = R["islands"]
     ctx.save_npz(4, "climate_islands",
-                 precip=precip_i.astype(np.float32), temp=temp_i.astype(np.float32),
-                 storm=storm_i.astype(np.float32), stability=stability_i.astype(np.float32),
-                 window=window_i.astype(np.float32), catch=catch.astype(np.float32),
-                 has_river=has_river, river_size=river_size.astype(np.float32),
-                 temp_sea=temp_sea_i.astype(np.float32), season_range_sea=season_sea_i.astype(np.float32),
-                 season_range=season_i.astype(np.float32),
-                 temp_winter=(temp_i - 0.5 * season_i).astype(np.float32),
-                 temp_summer=(temp_i + 0.5 * season_i).astype(np.float32))
-    shift_amp = float(np.max(np.abs(edges - np.array([e0[k] for k in EDGE_KEYS])[:, None])))
+                 precip=I["precip"].astype(f32), temp=I["temp"].astype(f32),
+                 storm=I["storm"].astype(f32), stability=I["stability"].astype(f32),
+                 window=I["window"].astype(f32), catch=I["catch"].astype(f32),
+                 has_river=I["has_river"], river_size=I["river_size"].astype(f32),
+                 temp_sea=I["temp_sea"].astype(f32), season_range_sea=I["season_range_sea"].astype(f32),
+                 season_range=I["season_range"].astype(f32),
+                 temp_winter=I["temp_winter"].astype(f32),
+                 temp_summer=I["temp_summer"].astype(f32))
+    planet = ctx.load_json(1, "planet")
+    e0 = edge_lats(planet["bands"])
+    precip, precip_i, catch, has_river = R["precip"], I["precip"], I["catch"], I["has_river"]
+    shift_amp = float(np.max(np.abs(R["edges"] - np.array([e0[k] for k in EDGE_KEYS])[:, None])))
     return {"precip_range": [round(float(precip.min()), 2), round(float(precip.max()), 2)],
             "arid_island_share": round(float((precip_i < float(ctx.cfg.get("check", {}).get("arid_precip", 0.3))).mean()), 3),
-            "storm_max": round(float(storm.max()), 2),
+            "storm_max": round(float(R["storm"].max()), 2),
             "band_shift_max_deg": round(shift_amp, 2),
-            "obstacle_max": round(float(O.max()), 2),
-            "wind_speed_median": round(float(np.median(np.hypot(u, v))), 2),
-            "moisture": info,
+            "obstacle_max": round(float(R["obstacle"].max()), 2),
+            "wind_speed_median": round(float(np.median(np.hypot(R["u"], R["v"]))), 2),
+            "moisture": R["moisture"],
             "catch_median": round(float(np.median(catch)), 1),
             "river_share": round(float(has_river.mean()), 3),
-            "year_days": ydays,
-            "season_range_island_median": round(float(np.median(season_i)), 1)}
+            "year_days": year_days(planet),
+            "season_range_island_median": round(float(np.median(I["season_range"])), 1)}

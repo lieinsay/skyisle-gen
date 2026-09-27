@@ -1,6 +1,6 @@
 """命令行入口。
 
-skyisle run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 10] [--out out] [--explain]
+skyisle run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 10] [--out out] [--explain] [--backend python|cpp]
 skyisle stage K --seed 42        # 强制从第 K 阶段重算（之前阶段用缓存）
 skyisle viz   <layer> --run out/seed42 [...]
 skyisle probe <node|path|edge|trait> ...
@@ -25,6 +25,9 @@ def _add_common(p):
     p.add_argument("--config", action="append", default=[], help="额外配置文件（可多次）")
     p.add_argument("--set", action="append", default=[], dest="sets", help="a.b.c=value 覆盖")
     p.add_argument("--out", default="out")
+    p.add_argument("--backend", choices=["python", "cpp"], default=None,
+                   help="生成器后端（= --set engine.backend=…）：cpp 下 ①–④ 由 C++ 核心算（行星计划 P6c，要先 python core/build.py）；"
+                        "cpp 的阶段缓存 key 与 python 分开，建议配 --set run.id=cpp-seed42 另放一个目录")
 
 
 def _ctx_from_run(run_dir: str) -> Context:
@@ -115,6 +118,8 @@ def main(argv=None):
         return 0
 
     if a.cmd in ("run", "stage"):
+        if a.backend:
+            a.sets = list(a.sets) + [f"engine.backend={a.backend}"]
         cfg = load_config([Path(x) for x in a.config], a.sets)
         force_from = a.k if a.cmd == "stage" else None
         out = pipeline_run(cfg, a.seed, Path(a.out), upto=a.upto,

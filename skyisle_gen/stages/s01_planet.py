@@ -1,12 +1,22 @@
-"""① 行星参数 → 派生常量（带界缩放、距离换算）+ 历法 ↔ 轨道自洽（R1，almanac.py）。"""
+"""① 行星参数 → 派生常量（带界缩放、距离换算）+ 历法 ↔ 轨道自洽（R1，almanac.py）。
+
+cpp 后端（[engine] backend = "cpp"，行星计划 P6c）：由 C++ 核心（core/src/planet/stage12.cpp）算，planet.json 照旧由这里写。
+"""
 from __future__ import annotations
 
 import math
 
 from ..almanac import derive as derive_calendar
+from ..engine import backend
 
 
 def run(ctx):
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, planet_config, put_part
+        c = core()
+        P = c.planet_stage1(c.make_config(planet_config(ctx.cfg)))
+        put_part(ctx, 1, P)
+        return _write(ctx, c.planet_json(P))
     p = ctx.section(1)["planet"]
     w2 = ctx.cfg["s02"]["wind"]
     rot = float(p["rotation_period_hr"])
@@ -32,10 +42,15 @@ def run(ctx):
         "day_range_km": float(ctx.cfg["shared"]["day_range_km"]),
         "circumference_days": 2 * math.pi * float(p["radius_km"]) / float(ctx.cfg["shared"]["day_range_km"]),
     }
-    cal = derive_calendar(ctx.cfg)
-    out["calendar"] = cal
+    out["calendar"] = derive_calendar(ctx.cfg)
+    return _write(ctx, out)
+
+
+def _write(ctx, out: dict) -> dict:
+    """写 planet.json、出摘要（两个后端共用）。"""
+    cal = out["calendar"]
     ctx.save_json(1, "planet", out)
-    summary = {"circumference_days": round(out["circumference_days"], 1), "band_scale": scale}
+    summary = {"circumference_days": round(out["circumference_days"], 1), "band_scale": out["band_scale"]}
     if cal:
         summary.update({"year_days": round(cal["year_days_solar"], 2),
                         "star_msun": round(cal["star"]["mass_msun"], 3), "a_au": round(cal["semi_major_axis_au"], 3),

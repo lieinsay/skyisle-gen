@@ -6,11 +6,13 @@
 带结构（北半球，南镜像）：赤道永暴 / 信风(东风) / 副热带无风 / 西风 / 极地东风。
 经向分量：信风表层向赤道（哈德莱环流）、西风带表层向极（费雷尔环流）、极地东风向赤道（极地环流）
 → 副热带辐散（下沉、干）、中纬辐合（锋面、湿）、极区辐散（干）。这些是 ④ 水汽模型里雨带的来源。
+cpp 后端（行星计划 P6c）：由 C++ 核心（core/src/planet/stage12.cpp）算，wind.npz / bands.json 照旧由这里写。
 """
 from __future__ import annotations
 
 import numpy as np
 
+from ..engine import backend
 from ..skeleton import g_latitude
 from ..sphere import grid_axes, latlon_to_xyz, angdist
 
@@ -112,6 +114,13 @@ def g_vortex(LAT: np.ndarray, LON: np.ndarray, g_lat: float, g_lon: float, g_r_d
 
 
 def run(ctx):
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, part, planet_config, put_part
+        c = core()
+        W = c.planet_stage2(c.make_config(planet_config(ctx.cfg)), part(ctx, 1))
+        put_part(ctx, 2, W)
+        a = c.winds_arrays(W)
+        return _write(ctx, a["lats"], a["lons"], a["u"], a["v"], a["band"], a["g_lat"], a["g_lon"], a["g_edge"])
     w = ctx.section(2)["wind"]
     planet = ctx.load_json(1, "planet")
     bands = planet["bands"]
@@ -123,7 +132,6 @@ def run(ctx):
     u, v = wind_profile(LAT, w, bands)
 
     # ---- 定点永暴 G：位置由剪切纬度派生（决策 3；骨架第二版锚定无风带 / 西风带交界）----
-    tr_top = bands["trades_top_deg"]
     g_lat, g_edge = g_latitude(ctx.cfg, bands)
     g_lon = 0.5 * (float(sk["d_lon_west"]) + float(sk["d_lon_east"]))
     du, dv = g_vortex(LAT, LON, g_lat, g_lon, float(sk["g_radius_deg"]), float(w["g_vortex_speed"]))
@@ -131,6 +139,14 @@ def run(ctx):
     v = v + dv
 
     band_grid = band_id_of_lat(LAT, bands)
+    return _write(ctx, lats, lons, u, v, band_grid, g_lat, g_lon, g_edge)
+
+
+def _write(ctx, lats, lons, u, v, band_grid, g_lat: float, g_lon: float, g_edge: str) -> dict:
+    """写 wind.npz / bands.json、出摘要（两个后端共用）。"""
+    bands = ctx.load_json(1, "planet")["bands"]
+    sk = ctx.cfg["skeleton"]
+    tr_top = bands["trades_top_deg"]
     eq_top, calm_top, west_top = bands["eq_storm_top_deg"], bands["calm_top_deg"], bands["westerlies_top_deg"]
     shear_lats = [eq_top, tr_top, calm_top, west_top,
                   -eq_top, -tr_top, -calm_top, -west_top]
