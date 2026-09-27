@@ -55,16 +55,24 @@ def _products(out: Path) -> dict:
     return res
 
 
+def _sets(backend, sets):
+    """island_config 会把 --set 留在 ctx.cfg 里（下一次调用照样生效）：浮高开关每次都显式给，免得上一个用例关掉的一直关着。"""
+    sets = list(sets)
+    if not any(x.startswith("island.float.enabled=") for x in sets):
+        sets.append("island.float.enabled=true")
+    return [f"engine.backend={backend}"] + sets
+
+
 def _gen(ctx, node, backend, root, sets=()):
     from skyisle_gen import island as isl
-    out, g = isl.generate(ctx, node, res_m=300.0, sets=[f"engine.backend={backend}"] + list(sets), log=QUIET, return_state=True, out_root=root)
+    out, g = isl.generate(ctx, node, res_m=300.0, sets=_sets(backend, sets), log=QUIET, return_state=True, out_root=root)
     ctx.cfg["engine"]["backend"] = "python"
     return out, g
 
 
 def _terrain(ctx, node, backend, sets=()):
     from skyisle_gen import island as isl
-    c = isl.island_config(ctx, [f"engine.backend={backend}"] + list(sets))
+    c = isl.island_config(ctx, _sets(backend, sets))
     g = isl.build_terrain(ctx, node, c, isl._node_inputs(ctx, node), res_m=300.0, log=QUIET)
     ctx.cfg["engine"]["backend"] = "python"
     return c, g
@@ -97,6 +105,7 @@ def test_float_is_a_translation(world):
         iid = g_on["island_id"]
         I_on, I_off = g_on["json"]["islands"], g_off["json"]["islands"]
         assert all(i["float_m"] == 0.0 for i in I_off)
+        assert any(i["float_m"] != 0.0 for i in I_on), backend
         m0 = iid == 0
         assert np.array_equal(g_on["height"][m0], g_off["height"][m0])
         for a, b in zip(I_on, I_off):
@@ -124,6 +133,7 @@ def test_float_bounds_and_is_float(world, tmp_path):
     c = g["json"]
     from skyisle_gen import island as isl
     fc = isl.island_config(world)["float"]
+    assert fc["enabled"] and any(i["float_m"] != 0.0 for i in c["islands"][1:])
     for i in c["islands"][1:]:
         assert -fc["down_max_m"] <= i["float_m"] <= fc["up_max_m"]
         assert i["rim_m"] >= fc["rim_floor_m"]
@@ -165,3 +175,22 @@ def test_float_stats_summary():
     d = np.where(-dage + 0.5 + rng.normal(0, 1, 5000) > 0, 450.0, -250.0) * rng.uniform(0.3, 2.0, 5000)
     s = summarize(np.clip(d, -500, 1450), dage, np.full(5000, 100.0), {"up_max_m": 1500.0, "rim_floor_m": 20.0})
     assert s["spearman_age"] < -0.4 and 0.6 < s["up_share"] < 0.8 and s["calib"]["rim_floor"]
+
+
+def test_wide_bridges_still_identical(world, tmp_path):
+    """索桥现在只架在岸距 ≤ 100 m、高差 ≤ 30 m 的岛之间（几乎没有）：桥头 / 导水槽 / 郭的代码路径改用旧判据（2 km / 250 m）
+    跑一群，两个后端照样逐字节相同，且真有索桥。"""
+    wide = ["island.layout.bridge_max_km=2.0", "island.layout.bridge_max_dh_m=250"]
+    narrow = ["island.layout.bridge_max_km=0.1", "island.layout.bridge_max_dh_m=30"]
+    for node in _nodes(world):
+        a, ga = _gen(world, node, "python", tmp_path / "py", wide)
+        b, gb = _gen(world, node, "cpp", tmp_path / "cpp", wide)
+        if gb["json"]["layout"]["n_bridges"] == 0:
+            continue
+        pa, pb = _products(a), _products(b)
+        assert sorted(pa) == sorted(pb) and not [k for k in pa if pa[k] != pb[k]], node
+        assert len(gb["settle"]["bridgeheads"]) == 2 * gb["json"]["layout"]["n_bridges"]
+        _gen(world, node, "cpp", tmp_path / "n", narrow)      # 判据改回来（--set 会留在 ctx 上）
+        return
+    _gen(world, _nodes(world, 1)[0], "cpp", tmp_path / "n", narrow)
+    pytest.skip("这个 seed 挑的几群在旧判据下也没有索桥")
