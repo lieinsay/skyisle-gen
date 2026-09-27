@@ -2,7 +2,7 @@
 
 `[engine] backend = "python" | "cpp"`：读法与 `[island]` 同（default.toml ← run 的快照 ← `--set engine.backend=cpp`，`--backend` 是简写），
 不进任何阶段的缓存 key。分派点：`island.generate`（P6b：整群进 C++）、`island.build_terrain` 与 `hydro.build_hydro`（粗版、对照、用时仍单独调）、
-`weather.multi_year_stats`（IS-daily 的逐年模拟）、`lod.build_lod` 的块降采样、`climate.classify_all`（全量季型）。
+`weather.multi_year_stats`（IS-daily 的逐年模拟）、`lod.build_lod` 的块降采样与天气（`--weather`：四季 + 一年逐日天气）、`climate.classify_all`（全量季型）。
 cpp 后端调 `skyisle_gen._core`（core/，`python core/build.py` 编），这里把输入备好、把结果拼回与 Python 版同形的 g：
 数组同 dtype，island.json 同键序、同 round 位数（C++ 只给原始的双精度数与 ASCII 代码，中文由 decode.py 译回）；写产物仍在 Python。
 P6c：cpp 后端下行星层（PlanetView、本群的 NodeInputs）由 C++ 从 ①③④ 的产物对象直接给（_core.planet_view / node_inputs）：
@@ -433,20 +433,12 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         g["resources"] = decode.resources(g, node, c, R["resources"])
     if steps >= 3:
         set_climate(g, decode.climate(R["climate"], inp["planet"]), float(inp["season_range"]))
-        D = R["daily"]
-        g["daily"] = {"day": D["day"].astype(np.int64), "temp_c": D["temp_c"], "season": D["season"].astype(np.int64),
-                      "precip_rel": D["precip_rel"], "precip_mm": D["precip_mm"], "storm": D["storm"], "window": D["window"],
-                      "wind_u": D["wind_u"], "wind_v": D["wind_v"]}
+        g["daily"] = _daily_from(R["daily"])
         C = g["climate"]
         log(f"  气候（C++）：{C['season_type_zh']}（{'/'.join(C['season_names'])}）温 {[s['temp_c'] for s in C['seasons']]} "
             f"雨 {[int(s['precip_mm']) for s in C['seasons']]} mm")
     if steps >= 4:
-        Y = R["weather"]
-        y = {"day": Y["day"].astype(np.int64), "season": Y["season"].astype(np.int64), "month": Y["month"].astype(np.int64),
-             "day_of_month": Y["day_of_month"].astype(np.int64), "type": Y["type"], "precip_mm": Y["precip_mm"], "temp_c": Y["temp_c"],
-             "wind_from_deg": Y["wind_from_deg"], "wind_ms": Y["wind_ms"], "sailable": Y["sailable"], "storm_event": Y["storm_event"],
-             "wet": Y["wet"], "temp_rim_c": Y["temp_rim_c"], "snow": Y["snow"]}
-        set_weather(g, y, [dict(p) for p in Y["params"]], year, log=log)
+        set_weather(g, _weather_from(R["weather"]), [dict(p) for p in R["weather"]["params"]], year, log=log)
     if steps >= 5:
         S = decode.settlements(R["settle"], g.get("climate"))
         g["settle_pop"] = float(R["settle_pop"])
@@ -463,6 +455,34 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         log(f"  资源（C++）：点与片 {len(Rr['deposits'])} 处，赋存区 {len(Rr['occurrences'])}，采场 {len(Rr['workings'])}")
     g["timing"]["settle"] = float(secs[4])
     return g
+
+
+def _daily_from(D: dict) -> dict:
+    """C++ 的逐日曲线 → 与 climate.daily_curves 同形的 dict。"""
+    return {"day": D["day"].astype(np.int64), "temp_c": D["temp_c"], "season": D["season"].astype(np.int64),
+            "precip_rel": D["precip_rel"], "precip_mm": D["precip_mm"], "storm": D["storm"], "window": D["window"],
+            "wind_u": D["wind_u"], "wind_v": D["wind_v"]}
+
+
+def _weather_from(Y: dict) -> dict:
+    """C++ 的一年逐日天气 → 与 weather.simulate_year 同形的数组 dict。"""
+    return {"day": Y["day"].astype(np.int64), "season": Y["season"].astype(np.int64), "month": Y["month"].astype(np.int64),
+            "day_of_month": Y["day_of_month"].astype(np.int64), "type": Y["type"], "precip_mm": Y["precip_mm"], "temp_c": Y["temp_c"],
+            "wind_from_deg": Y["wind_from_deg"], "wind_ms": Y["wind_ms"], "sailable": Y["sailable"], "storm_event": Y["storm_event"],
+            "wet": Y["wet"], "temp_rim_c": Y["temp_rim_c"], "snow": Y["snow"]}
+
+
+def weather_year_cpp(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) -> None:
+    """地形 + 水系之后接着算四季 → 逐日曲线 → 一年天气（粗版 `island lod --weather` 用；与 generate 的第 3、4 步同式、同随机流）。
+    岸缘取水系之后主岛的 rim_m（island.json 的值）。拼回 g["climate"] / g["daily"] / g["weather"]，与 generate 同形。"""
+    from . import decode
+    from .climate import set_climate
+    from .weather import set_weather
+    inp = g["inp"]
+    R = core().weather_year(inputs(ctx, node, inp), planet_obj(ctx), flat_config(c), float(g["json"]["islands"][0]["rim_m"]), int(year))
+    set_climate(g, decode.climate(R["climate"], inp["planet"]), float(inp["season_range"]))
+    g["daily"] = _daily_from(R["daily"])
+    set_weather(g, _weather_from(R["weather"]), [dict(p) for p in R["weather"]["params"]], year, log=log)
 
 
 def weather_years_cpp(ctx, node: int, c: dict, g: dict, years: int):

@@ -537,6 +537,32 @@ void bind_island(nb::module_& m) {
         return nb::make_tuple(to_np(std::move(P), {static_cast<size_t>(years), ns}), to_np(std::move(F), {static_cast<size_t>(years), ns}),
                               to_np(std::move(frd), {ns}));
     });
+    // 一年的四季 + 逐日曲线 + 逐日天气（island lod --weather：粗版顺带出天气）：与 generate 的第 3、4 步同式、同随机流（weather:{year}）；
+    // rim_m 是水系之后主岛的岸缘（island.json 的 rim_m，= generate 里的 islands[0].rim_j）
+    m.def("weather_year", [](nb::dict inp, nb::handle planet, nb::handle cfg, double rim_m, int year) {
+        const NodeInputs ni = inp_from(inp);
+        PlanetView pv_tmp;
+        Config c_tmp;
+        const PlanetView& pv = pv_of(planet, pv_tmp);
+        const Config& c = cfg_of(cfg, c_tmp);
+        Climate clim;
+        Daily daily;
+        std::vector<SeasonParams> par;
+        WeatherYear Y;
+        {
+            nb::gil_scoped_release rel;
+            clim = build_climate(ni, pv, c);
+            daily = daily_curves(clim, ni);
+            par = season_params(clim, c);
+            Rng r = part_rng(ni, "weather:" + std::to_string(year));
+            Y = simulate_year(r, clim, daily, par, ni.height_m, c, rim_m, ni.lapse_c_per_km);
+        }
+        nb::dict d;
+        d["climate"] = json_py(climate_json(clim));
+        d["daily"] = daily_dict(daily);
+        d["weather"] = weather_dict(Y, par);
+        return d;
+    }, "inp"_a, "planet"_a, "cfg"_a, "rim_m"_a, "year"_a = 0);
     m.def("kmeans_split", [](uint64_t seed, const std::string& key, std::vector<int32_t> ii, std::vector<int32_t> jj, int k) {
         Rng r = entity_rng(seed, ISLAND_STREAM, key);
         return vec_np(kmeans_split(r, ii, jj, k));
