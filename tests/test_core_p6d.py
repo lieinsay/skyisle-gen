@@ -136,6 +136,18 @@ def test_stage_products_identical(two_backends):
     assert not diff, diff
 
 
+def test_vassals_found(two_backends):
+    """附庸判定按邦号查都城间距离（原先拿都城节点号查，附庸几乎为零）；overlord 与 vassals 互相对得上。"""
+    _, out_py, _, out_c = two_backends
+    for out in (out_py, out_c):
+        pol = json.loads((out / "s09_polity" / "polities.json").read_text(encoding="utf-8"))["polities"]
+        vassal = {x["id"]: x["overlord"] for x in pol if x.get("overlord", -1) >= 0}
+        assert len(vassal) >= 3, len(vassal)
+        by_id = {x["id"]: x for x in pol}
+        for s, t in vassal.items():
+            assert s in by_id[t]["vassals"]
+
+
 def test_cache_keys_split_by_backend(two_backends):
     cfg_py, out_py, _, out_c = two_backends
     for _idx, st in STAGES[:9]:

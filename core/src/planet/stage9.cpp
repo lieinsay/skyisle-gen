@@ -1,9 +1,6 @@
 // ⑨ 政治层（skyisle_gen/stages/s09_polity.py）：人口 → 核心实力 → 建邦（宗主先立、按实力择都、圈 control ≥ θ 的邑）→ 所有邑按控制力归属、
 // 威慑距离外投附邻邑、再无则独邑 → 采邑树 → 船团与部落 → 文明圈与宗主 → 邦际接壤 → 附庸 → 变法之国 → 兼并史 → 政体类型 → 开局候选。
 // 不读 height_m（原则乙）；每个节点都属于某个政体（原则己）。
-//
-// 照抄 Python 版的一处怪处：附庸判定里 `cap_dist[t].get(capitals[s])` 拿「都城的节点号」去查以「邦号」为键的表（DESIGN-NOTES 四点二十六）。
-// 这是参考实现的行为，改它会让 seed42 的附庸变——先照抄，修不修由以后定。
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -306,7 +303,7 @@ Polity stage9(const Config& cfg, const Islands& isl, const Climate& c, const Bar
         for (const auto& kv : adj[s]) {
             const int64_t t = kv.first;
             if (pop_state[t] < rho * pop_state[s]) continue;
-            const auto it = cap_dist[t].find(capitals[s]);   // 照抄 Python 版：拿节点号查以邦号为键的表
+            const auto it = cap_dist[t].find(s);   // 键是邦号（cap_arr 的下标），不是都城的节点号
             if (it == cap_dist[t].end()) continue;
             const double v = pop_state[t] * std::exp(-it->second / radius[capitals[t]]);
             if (v > best_v) best = t, best_v = v;

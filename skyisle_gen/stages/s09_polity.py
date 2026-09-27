@@ -291,7 +291,7 @@ def run(ctx):
         for t in sorted(adj[s]):
             if pop_state[t] < rho * pop_state[s]:
                 continue
-            dts = cap_dist[t].get(capitals[s])
+            dts = cap_dist[t].get(s)   # 键是邦号（cap_arr 的下标），不是都城的节点号
             if dts is None:
                 continue
             v = pop_state[t] * math.exp(-dts / radius[capitals[t]])
