@@ -908,6 +908,73 @@ P6a / P6b 把第三层整个移进了 `core/`；这一期移管线的前四步�
   `engine.CPP_STAGES` 加上移完的阶段号，各步照 P6c 的样子：run() 第一行分派、`_write` 两边共用、C++ 对象进 `engine.part` 的缓存（⑤ 起吃 ③④ 的对象，⑨ 的人口给第三层）。
   ⑩ 输出（九格表、出图）留在 Python。全部移完、三 seed 的 check（P1–P8）在 cpp 下全过后切默认、删 Python 算法（第三层的 Python 版随之删掉，decode.py 留着）。
 
+## 四点二十六、生成器后端换 C++：行星层 ⑤–⑨ 与切默认（2026-09-27，Zhouzhu 行星计划 P6d）
+
+P6c 移了管线的前四步；这一期把 ⑤ 障碍、⑥ 航路与抽样介数、⑦ 文明中心与地区、⑧ 特征扩散、⑨ 政治层移进 `core/planet/`，第三层的人口与邦都也改由 C++ 给，
+三 seed 两个后端逐位相同、check 全过之后**把默认后端切到 cpp**。⑩ 输出（九格表、出图）留在 Python。设计稿 `docs/PLAN-CORE.md`（各节随之更新）。
+
+- **做了什么**：`core/include/skyisle/planet/graph.hpp`（graph.py 的 C++ 版：CSR、Dijkstra、沿树累加、Brandes 抽样介数、弱连通分量）、`civ.hpp`（⑤–⑨ 的产物结构与
+  stage5–9、weights 的 λ_ref / L / 模式权重、`population`、`apply_polity`、`run_society`）；`core/src/planet/graph.cpp`、`stage5.cpp` – `stage9.cpp`（约 1,950 行，另有头文件 220 行、
+  绑定 `bind_civ.cpp` 400 行）；`Rng::choice_noreplace_p`。前端：s05–s09 的 run() 第一行分派，写产物与摘要抽成两个后端共用的 `_write`；`engine.CPP_STAGES = 1–9`；
+  行星层配置展平多带 s05–s09、`slots`（槽位表）、`traits_manual`（手工特征表），表的数组展成 `key.n` 与 `key.<i>.<子键>`；⑤⑥⑦⑨ 的对象可从产物读回；
+  第三层 `engine.inputs(full=True)` 的人口与邦都改由 `_core.node_polity` 给；原则乙的静态断言（check 的 IL-yi 与 pytest）也查 `stage7–9.cpp`；
+  `[engine] backend` 默认 cpp；`tests/conftest.py` 让扩展没编的机器上不依赖 C++ 的测试走 python。
+- **拍板的几件事**：
+  - **Python 的算法不删，冻结成参考后端**（与计划原文「切默认、删 Python」不同，主会话定的）：`--backend python` 照旧能跑，用来在别的机器（先是 ME Pro 的 Linux）上验逐位；
+    新改动先在 C++ 里做，要保持对照就把同一改动照抄进 Python，不照抄就在这里记清从哪一版起不再逐位相同。等 Linux 上编过、与参考后端对照过再删
+    （⑩、check、九格表、出图、操作台、decode.py 留着）。
+  - **缓存 key 与 STAGE_VERSIONS 同 P6c 的理由**：cpp 后端下 ⑤–⑨ 也另混入 "+cpp"，python 的 key 一字不差；阶段代码只加了分派与 `_write`，python 后端三 seed 的产物与改前逐位相同，
+    不加版本号。`engine.backend()` 在配置**没有 `[engine]` 段**时仍按 python 算——P6 之前的 run 快照（如 out/seed42）照旧命中 python 的 key；
+    默认值 cpp 只写在 default.toml 里。代价：拿默认配置在 out/seed42 上再 `run --seed 42` 会整个重算一遍（产物逐位不变，`_meta.json` 的 key 与 engine 换了）——这一期没这么做。
+  - **json 在前端拼**：邦名、中文、round 的位数都在 `_write` 里（两个后端共用），C++ 只给原始的数与 ASCII 键。例外同 P6b：Python 版后面的计算读的是**已舍过的**数时，
+    C++ 也先舍好——⑧ 特征表的 resistance（4 位）、d_half_days（3 位）、λ（6 位）按 Python 的 round 舍了再进不动点与最短路。
+  - **⑨ 的纪年按原类型舍**：Python 版里 `years_ago`、`war_years`、战线的 `war_years_needed` 是 numpy 标量（`pop_state[t]` 一路带进来），`round(x, 1)` 是 rint(x·10)/10；
+    `frontier_days`、`annexed_years_ago` 是 Python 浮点（精确十进制舍入）。前端 `_write` 对前三个用 `round(np.float64(x), 1)`，两个后端同一处舍。
+  - **⑧ 的对象不从产物读回**：管线里没有下游读它（⑨ 与第三层都不读 ⑧，⑩ 与 check 读 npz），`engine.part(ctx, 8)` 报错。
+  - **⑥ 的介数按源并行**：每个源一次 Brandes，对每条边至多加一次；按块（`[engine] threads` 个源）并行算各源的贡献，再按源的次序加进 flow——与逐源顺序相加逐位相同，
+    结果与线程数无关（pytest 1 / 4 / 7 线程）。
+  - **游戏的新建世界**：`planet::run` → `run_society(cfg, seed, world, 9, skip_diffusion, threads)`（⑧ 可跳过，⑨ 照算）→ `planet_view` / `node_inputs` + `apply_polity`
+    → `island::generate`，全程不落盘。绑定里是 `planet_run(cfg, seed, upto=9)`。
+  - **照抄了参考实现的一处怪处**：⑨ 附庸判定 `dts = cap_dist[t].get(capitals[s])` 拿**都城的节点号**去查以**邦号**为键的表（`cap_dist[sid]` 的键是 cap_arr 的下标），
+    只有都城节点号恰好小于第一遍的邦数、又碰巧在对方威慑距离内时才查得到。结果三 seed 的附庸只有 0 / 1 / 0 个；改成 `get(s)` 后是 147 / 158 / 164 个，兼并史一条不变
+    （附庸只在被并时转给兼并者，不进兼并的次序），变的是 polities.json 的 overlord / vassals 与九格表 ⑧ 的附庸文字。两个后端都照抄着（逐位对照优先），**修不修待定**
+    ——修了 seed42 的 ⑨ 与 ⑩ 会变（邦与人口不变，第三层不受影响）。
+- **踩坑（在四点二十三 – 四点二十五的表上加；这一期 C++ 第一次跑三 seed 就逐位相同，下面是写之前逐行对出来的）**：
+  - **heapq 的平局次序**：堆元素是 (dist, node)，距离相同按节点号；`std::priority_queue<pair<double, int64>, …, greater<>>` 比较同式，−0.0 与 +0.0 相等再比节点号，也同。
+    同一节点的重复项值相同，先弹哪个都一样。松弛只在严格更小时替换前驱；有界搜索弹出 > 界即停，再把界外的有限值清回 inf。
+  - **`Generator.choice(n, size, replace=False, p)` 既不是 Floyd 也不是 choice_p**：逐轮抽 size − 已得 个 random()，把已得的 p 置 0，cdf = np.cumsum（顺序加）/ cdf[−1]，
+    searchsorted 右侧，本轮结果按首次出现去重（np.unique(return_index) 再按下标排）后接上，直到够数。
+  - **Python 浮点 ** 数组**（⑤ 的 `P ** span_excess`）没有快路径：指数不是标量，逐个调 C 的 pow（c_pow）；数组 ** 标量（⑥ 的 `w ** α`、⑦ 的 `an ** γ`）才走 np_pow 的快路径。
+  - 3 维的 `np.linalg.norm` / `np.sum(axis=−1)` = ((0 + x₀) + x₁) + x₂（加法归约的初值是 0）；`f.sum(axis=1)` 的 6 列同样顺序加；`S.sum(axis=0)` 逐行顺序加。
+  - ⑨ 的开局候选读 **npz 里 float32 的 f_regional** 与 0.05 比：NEP 50 下按 float32 比（`float(f) > float(0.05)`），不是双精度。
+  - `np.nan_to_num(x, nan=np.inf)`：掩码在替换前算好，NaN → inf，原本的 +inf 却变成最大有限值（⑧ 的 C / L 里没有原本的 inf，照写）。
+  - `max(cands, key=lambda s: (score, −s))` = 分数最高、同分取号小者；`sorted(hubs, key=(−flow, i))`；`np.bincount(…).argmax()`（船团的圈）取第一个最大者。
+  - ⑧ 次级起源的圈归属按**排好序的中心 id**（north_east, north_west, south）取 argmin，⑦ 的每圈保底与 ⑨ 的文明圈按 **CENTER_IDS 的次序**（north_west, north_east, south）——两处平局规则不同，各照各的。
+- **实测**：
+  - 逐位对照：C++ 从 python 后端 ①–④ 的产物读回、逐步算 ⑤–⑨（各步从 python 产物读上游，与一路吃 C++ 对象两种），三 seed 的 npz 全部数组与 json 记录逐位相同；
+    整条管线 `run --backend cpp` 到 out/cpp-seedN，①–⑨ 的全部产物与摘要（142 项）与 out/seedN 逐位相同，⑩ 的 world.json / 九格表 / check 相同，32 张图只差标题里的 run 名
+    （像素差都在第 34 行以上）；python 后端重跑到 out/py-seedN，①–⑨ 与改前逐位相同、阶段 key 相同（151 项）。
+  - check：三 seed × 两个后端 6 次全过（每次 21 项 0 硬 0 软 0 报警）。
+  - **切默认后 seed42 不变**：cpp 后端在 out/cpp-seed42 上生成 15 个群（2051、2050、1165、591、833、6239、7091、3709、7993、2861、4044、605、721、1083、4566），
+    与 python 后端在 out/seed42 上当场重生成的逐文件比，只差 preview.png 标题里的 run 名（第 10–27 行）。与 out/seed42/islands 里已有的产物比：2050、2861、4044、605、721
+    只差标题；2051 另多一个旧的 check.json（island check 留的，不是 generate 的产物）；1165、833、3709、7993、4566 的 island.json 缺 `constraints.territory`、
+    591、6239、7091、1083 整套不同——这 9 群是 09-26 在势力范围（四点二十二，P0）之前生成的旧产物，python 当场重生成的与 cpp 相同。**结论：切到 cpp 不改变 seed42 的任何产物，
+    行星包不用为换后端重导**（out/seed42/islands 里 P0 之前的旧群本来就过时，与后端无关）。
+  - 用时（Ryzen 9 9950X3D，seed 42；产物不写、上游先读好）：⑤ 0.047 → 0.016 s、⑥ 29.2 → 0.095 s（介数 4 线程）、⑦ 4.47 → 0.073 s、⑧ 11.0 → 0.34 s、⑨ 1.68 → 0.25 s，
+    **⑤–⑨ 合计 python 46 s → C++ 0.77 s**；整条管线 ①–⑨（写 npz / json，进程计时）**python 43 s → C++ 2.5 s**；`planet_run` 一次跑完 ①–④ 0.42 s、①–⑨ 1.3 s（1 线程）/ 1.2 s（4 线程）。
+    现在 `run` 的大头是 ⑩ 出图（约 52 s）。
+  - 操作台（默认 cpp）：`serve --no-open` 起在另一个端口，/api/runs、world、fields、grid、check、config、ninegrid、path、island、island/data、首页都 200；
+    「重新生成」（POST /api/run，1600 岛的小世界）14 s 跑完，各步 `_meta.json` 记 `"engine": "cpp"`；在它上面 POST /api/island/regen 正常、island.json 的 meta.engine = cpp。
+  - pytest 140 个全过（约 110 s；新 `tests/test_core_p6d.py` 20 个：Dijkstra / 介数 / 弱连通分量 / 抽签逐位，小世界两个后端的 ⑤–⑨ 逐位、key 分开、planet_run(upto=9)、
+    读回的对象接着算、四组开关变体（fast、band 障碍 + 政治性障碍、起源指定中心 + 指定变法之国、手工特征表）、第三层的人口与邦都、内存里的 ①–⑨ 生成邦都岛群逐字节相同）。
+- **没做到 / 已知问题**：逐位一致只在这台机器（Windows、MSVC、UCRT、numpy 2.5.2、OpenBLAS SkylakeX 内核）上验过；**ME Pro（Linux）上还没编过**，删 Python 算法要等那边编过、
+  与参考后端对照过。n ≤ 512 个群时 kNN 的 dsyrk 尾块没追上（四点二十五）。⑨ 附庸的怪处照抄着（见上）。C++ 的 `Config` 仍由 Python 前端展平 default.toml 给，
+  游戏要一份不经 Python 的配置来源（P6e 定）。⑧ 的对象不从产物读回。⑩ 仍是 Python（出图慢，不影响游戏）。
+- **P6e 从哪接**：`core/` 的静态库目标 `skyisle_core`（`SKYISLE_PYTHON=OFF`、`SKYISLE_TESTS=OFF` 就只编它；依赖 C++17 标准库、`Threads::Threads` 与随仓库的
+  pocketfft 头文件，没有 Python）。新建世界：`planet::run(cfg, seed)` → `run_society(cfg, seed, world, 9, true, threads)` → `planet_view(...)`；
+  生成一个群：`node_inputs(world.islands, world.climate, node, seed, cfg)` + `apply_polity(society.polity, node, cfg, inputs)` → `island::generate(inputs, view, island_cfg, …)`。
+  行星层 ①–⑨ 1.2 s，一群 generate 0.6 s 左右（4 线程）。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。
