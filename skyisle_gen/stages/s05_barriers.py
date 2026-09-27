@@ -4,12 +4,14 @@
 perm_m(e) = Π_b P_b[m]^f_b × Π 局部因子。
 任一单调穿越 Σf = 1 → 乘积恰为矩阵值，与跳数、岛数、seed 无关（docs/02 §五 数据模型）。
 障碍是选择性过滤器，不是墙（D34）。
+cpp 后端（[engine] backend = "cpp"，行星计划 P6d）：由 C++ 核心（core/src/planet/stage5.cpp）算，perm.npz / barriers.json 与摘要照旧由这里写（_write，两个后端共用）。
 """
 from __future__ import annotations
 
 import numpy as np
 
 from .. import MODES
+from ..engine import backend
 from ..skeleton import d_lat_range
 from ..sphere import latlon_to_xyz, angdist
 
@@ -91,6 +93,12 @@ def _g_blocked(xyz_a, xyz_b, g_xyz, g_r_rad) -> np.ndarray:
 
 
 def run(ctx):
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, part, planet_config, put_part
+        cc = core()
+        B = cc.planet_stage5(cc.make_config(planet_config(ctx.cfg)), part(ctx, 1), part(ctx, 2), part(ctx, 3), part(ctx, 4))
+        put_part(ctx, 5, B)
+        return _write(ctx, cc.barriers_arrays(B))
     cfg = ctx.cfg
     s5 = ctx.section(5)
     planet = ctx.load_json(1, "planet")
@@ -179,6 +187,18 @@ def run(ctx):
     perm[g_blocked] = 0.0
 
     perm = np.where(perm < perm_min, 0.0, np.clip(perm, 0.0, 1.0))
+    return _write(ctx, {"perm": perm, "perm_no_g": perm_no_g, "f": f, "g_blocked": g_blocked, **local_perm})
+
+
+def _write(ctx, R: dict) -> dict:
+    """写 perm.npz 与 barriers.json、出摘要（两个后端共用；R 里的浮点是双精度原值，这里照旧转 float32）。"""
+    cfg = ctx.cfg
+    s5 = ctx.section(5)
+    planet = ctx.load_json(1, "planet")
+    bands = planet["bands"]
+    g_info = ctx.load_json(2, "bands")["G"]
+    perm, f, g_blocked = R["perm"], R["f"], R["g_blocked"]
+    E = perm.shape[0]
 
     # ---- 障碍对象表 ----
     barriers_out = {}
@@ -211,13 +231,13 @@ def run(ctx):
         "note": "绝对阻断，但只阻断一个点；直线航路被堵死，所有往来必须绕行（docs/11 §六）",
     }
 
-    ctx.save_npz(5, "perm", perm=perm.astype(np.float64), perm_no_g=perm_no_g.astype(np.float64),
+    ctx.save_npz(5, "perm", perm=perm.astype(np.float64), perm_no_g=R["perm_no_g"].astype(np.float64),
                  f_regional=f.astype(np.float32),
                  g_blocked=g_blocked,
-                 gap=local_perm["gap"].astype(np.float32),
-                 density_drop=local_perm["density_drop"].astype(np.float32),
-                 climb=local_perm["climb"].astype(np.float32),
-                 political=local_perm["political"].astype(np.float32))
+                 gap=R["gap"].astype(np.float32),
+                 density_drop=R["density_drop"].astype(np.float32),
+                 climb=R["climb"].astype(np.float32),
+                 political=R["political"].astype(np.float32))
     ctx.save_json(5, "barriers", {"regional_order": REGIONAL_ORDER, "barriers": barriers_out,
                                   "modes": list(MODES)})
     removed = {m: int((perm[:, mi] == 0).sum()) for mi, m in enumerate(MODES)}

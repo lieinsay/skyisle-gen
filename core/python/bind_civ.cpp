@@ -286,7 +286,7 @@ void bind_civ(nb::module_& m) {
         B.political = dv(perm, "political");
         return B;
     });
-    m.def("routes_from", [](nb::dict routes, nb::dict hubs, int64_t n_nodes) {
+    m.def("routes_from", [](nb::dict routes, nb::dict hubs) {
         Routes R;
         R.cost = dv(routes, "cost");
         R.cost_no_g = dv(routes, "cost_no_g");
@@ -297,7 +297,7 @@ void bind_civ(nb::module_& m) {
         R.dst_d = anyvec<int64_t>(routes["dst_d"]);
         R.und_id = anyvec<int64_t>(routes["und_id"]);
         R.sources = anyvec<int64_t>(routes["betweenness_sources"]);
-        R.near_g.assign(n_nodes, 0);
+        R.near_g.assign(R.node_flow.size(), 0);
         for (nb::handle h : nb::cast<nb::list>(hubs["hubs"])) {
             nb::dict x = nb::cast<nb::dict>(h);
             const int64_t q = nb::cast<int64_t>(x["node"]);

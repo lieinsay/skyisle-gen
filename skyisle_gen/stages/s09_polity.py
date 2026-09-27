@@ -21,6 +21,8 @@ docs/11 §八（中心 ② 圈内一国完成变法、正吞并同圈诸邦；�
   兼并     只有变法之国能兼并（docs/02 §八「兼并极难」↔ 铁律三 的调和：正因兼并极难，只有先编户齐民者兼并得动）；
            先易后难逐邦吞并；占领后的消化阶段按 docs/04 §四 的时间表
 铁律自检：本阶段不读 height_m；船团（稀疏岛链）不建国也不被征服；处处有人 → 每个节点都属于某个政体。
+cpp 后端（行星计划 P6d）：由 C++ 核心（core/src/planet/stage9.cpp）算，polity.npz / polities.json / history.md 与摘要照旧由这里写
+（_write，两个后端共用：邦名、中文、round 的位数都在这里）；第三层（岛群生成器）的人口与邦都在 cpp 后端下直接从 C++ 的 ⑨ 对象取。
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ import math
 import numpy as np
 
 from .. import MODES
+from ..engine import backend
 from ..graph import CSR, dijkstra, weak_components
 from ..weights import lambda_ref, load_directed
 from .s03_islands import CLASS_NAMES
@@ -80,6 +83,12 @@ def consolidation_stage(years: float, p: dict) -> str:
 
 # ---------------------------------------------------------------- 主流程
 def run(ctx):
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, part, planet_config, put_part
+        cc = core()
+        Pol = cc.planet_stage9(cc.make_config(planet_config(ctx.cfg)), part(ctx, 3), part(ctx, 4), part(ctx, 5), part(ctx, 6), part(ctx, 7))
+        put_part(ctx, 9, Pol)
+        return _write(ctx, cc.polity_arrays(Pol))
     p = ctx.section(9)["polity"]
     isl = ctx.load_npz(3, "islands")
     ce = ctx.load_npz(3, "cand_edges")
@@ -363,15 +372,15 @@ def run(ctx):
             scored.sort()
             feas = [x for x in scored if x[3]]
             if not feas:
-                fronts = [{"polity": int(t), "frontier_days": round(fc, 2), "feasible": False}
+                fronts = [{"polity": int(t), "frontier_days": fc, "feasible": False}
                           for _, t, fc, _ in scored[:n_fronts]]
                 break
             difficulty, t, fc, _ = feas[0]
             ratio = pop_state[t] * (awe if t in suz_set else 1.0) / max(realm_pop, 1.0)
             war_years = y_base + y_scale * ratio + y_per_day * fc
             if elapsed + war_years > budget:
-                fronts = [{"polity": int(tt), "frontier_days": round(fcc, 2), "feasible": True,
-                           "war_years_needed": round(y_base + y_scale * pop_state[tt] / max(realm_pop, 1.0) + y_per_day * fcc, 1)}
+                fronts = [{"polity": int(tt), "frontier_days": fcc, "feasible": True,
+                           "war_years_needed": y_base + y_scale * pop_state[tt] / max(realm_pop, 1.0) + y_per_day * fcc}
                           for _, tt, fcc, _ in feas[:n_fronts]]
                 break
             elapsed += war_years
@@ -380,8 +389,8 @@ def run(ctx):
             ya = years_ago - reform_dur - elapsed
             annexed_by[t] = reformer
             annexed_years[t] = ya
-            history.append({"polity": int(t), "years_ago": round(ya, 1), "war_years": round(war_years, 1),
-                            "pop": round(float(pop_state[t])), "n_nodes": int(n_nodes[t]),
+            history.append({"polity": int(t), "years_ago": ya, "war_years": war_years,
+                            "pop": pop_state[t], "n_nodes": int(n_nodes[t]),
                             "was_suzerain": bool(t in suz_set),
                             "stage": consolidation_stage(ya, p)})
             # 被并之邦的附庸改属兼并者
@@ -428,49 +437,93 @@ def run(ctx):
     }
 
     # ---- 产物 ----
-    fief_seat_count = np.zeros(n_states, dtype=np.int64)
-    direct_count = np.zeros(n_states, dtype=np.int64)
+    states = []
     for s in range(n_states):
         m = members_of[s]
         f = fief[m]
-        direct_count[s] = int((f < 0).sum())
-        fief_seat_count[s] = int(np.unique(f[f >= 0]).size)
+        states.append({"capital": int(capitals[s]), "circle": int(circle_state[s]), "regime": regime[s], "n_nodes": int(n_nodes[s]),
+                       "pop": pop_state[s], "dense_frac": dense_frac[s], "radius": radius[capitals[s]],
+                       "n_direct": int((f < 0).sum()), "n_fiefs": int(np.unique(f[f >= 0]).size),
+                       "overlord": int(overlord[s]), "vassals": [int(t) for t in np.where(overlord == s)[0]],
+                       "neighbors": sorted(adj[s].items()), "annexed_by": int(annexed_by[s]),
+                       "annexed_years": float(annexed_years[s]), "is_suzerain": bool(s in suz_set)})
+    return _write(ctx, {
+        "pop": pop, "state": state, "polity": polity, "kind": kind, "control": control, "dist_cap": d_cap, "fief": fief,
+        "realm": realm_node, "circle": circle, "capital": cap_arr, "pop_state": pop_state, "states": states,
+        "fleets": fleets, "fleet_pop": [pop[np.array(mb)].sum() for mb in fleets],
+        "fleet_circle": [int(np.bincount(circle[np.array(mb)]).argmax()) for mb in fleets], "tribes": tribes,
+        "suzerain": [suzerain[cid] for cid in CENTER_IDS], "reformer": int(reformer), "reformer_fallback": reformer_fallback,
+        "realm_pop": realm_pop, "history": history, "fronts": fronts,
+        "open_a": openings["A_frontier_small_state"], "open_b": openings["B_orthodox_core"],
+        "open_c": openings["C_transition_zone"], "open_d": openings["D_reformer"], "n_cap1": n_cap1, "n_attached": n_attached})
 
+
+def _write(ctx, R: dict) -> dict:
+    """写 polity.npz / polities.json / history.md、出摘要（两个后端共用：邦名与中文、round 的位数都在这里；R 里的浮点是双精度原值，
+    纪年的 years_ago / war_years 与战线的 war_years_needed 在 Python 版里是 numpy 标量，按 np.float64 的 round 舍）。"""
+    p = ctx.section(9)["polity"]
+    cls = ctx.load_npz(3, "islands")["cls"].astype(np.int64)
+    pop, circle = R["pop"], R["circle"]
+    n_states = len(R["states"])
+    fleets = [[int(x) for x in m] for m in R["fleets"]]
+    tribes = [int(j) for j in R["tribes"]]
+    reformer, reformer_fallback = int(R["reformer"]), bool(R["reformer_fallback"])
+    reform_circle = str(p["reform_circle"])
+    years_ago = float(p["reform_years_ago"])
+    reform_dur = float(p["reform_duration_years"])
+    realm_pop = float(R["realm_pop"])
+    suzerain = {cid: int(v) for cid, v in zip(CENTER_IDS, R["suzerain"])}
+    history = [{"polity": int(h["polity"]), "years_ago": round(np.float64(h["years_ago"]), 1),
+                "war_years": round(np.float64(h["war_years"]), 1), "pop": round(float(h["pop"])), "n_nodes": int(h["n_nodes"]),
+                "was_suzerain": bool(h["was_suzerain"]), "stage": h["stage"]} for h in R["history"]]
+    fronts = []
+    for f in R["fronts"]:
+        x = {"polity": int(f["polity"]), "frontier_days": round(float(f["frontier_days"]), 2), "feasible": bool(f["feasible"])}
+        if f["feasible"]:
+            x["war_years_needed"] = round(np.float64(f["war_years_needed"]), 1)
+        fronts.append(x)
+    openings = {
+        "A_frontier_small_state": [int(x) for x in R["open_a"]],
+        "B_orthodox_core": int(R["open_b"]),
+        "C_transition_zone": [int(x) for x in R["open_c"]],
+        "D_reformer": int(R["open_d"]),
+    }
     polities = []
-    for s in range(n_states):
-        c = capitals[s]
+    for s, x in enumerate(R["states"]):
+        c = int(x["capital"])
+        ay = float(x["annexed_years"])
         polities.append({
-            "id": s, "kind": "state", "name": f"邦{s:03d}", "capital": int(c),
-            "capital_class": CLASS_NAMES[int(cls[c])], "circle": CENTER_IDS[int(circle_state[s])],
-            "regime": regime[s], "n_nodes": int(n_nodes[s]), "pop": round(float(pop_state[s])),
-            "dense_frac": round(float(dense_frac[s]), 3),
-            "radius_days": round(float(radius[c]), 3),
-            "n_direct": int(direct_count[s]), "n_fiefs": int(fief_seat_count[s]),
-            "overlord": int(overlord[s]), "vassals": [int(t) for t in np.where(overlord == s)[0]],
-            "neighbors": {str(t): int(n_e) for t, n_e in sorted(adj[s].items())},
-            "annexed_by": int(annexed_by[s]),
-            "annexed_years_ago": (None if np.isnan(annexed_years[s]) else round(float(annexed_years[s]), 1)),
-            "stage": (consolidation_stage(float(annexed_years[s]), p) if not np.isnan(annexed_years[s]) else None),
-            "is_suzerain": bool(s in suz_set),
+            "id": s, "kind": "state", "name": f"邦{s:03d}", "capital": c,
+            "capital_class": CLASS_NAMES[int(cls[c])], "circle": CENTER_IDS[int(x["circle"])],
+            "regime": x["regime"], "n_nodes": int(x["n_nodes"]), "pop": round(float(x["pop"])),
+            "dense_frac": round(float(x["dense_frac"]), 3),
+            "radius_days": round(float(x["radius"]), 3),
+            "n_direct": int(x["n_direct"]), "n_fiefs": int(x["n_fiefs"]),
+            "overlord": int(x["overlord"]), "vassals": [int(t) for t in x["vassals"]],
+            "neighbors": {str(int(t)): int(n_e) for t, n_e in x["neighbors"]},
+            "annexed_by": int(x["annexed_by"]),
+            "annexed_years_ago": (None if np.isnan(ay) else round(ay, 1)),
+            "stage": (consolidation_stage(ay, p) if not np.isnan(ay) else None),
+            "is_suzerain": bool(x["is_suzerain"]),
         })
     for k, members in enumerate(fleets):
         polities.append({"id": n_states + k, "kind": "fleet", "name": f"船团{k:02d}", "capital": -1,
-                         "n_nodes": len(members), "pop": round(float(pop[np.array(members)].sum())),
-                         "regime": "fleet", "circle": CENTER_IDS[int(np.bincount(circle[np.array(members)]).argmax())]})
+                         "n_nodes": len(members), "pop": round(float(R["fleet_pop"][k])),
+                         "regime": "fleet", "circle": CENTER_IDS[int(R["fleet_circle"][k])]})
     for k, j in enumerate(tribes):
         polities.append({"id": n_states + len(fleets) + k, "kind": "tribe", "name": f"部落{k:02d}", "capital": int(j),
                          "n_nodes": 1, "pop": round(float(pop[j])), "regime": "tribe", "circle": CENTER_IDS[int(circle[j])]})
 
     ctx.save_npz(9, "polity",
-                 pop=pop.astype(np.float32), state=state.astype(np.int32), polity=polity.astype(np.int32),
-                 kind=kind.astype(np.int8), control=control.astype(np.float32), dist_cap=d_cap.astype(np.float32),
-                 fief=fief.astype(np.int32), realm=realm_node.astype(np.int32), circle=circle.astype(np.int8),
-                 capital=cap_arr.astype(np.int32), pop_state=pop_state.astype(np.float32))
+                 pop=pop.astype(np.float32), state=R["state"].astype(np.int32), polity=R["polity"].astype(np.int32),
+                 kind=R["kind"].astype(np.int8), control=R["control"].astype(np.float32), dist_cap=R["dist_cap"].astype(np.float32),
+                 fief=R["fief"].astype(np.int32), realm=R["realm"].astype(np.int32), circle=circle.astype(np.int8),
+                 capital=R["capital"].astype(np.int32), pop_state=R["pop_state"].astype(np.float32))
     ctx.save_json(9, "polities", {
         "polities": polities,
         "n_states": n_states, "n_fleets": len(fleets), "n_tribes": len(tribes),
         "suzerain": suzerain,
-        "reformer": {"polity": int(reformer), "fallback": reformer_fallback, "circle": reform_circle,
+        "reformer": {"polity": reformer, "fallback": reformer_fallback, "circle": reform_circle,
                      "reform_years_ago": years_ago, "reform_duration_years": reform_dur,
                      "realm_pop": round(realm_pop), "n_annexed": len(history)},
         "history": history, "fronts": fronts, "openings": openings,
@@ -479,17 +532,20 @@ def run(ctx):
     })
     _write_history_md(ctx, polities, suzerain, reformer, reformer_fallback, history, fronts, openings, pop, p, n_states, fleets, tribes)
 
+    n_nodes = np.array([int(x["n_nodes"]) for x in R["states"]], dtype=np.int64)
+    capitals = [int(x["capital"]) for x in R["states"]]
     by_cls = {}
     for cname, ci in (("dense", 0), ("medium", 1)):
         sel = [s for s in range(n_states) if cls[capitals[s]] == ci]
         by_cls[cname] = {"n": len(sel), "median_nodes": float(np.median(n_nodes[sel])) if sel else 0.0,
                          "max_nodes": int(n_nodes[sel].max()) if sel else 0}
+    n_cap1 = int(R["n_cap1"])
     return {"pop_total_M": round(float(pop.sum()) / 1e6, 1), "n_states": n_states,
-            "n_capitals_by_strength": n_cap1, "n_singletons": n_states - n_cap1, "n_attached_loose": n_attached,
+            "n_capitals_by_strength": n_cap1, "n_singletons": n_states - n_cap1, "n_attached_loose": int(R["n_attached"]),
             "n_fleets": len(fleets), "n_tribes": len(tribes),
             "median_state_nodes": float(np.median(n_nodes)), "max_state_nodes": int(n_nodes.max()),
             "states_by_capital_class": by_cls,
-            "reformer": int(reformer), "reformer_fallback": reformer_fallback,
+            "reformer": reformer, "reformer_fallback": reformer_fallback,
             "n_annexed": len(history), "realm_pop_M": round(realm_pop / 1e6, 2), "n_fronts": len(fronts)}
 
 

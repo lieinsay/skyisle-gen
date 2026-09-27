@@ -7,7 +7,8 @@ cpp 后端调 `skyisle_gen._core`（core/，`python core/build.py` 编），这�
 数组同 dtype，island.json 同键序、同 round 位数（C++ 只给原始的双精度数与 ASCII 代码，中文由 decode.py 译回）；写产物仍在 Python。
 P6c：cpp 后端下行星层（PlanetView、本群的 NodeInputs）由 C++ 从 ①③④ 的产物对象直接给（_core.planet_view / node_inputs）：
 同一进程里刚用 cpp 后端跑过 ①–④ 就直接用内存里的对象，否则从 npz 读回成 C++ 对象（skyisle_gen/engine.py 的 part）；
-⑨ 的人口与邦都仍由这里从 polity.npz 填（P6d 再移）。旧 run 缺字段时退回按 npz 拼 dict 的 P6b 路径（值相同）。
+P6d：⑨ 的人口与邦都也由 C++ 从 ⑨ 的产物对象给（_core.node_polity：同进程跑过 cpp 的 ⑨ 就用内存里的，否则从 polity.npz 读回）；
+旧 run 缺字段 / 没有 ⑨ 时退回按 npz 拼 dict 的 P6b 路径（值相同）。
 """
 from __future__ import annotations
 
@@ -150,9 +151,27 @@ def planet_obj(ctx):
     return o
 
 
+def _polity_part(ctx):
+    """⑨ 的 C++ 对象（Polity）或 None（扩展太旧 / 这个 run 没有 ⑨）。按 run 与 ⑨ 的 key 缓存；同进程跑过 cpp 的 ⑨ 就是内存里那个。"""
+    if not hasattr(core(), "node_polity"):
+        return None
+    from .. import engine as E
+    key = ("polity",) + _run_key(ctx) + (E._stage_key(ctx, 9),)
+    o = _PLANET_OBJ.get(key, False)
+    if o is False:
+        try:
+            o = E.part(ctx, 9)
+        except (KeyError, FileNotFoundError, ValueError, TypeError):
+            o = None
+        for k in [k for k in _PLANET_OBJ if k[0] == "polity"]:
+            del _PLANET_OBJ[k]
+        _PLANET_OBJ[key] = o
+    return o
+
+
 def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
     """本群的 NodeInputs（dict）：P6c 起由 C++ 从 ③④ 的产物对象直接给（_core.node_inputs，与 _node_inputs 同值）；
-    退回路径按 Python 的 inp 拼。full：再加 ⑨ 的人口与邦都（仍在 Python）。"""
+    退回路径按 Python 的 inp 拼。full：再加 ⑨ 的人口与邦都（P6d 起由 C++ 从 ⑨ 的对象给：_core.node_polity，与 polity.npz 的读法同值）。"""
     parts = _parts(ctx)
     if parts is not None:
         _P, I, C, pc = parts
@@ -161,11 +180,22 @@ def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
         d = inputs_py(ctx, node, inp)
     if full:
         # 聚落：人口只读 ⑨（没有 ⑨ 给 None，C++ 按可耕地 × 人口密度）；本群是不是某邦的都（settle._polity_role）
-        from .settle import _polity_role
-        d["pop"] = _polity_pop(ctx, node)
-        d["people_per_arable_km2"] = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
-        d["capital"] = _polity_role(ctx, node)
+        pol = _polity_part(ctx) if parts is not None else None
+        if pol is not None:
+            d.update(core().node_polity(pol, int(node), parts[3]))
+        else:
+            from .settle import _polity_role
+            d["pop"] = _polity_pop(ctx, node)
+            d["people_per_arable_km2"] = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
+            d["capital"] = _polity_role(ctx, node)
     return d
+
+
+def inputs_polity_py(ctx, node: int) -> dict:
+    """⑨ 的人口与邦都的 Python 读法（P6b 的路径；测试拿它与 _core.node_polity 对照）。"""
+    from .settle import _polity_role
+    return {"pop": _polity_pop(ctx, node), "people_per_arable_km2": float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"]),
+            "capital": _polity_role(ctx, node)}
 
 
 def inputs_py(ctx, node: int, inp: dict) -> dict:

@@ -207,19 +207,24 @@ def test_resistance_clamped():
 
 # ---------------- 铁律（静态） ----------------
 def test_no_height_in_social_modules():
-    """原则乙：s07/s08/ninegrid 不得读取 height_m。"""
+    """原则乙：s07/s08/s09/ninegrid/polity 不得读取 height_m；C++ 版的 ⑦⑧⑨（core/src/planet/stage7–9.cpp）不得读 Islands 的 height。"""
     import re
-    pkg = Path(__file__).resolve().parent.parent / "skyisle_gen"
-    for f in ["stages/s07_centers.py", "stages/s08_diffusion.py", "ninegrid.py"]:
+    from skyisle_gen.check import CPP_SOCIAL_FILES
+    root = Path(__file__).resolve().parent.parent
+    pkg = root / "skyisle_gen"
+    for f in ["stages/s07_centers.py", "stages/s08_diffusion.py", "stages/s09_polity.py", "ninegrid.py", "polity.py"]:
         text = (pkg / f).read_text(encoding="utf-8")
         assert not re.search(r"\[[\"']height_m[\"']\]", text), f"{f} 读取了 height_m"
+    for f in CPP_SOCIAL_FILES:
+        text = (root / f).read_text(encoding="utf-8")
+        assert not re.search(r"\.height\b", text), f"{f} 读取了 height"
 
 
 def test_no_discrete_culture_assignment():
     """铁律五：不得从 share 的 argmax 派生地区/文化标签（文化是连续场）。"""
     import re
     pkg = Path(__file__).resolve().parent.parent / "skyisle_gen"
-    for f in ["stages/s08_diffusion.py", "stages/s07_centers.py"]:
+    for f in ["stages/s08_diffusion.py", "stages/s07_centers.py", "../core/src/planet/stage7.cpp", "../core/src/planet/stage8.cpp"]:
         text = (pkg / f).read_text(encoding="utf-8")
         assert "flood" not in text.lower()
         assert not re.search(r"culture_id|culture_label", text)

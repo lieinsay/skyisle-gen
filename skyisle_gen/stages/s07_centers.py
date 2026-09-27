@@ -5,12 +5,14 @@
 常夏之地与苦寒之地都起不了谷物农业。季节量取 ④ 的海面口径（区域陆地性，不含岛高，原则乙）。
 不含高度（原则乙）；陆地不是海拔，是集雨面与人口容量。节点 = 岛群（R10）。
 铁律自检：本阶段的社会推导不读 height_m。
+cpp 后端（行星计划 P6d）：由 C++ 核心（core/src/planet/stage7.cpp）算，centers.json / prehist.npz / regions.npz 与摘要照旧由这里写（_write，两个后端共用）。
 """
 from __future__ import annotations
 
 import numpy as np
 
 from .. import MODES
+from ..engine import backend
 from ..graph import CSR, dijkstra
 from ..sphere import angdist
 from ..weights import lambda_ref, load_directed, mode_weight
@@ -71,6 +73,12 @@ def _windows(cfg, planet, lat, lon):
 
 
 def run(ctx):
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, part, planet_config, put_part
+        cc = core()
+        Ce = cc.planet_stage7(cc.make_config(planet_config(ctx.cfg)), part(ctx, 1), part(ctx, 3), part(ctx, 4), part(ctx, 5), part(ctx, 6))
+        put_part(ctx, 7, Ce)
+        return _write(ctx, cc.centers_arrays(Ce))
     c7 = ctx.section(7)["centers"]
     isl = ctx.load_npz(3, "islands")
     clim = ctx.load_npz(4, "climate_islands")
@@ -255,7 +263,7 @@ def run(ctx):
     # ---- 中心间干线（⑦b：仅展示与九格表用，不回写 ⑥）----
     envoy_i = MODES.index("envoy")
     w_env = np.where(g["perm_d"][:, envoy_i] > 0, g["cost"], np.inf)
-    trunks = {}
+    trunks = []
     for a in CENTER_IDS:
         d, pn, _pe = dijkstra(csr, w_env, [centers[a]["node"]])
         for b in CENTER_IDS:
@@ -263,28 +271,48 @@ def run(ctx):
                 continue
             tgt = centers[b]["node"]
             if not np.isfinite(d[tgt]):
-                trunks[f"{a}->{b}"] = {"cost_days": None, "path": []}
+                trunks.append({"key": f"{a}->{b}", "reachable": False, "cost_days": 0.0, "path": []})
                 continue
             path = []
             u = tgt
             while u >= 0:
                 path.append(int(u))
                 u = int(pn[u])
-            trunks[f"{a}->{b}"] = {"cost_days": round(float(d[tgt]), 1), "path": path[::-1]}
+            trunks.append({"key": f"{a}->{b}", "reachable": True, "cost_days": float(d[tgt]), "path": path[::-1]})
 
-    ctx.save_npz(7, "prehist", dist_pre=dist_pre, pred=pred_pre,
-                 lineage=lineage, arrival_yr=arrival_yr.astype(np.float32))
-    ctx.save_npz(7, "regions", region=region, suitability=suit.astype(np.float32))
+    return _write(ctx, {"suit": suit, "nodes": [centers[cid]["node"] for cid in CENTER_IDS], "origin_node": origin_node,
+                        "secondary": chosen, "region_seeds": seeds, "trunks": trunks, "dist_pre": dist_pre, "pred": pred_pre,
+                        "lineage": lineage, "arrival_yr": arrival_yr, "region": region, "n_lineages": next_lineage})
+
+
+def _write(ctx, R: dict) -> dict:
+    """写 prehist.npz / regions.npz / centers.json、出摘要（两个后端共用；R 里的浮点是双精度原值，这里照旧转 float32）。"""
+    isl = ctx.load_npz(3, "islands")
+    lat, lon = isl["lat"], isl["lon"]
+    suit = R["suit"]
+    centers = {}
+    for cid, node in zip(CENTER_IDS, R["nodes"]):
+        node = int(node)
+        centers[cid] = {"node": node, "lat": round(float(lat[node]), 3),
+                        "lon": round(float(lon[node]), 3), "suitability": round(float(suit[node]), 4),
+                        "zh": CENTER_ZH[cid]}
+    chosen = [int(p) for p in R["secondary"]]
+    seeds = [int(s) for s in R["region_seeds"]]
+    trunks = {t["key"]: {"cost_days": round(float(t["cost_days"]), 1) if t["reachable"] else None, "path": [int(u) for u in t["path"]]}
+              for t in R["trunks"]}
+    ctx.save_npz(7, "prehist", dist_pre=R["dist_pre"], pred=R["pred"],
+                 lineage=R["lineage"], arrival_yr=R["arrival_yr"].astype(np.float32))
+    ctx.save_npz(7, "regions", region=R["region"], suitability=suit.astype(np.float32))
     ctx.save_json(7, "centers", {
         "centers": centers,
-        "origin_node": origin_node,
+        "origin_node": int(R["origin_node"]),
         "secondary_peaks": [{"node": p, "lat": round(float(lat[p]), 3),
                              "lon": round(float(lon[p]), 3), "suitability": round(float(suit[p]), 4)}
                             for p in chosen],
-        "region_seeds": [int(s) for s in seeds],
+        "region_seeds": seeds,
         "center_trunks": {k: {"cost_days": v["cost_days"], "n_nodes": len(v["path"]),
                               "path": v["path"]} for k, v in trunks.items()},
     })
     return {"centers": {cid: (centers[cid]["lat"], centers[cid]["lon"]) for cid in CENTER_IDS},
-            "n_lineages": int(next_lineage), "n_regions": len(seeds),
+            "n_lineages": int(R["n_lineages"]), "n_regions": len(seeds),
             "trunk_nw_ne_days": trunks.get("north_east->north_west", trunks.get("north_west->north_east", {})).get("cost_days")}

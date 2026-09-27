@@ -568,6 +568,11 @@ def check_ironlaws(w: World, cfg, rep: Report):
         p = pkg / f
         if p.exists() and re.search(r"\[[\"']height_m[\"']\]", p.read_text(encoding="utf-8")):
             height_hits.append(f)
+    # C++ 核心（行星计划 P6d）里的 ⑦⑧⑨：Islands 结构的 height 字段即 height_m（仓库里有源码时才查）
+    for f in CPP_SOCIAL_FILES:
+        p = pkg.parent / f
+        if p.exists() and re.search(r"\.height\b", p.read_text(encoding="utf-8")):
+            height_hits.append(f)
     rep.add("IL-yi", "原则乙：地理不决定贵贱（社会推导模块不读 height_m）",
             {"files_reading_height": height_hits}, "空列表", not height_hits, hard=True)
 
@@ -585,6 +590,10 @@ def check_ironlaws(w: World, cfg, rep: Report):
     ok_types = w.fields["share"].dtype.kind == "f" and w.fields["strength"].dtype.kind == "f"
     rep.add("IL-t5", "铁律五：文化是连续场（无整数文化标签图层；硬边界由 P1b 逐边保证）",
             {"fields_are_float": bool(ok_types)}, "true", bool(ok_types), hard=True)
+
+
+# 原则乙的静态断言也查 C++ 版的社会推导（⑦⑧⑨；pytest 的 test_no_height_in_social_modules 同一份清单）
+CPP_SOCIAL_FILES = ["core/src/planet/stage7.cpp", "core/src/planet/stage8.cpp", "core/src/planet/stage9.cpp"]
 
 
 # ---------------------------------------------------------------- P8 政治层（第四批 R7）

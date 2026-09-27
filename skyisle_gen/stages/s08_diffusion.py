@@ -6,6 +6,8 @@ strength(t, j) = reach(t, o→j) × adopt(t, j)
 同槽位归一化后是当地的比例分布（含「本地自有」行，恒 > 0：原则己）。
 
 铁律自检：本阶段不读 height_m；文化只以连续场（share ∈ [0,1]）形式存在，无离散标签。
+cpp 后端（行星计划 P6d）：由 C++ 核心（core/src/planet/stage8.cpp）算，traits.resolved.json / reflect.json / fields.npz / iso.npz 与摘要
+照旧由这里写（_write，两个后端共用；特征表的中文名与短语按槽位序号从 slots.toml 取）。
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import math
 import numpy as np
 
 from .. import MODES
+from ..engine import backend
 from ..graph import CSR, accumulate_along_tree, dijkstra, weak_components
 from ..rng import entity_rng
 from ..weights import lambda_ref, load_directed
@@ -23,7 +26,8 @@ STAGE = 8
 
 # ---------------------------------------------------------------- traits
 def build_traits(ctx, centers: dict, secondary: list[dict], circle_of_secondary: list[str],
-                 iso_daily: np.ndarray, prehist_arrival: np.ndarray, cand_src, cand_dst) -> list[dict]:
+                 iso_daily: np.ndarray, prehist_arrival: np.ndarray, cand_src, cand_dst) -> tuple[list[dict], dict | None]:
+    """特征表与反射型障碍（高隔离连通分量）；手工特征表（traits.toml）时后者为 None（不写 reflect.json）。"""
     cfg8 = ctx.section(8)
     slots_cfg = ctx.cfg["slots"]
     cats = slots_cfg["categories"]
@@ -70,7 +74,7 @@ def build_traits(ctx, centers: dict, secondary: list[dict], circle_of_secondary:
             if "d_half_days" in t:
                 tr["lambda"] = round(math.log(2.0) / float(t["d_half_days"]), 6)
             traits.append(tr)
-        return traits
+        return traits, None
 
     center_ids = sorted(centers.keys())
     # 主起源：每槽位 × 每主中心 1 个值（docs/11 §五：三中心是特征的起源点）
@@ -119,14 +123,7 @@ def build_traits(ctx, centers: dict, secondary: list[dict], circle_of_secondary:
             traits.append(mk_trait(f"{slot['id']}@local:{compkey}", slot, origin_node,
                                    "local", f"local:{compkey}",
                                    float(prehist_arrival[origin_node])))
-    ctx.save_json(8, "reflect", {
-        "note": "反射型障碍对象：高隔离（iso_daily ≥ 阈值）连通分量。文化积累不外流（docs/12 §四）",
-        "iso_thr": thr,
-        "components": [{"nodes": m, "n": len(m),
-                        "max_iso": round(float(iso_daily[np.array(m)].max()), 3)}
-                       for m in reflect_components],
-    })
-    return traits
+    return traits, {"iso_thr": thr, "components": reflect_components}
 
 
 # ---------------------------------------------------------------- adopt
@@ -171,6 +168,12 @@ def run(ctx):
     if cfg8.get("engine", "field") == "mc":
         raise NotImplementedError(
             "Monte Carlo 引擎为保留接口（docs/12 §七：确定性场版本已足够）。请用 engine='field'")
+    if backend(ctx.cfg) == "cpp":
+        from ..engine import core, part, planet_config, put_part
+        cc = core()
+        D = cc.planet_stage8(cc.make_config(planet_config(ctx.cfg)), int(ctx.seed), part(ctx, 3), part(ctx, 5), part(ctx, 6), part(ctx, 7))
+        put_part(ctx, 8, D)
+        return _write(ctx, _from_cpp(ctx, cc.diffusion_arrays(D)))
 
     isl = ctx.load_npz(3, "islands")
     ce = ctx.load_npz(3, "cand_edges")
@@ -211,9 +214,9 @@ def run(ctx):
     for sec in centers_j["secondary_peaks"]:
         j = int(np.argmin(dists_c[:, sec["node"]]))
         circle_of_secondary.append(center_ids[j])
-    traits = build_traits(ctx, centers_j["centers"], centers_j["secondary_peaks"],
-                          circle_of_secondary, iso[daily_i], prehist["arrival_yr"],
-                          ce["src"], ce["dst"])
+    traits, reflect = build_traits(ctx, centers_j["centers"], centers_j["secondary_peaks"],
+                                   circle_of_secondary, iso[daily_i], prehist["arrival_yr"],
+                                   ce["src"], ce["dst"])
     T = len(traits)
 
     # ---- reach：每特征一次最短路（决策 1 方案 A；fast = 方案 C）----
@@ -281,17 +284,64 @@ def run(ctx):
         if not ok:
             print(f"  [s08] 警告：槽位 {sid} 不动点未收敛（{n_iter} 轮）")
 
+    return _write(ctx, {"traits": traits, "slots": slot_ids, "slot_mode": slot_mode, "lambda_ref": lam_ref, "fixed_point": fp_report,
+                        "reflect": reflect, "reach": reach, "strength": strength, "adopt": adopt, "share": share,
+                        "conflict_by": conflict_by, "C": C_arr, "L": L_arr, "iso": iso, "local_share": local_share})
+
+
+def _from_cpp(ctx, D: dict) -> dict:
+    """C++ 的 ⑧ 产物 → _write 要的形：特征记录补上槽位的中文名与短语；手工特征表的覆盖项按 traits.toml 的原值（类型照旧）。"""
+    slots = ctx.cfg["slots"]["slot"]
+    manual = (ctx.cfg.get("traits_manual") or {}).get("trait") or []
+    traits = []
+    for k, t in enumerate(D["traits"]):
+        slot = slots[t["slot_index"]]
+        tr = {"id": t["id"], "slot": slot["id"], "slot_zh": slot["zh"], "phrase": slot["phrase"],
+              "mode": t["mode"], "resistance": t["resistance"], "d_half_days": t["d_half_days"], "lambda": t["lambda"],
+              "origin_node": int(t["origin_node"]), "origin": t["origin"], "kind": t["kind"],
+              "origin_time": float(t["origin_time"]), "resistance_tier": t["resistance_tier"]}
+        if t["kind"] == "manual":
+            m = manual[k]
+            tr["origin"] = str(m["origin"])
+            for key in ("resistance", "d_half_days", "mode"):
+                if key in m:
+                    tr[key] = m[key]
+        traits.append(tr)
+    slot_ids = list(D["slots"])
+    fp_report = {sid: dict(f) for sid, f in zip(slot_ids, D["fixed_point"])}
+    for sid, f in fp_report.items():
+        if not f["converged"]:
+            print(f"  [s08] 警告：槽位 {sid} 不动点未收敛（{f['n_iter']} 轮）")
+    reflect = {"iso_thr": D["iso_thr"], "components": [[int(x) for x in c] for c in D["reflect"]]} if D["has_reflect"] else None
+    return {"traits": traits, "slots": slot_ids, "slot_mode": dict(zip(slot_ids, D["slot_mode"])),
+            "lambda_ref": dict(zip(MODES, D["lambda_ref"])), "fixed_point": fp_report, "reflect": reflect,
+            **{k: D[k] for k in ("reach", "strength", "adopt", "share", "conflict_by", "C", "L", "iso", "local_share")}}
+
+
+def _write(ctx, R: dict) -> dict:
+    """写 traits.resolved.json / reflect.json / fields.npz / iso.npz、出摘要（两个后端共用；R 里的浮点是双精度原值，这里照旧转 float32）。"""
+    traits, slot_ids, fp_report, lam_ref, reach = R["traits"], R["slots"], R["fixed_point"], R["lambda_ref"], R["reach"]
+    T = len(traits)
+    if R["reflect"] is not None:
+        iso_daily = R["iso"][MODES.index("daily")]
+        ctx.save_json(8, "reflect", {
+            "note": "反射型障碍对象：高隔离（iso_daily ≥ 阈值）连通分量。文化积累不外流（docs/12 §四）",
+            "iso_thr": R["reflect"]["iso_thr"],
+            "components": [{"nodes": m, "n": len(m),
+                            "max_iso": round(float(iso_daily[np.array(m)].max()), 3)}
+                           for m in R["reflect"]["components"]],
+        })
     for ti, t in enumerate(traits):
         t["index"] = ti
     ctx.save_json(8, "traits.resolved", {"traits": traits, "slots": slot_ids,
-                                         "slot_mode": slot_mode,
+                                         "slot_mode": R["slot_mode"],
                                          "lambda_ref": {m: round(lam_ref[m], 6) for m in MODES},
                                          "fixed_point": fp_report})
     ctx.save_npz(8, "fields", reach=reach.astype(np.float32),
-                 strength=strength.astype(np.float32), adopt=adopt.astype(np.float32),
-                 share=share.astype(np.float32), conflict_by=conflict_by,
-                 C=C_arr, L=L_arr)
-    ctx.save_npz(8, "iso", iso=iso.astype(np.float32), local_share=local_share.astype(np.float32))
+                 strength=R["strength"].astype(np.float32), adopt=R["adopt"].astype(np.float32),
+                 share=R["share"].astype(np.float32), conflict_by=R["conflict_by"].astype(np.int32),
+                 C=R["C"].astype(np.float32), L=R["L"].astype(np.float32))
+    ctx.save_npz(8, "iso", iso=R["iso"].astype(np.float32), local_share=R["local_share"].astype(np.float32))
     kinds = {}
     for t in traits:
         kinds[t["kind"]] = kinds.get(t["kind"], 0) + 1
