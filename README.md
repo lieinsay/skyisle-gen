@@ -95,7 +95,8 @@ python -m skyisle_gen.cli island floats --run out/seed42 --jobs 28          # �
 （比主岛年轻的往上、老的往下，再加随机；往上最多约 +1.5 km、往下最多 −500 m，七成在主岛之上；平移后岸缘不低于 20 m，低台面的群往下挪得少）。
 平移在地形那一步、水系之前做，所以高岛的气温（直减率）、地表、高山区、村与资源点的海拔都按新高度；群的四季与逐日天气只看主岛，不变。
 产物里：`island.json` 每座岛多一个 `float_m`（δ，m；主岛 0），`surface_m` / `rim_m` / `peak_m` / `keel_m` 与 `terrain.npz` / `height.png` 的高程都**已含** δ
-（`cliff_m` 与起伏不变）；岸缘高差变大，高差 > 250 m 的相邻岛不再架索桥、改成短渡（导水槽随之少了）；
+（`cliff_m` 与起伏不变）。索桥只架在岸距 ≤ 100 m、两头高差 ≤ 30 m 的岛之间（`layout.bridge_max_km` / `bridge_max_dh_m`，用户定：前工业时代的绳索桥几十到一百来米），
+群内岛之间几乎都是短渡（飞船），导水槽与跨岛的郭随之几乎没有；
 粗版（`islands_lod/<分辨率>/<节点>.npz`）meta 的各岛也记 `float_m` 与 `age`，浮高之前做的粗版算没做、`island lod` 会重跑。
 `--set island.float.enabled=false` 关掉（与改前逐位相同，只多 `float_m` = 0）。
 

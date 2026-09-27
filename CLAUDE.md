@@ -41,8 +41,8 @@
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 155 个测试，约 3 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
-                                                  # 扩展没编时 C++ 的 101 个跳过，其余经 tests/conftest.py 自动用 python 后端）
+  $py -m pytest tests -q                          # 158 个测试，约 3 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
+                                                  # 扩展没编时 C++ 的 104 个跳过，其余经 tests/conftest.py 自动用 python 后端）
   ```
 - **C++ 核心库（`core/`，行星计划 P6；设计稿 `docs/PLAN-CORE.md`，DESIGN-NOTES 四点二十三 – 四点二十六）**：`[engine] backend = "cpp" | "python"`（**P6d 起默认 cpp**）。
   P6a / P6b 移了第三层全部（cpp 后端的 `island.generate` 一次调 `_core.generate` 算完、前端只拼 island.json 与写产物）；
@@ -214,7 +214,7 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   「干旱」口径 `arid_precip` 0.2（≈560 mm）；河流降水门槛 0.22；P6 混合度 0.3 + 坍缩占比 0.25（相对分位只报告）；P7 reach≥0.3、伴随器物≥0.4、地区覆盖 0.2；P3 用聚束障碍分比值 ≥1.5（全局秩相关只参考）。
 
 - **岛群生成器（2026-09-17，PLAN-ISLAND，`[island]`）**：栅格 100 m（群外框 > 2048 格自动加倍，38,000 km² 的最大群落到 400 m）；岛数 12–80、Zipf 1.1、最小岛 0.3 km²；
-  岸距 1–15 km（beta(1.3, 2.2)）、索桥 ≤ 2 km 且岸缘高差 ≤ 250 m；**高度**：台面 = height_m（陆地中位），起伏按岛龄对数插值（1000 km² 时新岛 3000 → 老岛 450 m）× (面积/1000)^0.3 × 对数正态 0.25，
+  岸距 1–15 km（beta(1.3, 2.2)）、索桥 ≤ 0.1 km 且岸缘高差 ≤ 30 m（2026-09-27 用户定，旧 2 km / 250 m；群内几乎全是短渡，四点二十八）；**高度**：台面 = height_m（陆地中位），起伏按岛龄对数插值（1000 km² 时新岛 3000 → 老岛 450 m）× (面积/1000)^0.3 × 对数正态 0.25，
   中位分位 新 0.22 / 中 0.2 / 老 0.38（台面离岛底太近时先压到 0.12 再压起伏；台面 < 600 m 的岛底 = 0.5 × 台面）；#1165：岸缘 570 → 峰 1,830 m，坡中位 5°、>15° 占 12%；
   下切 15 / 8 轮在 ≤ 320 格的粗网格上（carve_k 0.3、m 0.5、河道阈 0.3 km²、随机流向 p 1.5、细网格平滑 2 遍）；湖 = 填平深 ≥ 3 m 且 ≥ 0.5 km²（`pit_keep_m=2` 让它少见）；
   常年河按流量：年均 ≥ 0.3 m³/s（1,000 mm 约 19 km²、3,000 mm 约 6、300 mm 约 65；不够则 0.2 × 主岛最大汇流；旧固定 25 km²，四点二十），河宽 / 水深夸张 ×8 / ×3、干流下切 25 m、漫滩 = 10 × 河宽、河谷最远 2 km；
@@ -234,7 +234,7 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   seed 42 全行星重摆 67%（密接几乎全部、中疏 68%），仍越过分界线的 34 群（③ 里群心挤在一起的，第三层摆不开）；IS-terr 硬 / IS-terr-gap 软。
   浮高 `[island.float]`（2026-09-27，四点二十八，Zhouzhu 浮高计划 G 期）：主岛不动，其余岛整座平移 δ——z = 0.65 − 0.75 × Δ岛龄 / 0.08 + N(0, 1)，
   往上 1500 × tanh(550 z / 1500)、往下 500 × tanh(450 z / 500)，往下的再按 (岸缘 − 20) / 500 缩（岸缘 ≥ 20 m、不在下限堆一摞）；
-  三 seed 全部非主岛：往上 70%、|δ| 中位 405 m、p90 1.02 km、最高 +1.47 km、与 Δ岛龄秩相关 −0.58；索桥按平移后的岸缘高差判，seed 42 全行星 75,768 → 27,513。
+  三 seed 全部非主岛：往上 70%、|δ| 中位 405 m、p90 1.02 km、最高 +1.47 km、与 Δ岛龄秩相关 −0.58；索桥按平移后的岸缘高差判（seed 42 全行星：旧判据 75,768 → 27,513，新判据 0.1 km / 30 m 下 64 座）。
 - **生成器后端 `[engine]`（2026-09-27，行星计划 P6a – P6d，四点二十三 – 四点二十六）**：**`backend = "cpp"`（P6d 切的默认；三 seed 的 check 在 cpp 下 0 硬 0 软 0 报警、①–⑨ 与 python 逐位相同之后）**、
   `threads = 4`（cpp 群内各岛并行、⑥ 抽样介数按源并行，结果与线程数无关；`island lod` 多进程时自动 1）。cpp 后端的 island.json 在 meta 多 `"engine": "cpp"`，python 后端产物一字不改。
   P6b 实测：seed 42 / 7 / 2026 共 210 群（对照 30 + 随机 180）整套产物逐字节相同；整群 generate（不写产物）4 线程中位 0.62 s、最长 1.65 s（python 7.3 / 22 s）；
