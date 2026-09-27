@@ -416,6 +416,48 @@ int64_t Rng::choice_p(const std::vector<double>& p) {
     return static_cast<int64_t>(lo);
 }
 
+std::vector<int64_t> Rng::choice_noreplace_p(const std::vector<double>& p_in, int64_t size) {
+    // Generator.choice(n, size, replace=False, p=p)：每轮抽 size − 已得 个 random()，把已得的 p 置 0，cdf = cumsum(p) / cdf[-1]，
+    // searchsorted 右侧；这一轮的结果按首次出现的次序去重后接上（np.unique(return_index) + 按下标排序）
+    std::vector<double> p = p_in;
+    std::vector<int64_t> found;
+    if (size <= 0) return found;
+    int64_t nz = 0;
+    for (double v : p) nz += v > 0;
+    if (nz < size) throw std::invalid_argument("choice: fewer non-zero entries in p than size");
+    std::vector<double> cdf(p.size()), x;
+    std::vector<uint8_t> seen(p.size());
+    while (static_cast<int64_t>(found.size()) < size) {
+        const int64_t k = size - static_cast<int64_t>(found.size());
+        x.resize(static_cast<size_t>(k));
+        for (auto& v : x) v = bg_.next_double();
+        for (int64_t f : found) p[f] = 0.0;
+        double acc = 0.0;
+        for (size_t i = 0; i < p.size(); ++i) {
+            acc = i == 0 ? p[0] : acc + p[i];
+            cdf[i] = acc;
+        }
+        const double last = cdf.back();
+        for (double& v : cdf) v /= last;
+        std::fill(seen.begin(), seen.end(), 0);
+        std::vector<int64_t> fresh;
+        for (double u : x) {
+            size_t lo = 0, hi = cdf.size();
+            while (lo < hi) {
+                const size_t mid = (lo + hi) / 2;
+                if (cdf[mid] <= u) lo = mid + 1;
+                else hi = mid;
+            }
+            if (!seen[lo]) {
+                seen[lo] = 1;
+                fresh.push_back(static_cast<int64_t>(lo));
+            }
+        }
+        found.insert(found.end(), fresh.begin(), fresh.end());
+    }
+    return found;
+}
+
 Rng stage_rng(uint64_t seed, uint64_t stage) { return Rng(SeedSequence({seed, stage})); }
 
 Rng entity_rng(uint64_t seed, uint64_t stage, const std::string& key) {

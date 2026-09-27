@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "bind_util.hpp"
+#include "skyisle/planet/civ.hpp"
 #include "skyisle/planet/planet.hpp"
 #include "skyisle/planet/view.hpp"
 
@@ -22,31 +23,6 @@ using namespace skyisle;
 using namespace skyisle::planet;
 
 namespace {
-
-using ArrAnyC = nb::ndarray<nb::c_contig, nb::device::cpu>;
-
-template <class T>
-std::vector<T> anyvec(nb::handle h) {
-    ArrAnyC a = nb::cast<ArrAnyC>(h);
-    const size_t n = a.size();
-    std::vector<T> out(n);
-    auto fill = [&](auto* p) {
-        for (size_t k = 0; k < n; ++k) out[k] = static_cast<T>(p[k]);
-    };
-    const nb::dlpack::dtype dt = a.dtype();
-    if (dt == nb::dtype<double>()) fill(static_cast<const double*>(a.data()));
-    else if (dt == nb::dtype<float>()) fill(static_cast<const float*>(a.data()));
-    else if (dt == nb::dtype<int64_t>()) fill(static_cast<const int64_t*>(a.data()));
-    else if (dt == nb::dtype<int32_t>()) fill(static_cast<const int32_t*>(a.data()));
-    else if (dt == nb::dtype<int16_t>()) fill(static_cast<const int16_t*>(a.data()));
-    else if (dt == nb::dtype<int8_t>()) fill(static_cast<const int8_t*>(a.data()));
-    else if (dt == nb::dtype<bool>()) fill(static_cast<const bool*>(a.data()));
-    else if (dt == nb::dtype<uint8_t>()) fill(static_cast<const uint8_t*>(a.data()));
-    else throw std::invalid_argument("unsupported array dtype");
-    return out;
-}
-std::vector<double> dv(const nb::dict& d, const char* k) { return anyvec<double>(d[k]); }
-double num(const nb::dict& d, const char* k) { return nb::cast<double>(d[k]); }
 
 Axes axes_from(const std::vector<double>& lats, const std::vector<double>& lons) {
     Axes ax;
@@ -58,15 +34,6 @@ Axes axes_from(const std::vector<double>& lats, const std::vector<double>& lons)
     return ax;
 }
 
-template <class T>
-nb::ndarray<nb::numpy, T> arr(const std::vector<T>& v) {
-    return to_np(std::vector<T>(v), {v.size()});
-}
-template <class T>
-nb::ndarray<nb::numpy, T> arr2(const std::vector<T>& v, size_t h, size_t w) {
-    return to_np(std::vector<T>(v), {h, w});
-}
-nb::ndarray<nb::numpy, bool> barr(const std::vector<uint8_t>& v) { return bool_np(std::vector<uint8_t>(v), {v.size()}); }
 
 // ---------------------------------------------------------------- ① planet.json 的形
 nb::dict calendar_py(const Almanac& c) {
@@ -218,17 +185,32 @@ void bind_planet(nb::module_& m) {
         nb::gil_scoped_release rel;
         return stage4(c, seed, p, w, isl);
     });
-    m.def("planet_run", [](nb::handle cfg, uint64_t seed) {
-        Config tmp;
-        const Config& c = cfg_of(cfg, tmp);
-        World wd;
-        {
-            nb::gil_scoped_release rel;
-            wd = run(c, seed);
-        }
-        return nb::make_tuple(nb::cast(std::move(wd.planet), nb::rv_policy::move), nb::cast(std::move(wd.winds), nb::rv_policy::move),
-                              nb::cast(std::move(wd.islands), nb::rv_policy::move), nb::cast(std::move(wd.climate), nb::rv_policy::move));
-    });
+    // upto = 4（默认，P6c 的形）：(P, W, I, C)；5–9（P6d）：再接 (B, R, Ce, D, Pol) 到第 upto 步。skip_diffusion：⑧ 不算（D 为空对象，⑨ 照算）
+    m.def(
+        "planet_run",
+        [](nb::handle cfg, uint64_t seed, int upto, int threads, bool skip_diffusion) {
+            Config tmp;
+            const Config& c = cfg_of(cfg, tmp);
+            World wd;
+            Society so;
+            {
+                nb::gil_scoped_release rel;
+                wd = run(c, seed);
+                if (upto >= 5) so = run_society(c, seed, wd, upto, skip_diffusion, threads);
+            }
+            nb::list out;
+            out.append(nb::cast(std::move(wd.planet), nb::rv_policy::move));
+            out.append(nb::cast(std::move(wd.winds), nb::rv_policy::move));
+            out.append(nb::cast(std::move(wd.islands), nb::rv_policy::move));
+            out.append(nb::cast(std::move(wd.climate), nb::rv_policy::move));
+            if (upto >= 5) out.append(nb::cast(std::move(so.barriers), nb::rv_policy::move));
+            if (upto >= 6) out.append(nb::cast(std::move(so.routes), nb::rv_policy::move));
+            if (upto >= 7) out.append(nb::cast(std::move(so.centers), nb::rv_policy::move));
+            if (upto >= 8) out.append(nb::cast(std::move(so.diffusion), nb::rv_policy::move));
+            if (upto >= 9) out.append(nb::cast(std::move(so.polity), nb::rv_policy::move));
+            return nb::tuple(out);
+        },
+        "cfg"_a, "seed"_a, "upto"_a = 4, "threads"_a = 1, "skip_diffusion"_a = false);
 
     // ---------------------------------------------------------------- 产物的形（前端写 npz / json）
     m.def("planet_json", [](const Planet& p) { return planet_py(p); });

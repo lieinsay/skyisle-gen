@@ -66,6 +66,8 @@ public:
     double beta(double a, double b);
     // choice(k, p=p)：cdf = cumsum(p) / cdf[-1]，u = random()，searchsorted(cdf, u, 'right')
     int64_t choice_p(const std::vector<double>& p);
+    // choice(n, size, replace=False, p=p)（_generator.pyx 的 while n_uniq < size 循环；⑥ 抽介数的源）
+    std::vector<int64_t> choice_noreplace_p(const std::vector<double>& p, int64_t size);
 
     uint64_t bounded_u64(uint64_t off, uint64_t rng);   // random_bounded_uint64（Lemire，不用掩码）：[off, off + rng]
     static double loggam(double x);
