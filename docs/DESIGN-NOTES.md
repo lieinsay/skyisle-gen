@@ -779,6 +779,64 @@ Zhouzhu 的 PLAN-PLANET 定了 D3 / D16：生成器的算法整体移植成一�
 - pytest 76 个全过（新增 `tests/test_core_engine.py` 23 个：随机流 / 幂 / 斜边 / 求和 / round 逐位、栅格与水文公共件逐位、岛形与三种岛龄的侵蚀（粗网格与原网格两条路）逐位、
   势力范围与 Dykstra 逐位、小世界两后端同形、cpp 确定性与线程数无关、cpp 下 generate 过校验）；三个 seed 的 `check` 照旧 0 硬 0 软 0 报警。
 
+## 四点二十四、生成器后端换 C++：第三层其余——资源、聚落、四季、天气、粗版（2026-09-27，Zhouzhu 行星计划 P6b）
+
+P6a 移了第三层的地形段；这一期把第三层剩下的都移进 `core/`，cpp 后端下整群 `generate`（地形 → 水系 → 资源 → 四季 → 逐日天气 → 聚落）一次在 C++ 里算完，
+前端只拼 island.json、写产物、出图、校验。设计稿 `docs/PLAN-CORE.md`（三、五、六、八、九节随之更新）。
+
+- **做了什么**：`core/island/` 新 resources（地形区、点 / 片、赋存场 → 赋存区 → 采场、sync_resources）、climate（四季、逐日曲线、season_params、simulate_year、多年样本）、
+  settle（settle.py + tiers.py：户、田块 k-means、村址、专业聚落、集镇、泊场、桥头 / 水设施、前哨 / 主家候选 / 都与城、开垦、村的采场）、generate（整群编排、粗版块降采样）；
+  `json.hpp` 极简 JSON 值。绑定 `_core.generate / block_reduce / climate_only / weather_years / make_planet / make_config`。
+  前端：`island.generate` 第一处分派；`engine.generate_cpp` 拼回同形的 g；新 `decode.py` 把 C++ 的 ASCII 代码译回中文。
+  `weather.multi_year_stats`（IS-daily 的 60 年）、`lod.build_lod` 的块降采样、`climate.classify_all`（island stats）在 cpp 后端下也走 C++。
+- **拍板的几件事**：
+  - **记录的形**：资源 / 聚落 / 四季的记录量大、字段多，C++ 直接给 JSON 形（`Json`：有序对象，整数与浮点分开——Python 那边 1 与 1.0 写出来不同），
+    数在 C++ 里就按 Python 的 round 舍好（Python 版后面的计算读的就是舍过的值：田块面积求和、专业聚落的户数、泊场的距离……），
+    字符串是 ASCII 代码（P6a 的规矩），`decode.py` 译回中文、带数的备注按 Python 版的 f-string 拼。游戏（P6e）直接吃 JSON 形，按代码自己映射显示名。
+  - **赋存区的长度与走向前端重算**：`resources._shape` 用 np.cov（2×n 乘 n×2 走 OpenBLAS 的 dsyrk）与 np.linalg.eigh（LAPACK）。
+    对称的小块（几格的十字形、矩形）协方差 ≈ 0，求和次序差一位就是 ±1e−18，符号决定走向 atan2 落在 −0 还是 +0、`% 180` 之后是 0° 还是 180°——追不上。
+    所以 C++ 把每个赋存区的格子（原次序）交给前端，前端用 numpy 重算这两个数；C++ 自己的闭式主轴留给游戏（差别只在这种退化的小块上）。
+  - **写产物仍在前端**（npz / json / png / 预览图 / 天气 csv），与 P6a 同；粗版的 meta 也在前端拼（块降采样本身在 C++）。
+  - **两个后端共用的拼装**：资源 / 四季 / 天气 / 聚落的整体与 island.json 摘要抽成 `resource_record / resource_summary / set_climate / set_weather / set_settlements`，
+    python 后端调它们、cpp 后端也调它们（`sync_resources` 拆成 `_sync_patches` + `resource_summary`，cpp 后端只调后者）；python 后端产物逐字节不变（2051 对照过）。
+- **踩坑（在四点二十三的表上加）**：
+  - **Python 3.12 内置 `sum()` 对浮点是 Neumaier 补偿求和**（builtin_sum_impl：先 0 + x₀，其后补偿，最后加上补偿量），不是逐个相加。
+    田块户数的最大余数法里 `tot = sum(面积)` 差一位，38 户 × 0.43 / tot 的小数部分就和另一块 0.04 的翻了先后（#685 第一轮 5/20 群就败在这里）。C++ 的 `py_sum` 照做。
+  - **numpy 标量的 `round(x, n)` 是 rint(x·10ⁿ) / 10ⁿ**，不是 Python 浮点的精确十进制舍入；边界（…5）上差一位。Python 版里一个数是不是 numpy 标量要看来路：
+    田块形心 `km(ii[sel].mean(), …)` 是；村址 `gi = i + r0` 要看 `r0 = max(0, ii.min() − reach)` 返回的是 numpy 整数还是 Python 的 0、`divmod(p, c1 − c0)` 的除数是不是 numpy 整数；
+    主家候选前两种的格来自 np.where（numpy 整数）、第三种来自记录（Python 整数）。C++ 的 `npround` 按同样的来路选。2051 第一轮只差这一处（8 个田块形心的第三位小数）。
+  - **np.convolve 的核长 < 12 走 numpy 自己的顺序乘加，≥ 12 走 BLAS ddot**（本机实测分界）；逐日曲线的 57 格滑动平均走后者。
+    OpenBLAS 在这台 Zen 5 上选的是 SkylakeX 内核：4 路 512 位 FMA 累加（每轮 32 个）→ 折成 256 位 → 16 一组的 256 位 FMA → ((a₀+a₁)+a₂)+a₃ → 横向加 → 尾部顺序 FMA；
+    拿候选的累加次序与 np.dot 逐位比出来的（Haswell 内核的次序对不上）。`blas_ddot` 照它；**换 CPU 架构（Haswell 内核）就不对了**，差一位只影响风的逐日曲线。
+  - **本机 numpy 2.5.2（X86_V3 分派）的 float64 exp / log / log10 / log1p / cos / sin / arctan / arctan2 / hypot / power 与 UCRT 逐位相同**
+    （Windows 版没有 AVX-512 的 SVML），所以 C++ 直接用 C 库；Linux 版 numpy 带 SVML，那边要重验。
+  - float32 的栅格（slope_deg / flowacc_km2 / cut_m）：资源层先 `.astype(float64)`，但 `rock_site_mask` 与泊场直接拿 float32 比阈值（NEP 50：Python 浮点按 float32 算），
+    泊场的 `0.2 × slope` 也是 float32 乘法；C++ 各按原样。`sync_resources` 的格面积是 `res_km ** 2`（Python 浮点的幂 = C 的 pow，不是 res·res）。
+  - 指数分布的 256 层 ziggurat 表同样探出来（伽马形状 0.8 的雨量要它）；泊松（λ < 10 乘积法、≥ 10 PTRS 与 random_loggam）、不放回抽签（Floyd + 洗牌；
+    总体 > 10000 且抽的数 > 总体 // 50 时尾部洗牌）照 distributions.c / _generator.pyx；`rng.choice(三个字符串)` = integers(0, 3)。
+  - np.quantile（linear）：virtual = (n−1)·q，t ≥ 0.5 时用 b − (b−a)(1−t)；pts[sel].mean(axis=0) 沿 axis 0 是逐行顺序加；矿种权重按中文键 sorted() 抽（码位序 金 < 铁 < 铅锌 < 铜 < 锡 < 锡钨 < 锰）。
+  - 砂金的上游加权汇流：Python 按路由面降序逐格 `Al[r] += Al[k]`；路由面严格向下游降（D8 只走严格更低的邻格），每格的终值只依赖上游，
+    所以按拓扑序算、每个下游格按（路由面降序, 下标升序）依次加上各上游格，与排序版逐位相同（不用排全图）。
+- **实测**：
+  - `island compare --sample 30 --jobs 10`（seed 42，分层抽样）：**30 / 30 全过，30 群整套产物逐字节相同**（island.json 只差 meta.seconds / engine）；
+    陆地 / 主岛、岛数、峰高、河长、村数、户数、资源处数（点 / 片 / 赋存区 / 采场）、雨日比例、季型全同；两个后端的 island check 全过（含 RES-*、SET-*、IS-daily，前 3 群含 IS-det）。
+  - 大范围逐字节对照（整群 generate，产物逐文件比）：seed 42 / 7 / 2026 各随机 60 群 **180 / 180 相同**；另加 seed 42 的 22 个邦都（含变法之国的都 #6638 与 10 个无河的都）全同。
+    覆盖到的少见路径：溶洞 / 落水洞 / 地下河、瀑布后洞、鸟粪石、整片开垦掉的林场、窑村、烧炭营、温泉地、有村 / 无村可挂的淘金点、无河时的蓄水池与祭台。
+  - 2051：cpp 后端整套产物与 python 后端逐字节相同；python 后端的产物与改动前逐字节相同。`island check 2051 --backend cpp` 全过。
+  - 粗版：cpp 后端跑 seed 42 随机 200 群的 2 km / 1 km 粗版，与 P0 时 python 后端做的 `islands_lod/` **200 / 200 逐位相同**；每群（1 线程，10 进程并跑）中位 0.79 s、P90 1.55 s、最长 2.7 s，
+    **全行星预估 10 进程约 12.5 分钟、28 进程约 4 分钟**（P0 的 python 是 28 进程约两小时）。
+  - `island stats`（8000 群只算四季）：python 4.5 s → cpp 1.1 s，season_stats.json 相同。
+  - 用时（`island compare --timing`：顺序跑、不写产物、先热身；同 30 群）：整群 generate 中位 / 最长 **python 7.34 / 22.1 s → cpp 1 线程 0.87 / 2.36 s → cpp 4 线程 0.62 / 1.65 s**（最长是 #6239 的 186 万格；#833 的 245 万格 1.58 s），逐群加速中位 ×11.5；其中地形 + 水系中位 python 3.94 / cpp 1 线程 0.52 / 4 线程 0.31 s，剩下的资源、聚落在 C++ 里是单线程（#833：资源 0.43 s、聚落 0.31 s）。写 png / 预览图（matplotlib）另要 2–4 s，两个后端一样。30 群对照（10 进程并跑、群内 1 线程）时整群 generate 中位 python 15.8 s / cpp 1.42 s
+  - pytest 100 个全过（新 `tests/test_core_p6b.py` 24 个：指数 / 伽马 / 对数正态 / 泊松 / 不放回抽签、quantile / interp / convolve / float32 求和、label_by_island / window_extrema、
+    田块 k-means 逐位；小世界上整群 generate 两个后端整套产物逐字节相同（有河 / 无河、steps 2–4）、cpp 线程数无关、粗版、IS-daily 与全量季型同值）；
+    三个 seed 的 `check` 照旧 0 硬 0 软 0 报警。
+- **没做到 / 已知问题**：逐位一致只在这台机器（Windows、MSVC、UCRT、numpy 2.5.2 的 X86_V3 分派、OpenBLAS SkylakeX 内核）上验过；换 Linux 的 glibc、带 SVML 的 numpy、
+  Haswell 内核的 OpenBLAS 都可能差一位，差一位只会在阈值上偶尔翻（按 P6a 的口径那时退回统计对照）。C++ 自己算的赋存区长度 / 走向在退化的小块上与 numpy 不同（前端重算，游戏用 C++ 的）。
+  默认后端仍是 python（P6d 切）。ME Pro 上没编。
+- **P6c 从哪接**：第三层读的行星层产物（③ islands / plates、④ wind_local / climate_grid / band_local / climate_islands、⑨ polity）现在由前端读 npz 塞进 `PlanetView` / `NodeInputs`；
+  P6c 把 ①–④ 移进 `core/planet/` 后，这些由 C++ 在内存里直接给（游戏新建世界时不经 npz）。`[engine] backend` 那时要并进阶段缓存 key。
+  行星层 ① 的历法（almanac）与 ④ 的 grid_interp / local_edges 已有 C++ 同式件可复用；④ 的水汽模型是显式迎风推进，逐位要看 numpy 的逐元素运算与求和次序（同这一期的办法）。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。
