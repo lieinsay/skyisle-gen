@@ -7,7 +7,7 @@ skyisle probe <node|path|edge|trait> ...
 skyisle check --run out/seed42 [--calibrate]
 skyisle ninegrid --run out/seed42 [--region K]
 skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
-skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N]
+skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N] [--no-weather]
 skyisle island compare --sample 30 [--jobs N] [--timing [--no-python]]   # 两个后端（python / cpp）的对照；各命令默认 cpp（C++ 核心），加 --backend python 走冻结的参考后端
 """
 from __future__ import annotations
@@ -98,6 +98,8 @@ def main(argv=None):
     p_isl.add_argument("--radius", type=float, default=600.0)
     p_isl.add_argument("--jobs", type=int, default=0, help="lod：进程数（0 = CPU 数 − 2）")
     p_isl.add_argument("--force", action="store_true", help="lod：已有的也重跑")
+    p_isl.add_argument("--weather", action=argparse.BooleanOptionalAction, default=True,
+                       help="lod：顺带出第 --year 年的逐日天气，存进同一个 npz 的 weather_<列> 与 weather_meta（默认开；已有但不带天气或不是这一年的粗版会重跑）")
     p_isl.add_argument("--backend", choices=["python", "cpp"], default=None,
                        help="生成器后端（= --set engine.backend=…；默认 cpp，要先 python core/build.py；python = 冻结的参考后端）")
     p_isl.add_argument("--timing", action="store_true", help="compare：只量整群 generate 的用时（顺序跑，不写产物；python / cpp 1 线程 / cpp 4 线程）")
@@ -179,7 +181,8 @@ def main(argv=None):
             jobs = a.jobs if a.jobs > 0 else max(1, (os.cpu_count() or 4) - 2)
             if jobs > 1 and not any(s.startswith("engine.threads=") for s in a.sets):
                 a.sets = list(a.sets) + ["engine.threads=1"]      # 多进程时 cpp 后端群内不再开线程
-            return run_lod(ctx, res_list, select_nodes(ctx, a.nodes, a.near, a.radius), jobs, force=a.force, sets=a.sets)
+            return run_lod(ctx, res_list, select_nodes(ctx, a.nodes, a.near, a.radius), jobs, force=a.force, sets=a.sets, weather=a.weather,
+                           year=a.year)
         isl.generate(ctx, int(a.what), year=a.year, res_m=a.res, export=a.export, sets=a.sets, steps=a.steps)
         return 0
     return 1
