@@ -256,17 +256,19 @@ std::vector<double> relief_targets(Rng& rng, const std::vector<double>& sizes, c
 
 // 浮高（layout.float_offsets 同式）：z = bias − age_gain × (岛龄 − 主岛岛龄) / age_scale + N(0, 1)；
 // z > 0 往上 up_max × tanh(up_scale × z / up_max)，否则往下 down_max × tanh(down_scale × z / down_max)。
-// 先整批抽 n 个正态（同 rng.normal(0, 1, n)），再逐岛算；std::tanh 与 Python 的 math.tanh 是同一个 C 库函数
+// 抽正态与算 δ 在同一个循环里：抽取次序同 rng.normal(0, 1, n)（第 0 个抽了不用），且循环带着随机数状态、编译器不会把 tanh 换成向量化版本；
+// std::tanh 与 Python 的 math.tanh 是同一个 C 库函数
 std::vector<double> float_offsets(Rng& rng, const std::vector<double>& ages, const Config& c) {
     const size_t n = ages.size();
-    std::vector<double> out(n, 0.0), eps(n);
-    for (size_t k = 0; k < n; ++k) eps[k] = rng.normal(0.0, 1.0);
+    std::vector<double> out(n, 0.0);
     const double a0 = n ? ages[0] : 0.0;
     const double bias = c.get("float.bias"), gain = c.get("float.age_gain"), scale = c.get("float.age_scale");
     const double up = c.get("float.up_max_m"), su = c.get("float.up_scale_m");
     const double dn = c.get("float.down_max_m"), sd = c.get("float.down_scale_m");
-    for (size_t k = 1; k < n; ++k) {
-        const double z = bias - gain * ((ages[k] - a0) / scale) + eps[k];
+    for (size_t k = 0; k < n; ++k) {
+        const double eps = rng.normal(0.0, 1.0);
+        if (k == 0) continue;
+        const double z = bias - gain * ((ages[k] - a0) / scale) + eps;
         out[k] = z > 0.0 ? up * std::tanh(su * z / up) : dn * std::tanh(sd * z / dn);
     }
     return out;
