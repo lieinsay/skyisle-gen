@@ -21,6 +21,22 @@ inline double gauss(double x, double mu, double sigma) {
     return std::exp(-0.5 * (z * z));
 }
 
+// numpy 2.x 复数的 np.abs（loops_unary_complex 的 SIMD 版，连续数组连尾巴都走它）：不是 C 的 hypot，
+// 而是 larger · sqrt(fma(r, r, 1))，r = smaller / larger（larger = 0 或 smaller = inf 时 r = 0）
+double np_cabs(double re, double im) {
+    re = std::fabs(re);
+    im = std::fabs(im);
+    const double inf = INF;
+    if (re == inf) im = inf;
+    if (im == inf) re = inf;
+    if (std::isnan(re)) im = NaN;
+    if (std::isnan(im)) re = NaN;
+    const double larger = re > im ? re : im;     // _mm_max_pd(re, im)
+    const double smaller = im < re ? im : re;    // _mm_min_pd(im, re)
+    const double ratio = (larger == 0.0 || smaller == inf) ? 0.0 : smaller / larger;
+    return std::sqrt(std::fma(ratio, ratio, 1.0)) * larger;
+}
+
 std::vector<double> edge_values(const Planet& p) {
     return {p.eq_storm_top, p.trades_top, p.calm_top, p.westerlies_top, -p.eq_storm_top, -p.trades_top, -p.calm_top, -p.westerlies_top};
 }
@@ -336,7 +352,7 @@ std::vector<double> insolation_first_harmonic(const std::vector<double>& lat_deg
         // 除以个数：numpy 的复数除法（Smith）对 (n + 0j) 是乘以 1/n
         const double scl = 1.0 / (static_cast<double>(n) + 0.0 * 0.0);
         const double mr = (sr + si * 0.0) * scl, mi = (si - sr * 0.0) * scl;
-        out[m] = 2.0 * std::hypot(mr, mi);
+        out[m] = 2.0 * np_cabs(mr, mi);
     }
     return out;
 }
