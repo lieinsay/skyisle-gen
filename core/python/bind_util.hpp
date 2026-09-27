@@ -8,6 +8,7 @@
 #include <initializer_list>
 #include <vector>
 
+#include "skyisle/config.hpp"
 #include "skyisle/flow.hpp"
 #include "skyisle/grid.hpp"
 
@@ -59,3 +60,8 @@ inline skyisle::Mask mask_from(const ArrB2& a) {
 inline nb::tuple flow_np(skyisle::FlowDir&& f, size_t H, size_t W) {
     return nb::make_tuple(to_np(std::move(f.ri), {H, W}), to_np(std::move(f.rj), {H, W}), bool_np(std::move(f.to_void), {H, W}));
 }
+
+// 展平的配置：{"num": {键: 数}, "vec": {键: [数]}, "str": {键: 串}（可缺）}；Config 对象（make_config 转好的）直接用
+skyisle::Config cfg_from(const nb::dict& d);
+const skyisle::Config& cfg_of(nb::handle h, skyisle::Config& tmp);
+

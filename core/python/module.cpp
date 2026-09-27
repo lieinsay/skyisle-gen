@@ -22,6 +22,7 @@ using namespace nb::literals;
 using namespace skyisle;
 
 void bind_island(nb::module_& m);
+void bind_planet(nb::module_& m);
 
 namespace {
 
@@ -33,7 +34,7 @@ Rng rng_of(uint64_t seed, uint64_t stream, const std::string& key) {
 
 NB_MODULE(_core, m) {
     m.doc() = "skyisle-gen 的 C++ 核心（docs/PLAN-CORE.md）";
-    m.def("version", []() { return std::string("p6b-1"); });
+    m.def("version", []() { return std::string("p6c-1"); });
 
     // ---------------------------------------------------------------- 随机数
     m.def("rng_raw", [](uint64_t seed, uint64_t stream, const std::string& key, size_t n) {
@@ -185,4 +186,5 @@ NB_MODULE(_core, m) {
     });
 
     bind_island(m);
+    bind_planet(m);
 }

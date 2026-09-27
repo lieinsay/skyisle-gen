@@ -37,12 +37,17 @@ std::vector<int32_t> iget(const nb::dict& d, const char* k) {
     return std::vector<int32_t>(a.data(), a.data() + a.size());
 }
 
+}  // namespace
+
 Config cfg_from(const nb::dict& d) {
     Config c;
     c.num = nb::cast<std::map<std::string, double>>(d["num"]);
     c.vec = nb::cast<std::map<std::string, std::vector<double>>>(d["vec"]);
+    if (d.contains("str")) c.str = nb::cast<std::map<std::string, std::string>>(d["str"]);   // 行星层（P6c）有字符串键
     return c;
 }
+
+namespace {
 
 NodeInputs inp_from(const nb::dict& d) {
     NodeInputs x;
@@ -436,17 +441,17 @@ const PlanetView& pv_of(nb::handle h, PlanetView& tmp) {
     tmp = planet_from(nb::cast<nb::dict>(h));
     return tmp;
 }
+}  // namespace
+
 const Config& cfg_of(nb::handle h, Config& tmp) {
     if (nb::isinstance<Config>(h)) return nb::cast<const Config&>(h);
     tmp = cfg_from(nb::cast<nb::dict>(h));
     return tmp;
 }
 
-}  // namespace
-
 void bind_island(nb::module_& m) {
     nb::class_<PlanetView>(m, "Planet", "行星层的网格与全体群（make_planet 转好，按 run 缓存）");
-    nb::class_<Config>(m, "Config", "展平的 [island] 段（make_config 转好）");
+    nb::class_<Config>(m, "Config", "展平的配置：[island] 段或行星层的 shared / skeleton / s01–s04（make_config 转好）");
     m.def("make_planet", [](nb::dict planet) { return planet_from(planet); });
     m.def("make_config", [](nb::dict cfg) { return cfg_from(cfg); });
 

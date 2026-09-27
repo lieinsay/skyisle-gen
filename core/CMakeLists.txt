@@ -32,9 +32,16 @@ add_library(skyisle_core STATIC
   src/island/climate.cpp
   src/island/settle.cpp
   src/island/generate.cpp
+  src/planet/sphere.cpp
+  src/planet/stage12.cpp
+  src/planet/stage3.cpp
+  src/planet/stage4.cpp
+  src/planet/view.cpp
 )
 target_include_directories(skyisle_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(skyisle_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# 第三方：pocketfft（与 numpy 2.x 的 np.fft 同一份实现，BSD 3-Clause；numpy v2.5.2 引用的提交 33ae5dc）
+target_include_directories(skyisle_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 find_package(Threads REQUIRED)
 target_link_libraries(skyisle_core PUBLIC Threads::Threads)
 if(MSVC)
@@ -58,7 +65,7 @@ if(SKYISLE_PYTHON)
                     OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_DIR)
   endif()
   find_package(nanobind CONFIG REQUIRED)
-  nanobind_add_module(_core NB_STATIC python/module.cpp python/bind_island.cpp)
+  nanobind_add_module(_core NB_STATIC python/module.cpp python/bind_island.cpp python/bind_planet.cpp)
   target_link_libraries(_core PRIVATE skyisle_core)
   set(_pkg ${CMAKE_CURRENT_SOURCE_DIR}/../skyisle_gen)
   set_target_properties(_core PROPERTIES
