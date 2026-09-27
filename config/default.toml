@@ -501,8 +501,11 @@ surface_lo = 0.6              # 其余岛台面 = 主岛台面 × U(lo, hi)（�
 surface_hi = 1.0
 layered_spread_m = 400.0      # 叠层群：其余岛再 ± U(0.5, 1) × 此值，出现上下错开的岛
 age_jitter = 0.08             # 群内各岛岛龄围绕节点岛龄的抖动（主岛不抖）
-bridge_max_km = 2.0           # 索桥：岸距 ≤ 此值且岸缘高差 ≤ bridge_max_dh_m；否则短渡
-bridge_max_dh_m = 250.0
+# 索桥：岸距 ≤ bridge_max_km 且岸缘高差 ≤ bridge_max_dh_m；否则短渡（飞船）。2026-09-27 用户定：去掉不合理的长索桥（DESIGN-NOTES 四点二十八）——
+# 前工业时代的绳索桥跨度几十到一百来米，现实最长的钢缆悬索桥主跨也才约 2 km（旧值 2 km 等于到处架现代最长的桥）；
+# 高差：100 m 长的桥两头差 250 m（旧值）等于一面墙，30 m 约 17° 坡。群内岸距一般 ≥ layout.gap_min_km（1 km），索桥几乎只剩贴得很近的岛对
+bridge_max_km = 0.1
+bridge_max_dh_m = 30.0
 ferry_max_km = 20.0           # 只给岸距 ≤ 此值的岛对连短渡（连通性回退另补）
 
 [island.territory]            # 势力范围（territory.py，DESIGN-NOTES 四点二十二）：邻群的陆地不许叠——与每个邻群按等效半径 √(陆地/π) 分界
