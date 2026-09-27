@@ -8,7 +8,7 @@ skyisle check --run out/seed42 [--calibrate]
 skyisle ninegrid --run out/seed42 [--region K]
 skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
 skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N]
-skyisle island compare --sample 30 [--jobs N] [--timing [--no-python]]   # 两个后端（python / cpp）的对照；island 各命令加 --backend cpp 走 C++ 核心
+skyisle island compare --sample 30 [--jobs N] [--timing [--no-python]]   # 两个后端（python / cpp）的对照；各命令默认 cpp（C++ 核心），加 --backend python 走冻结的参考后端
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def _add_common(p):
     p.add_argument("--set", action="append", default=[], dest="sets", help="a.b.c=value 覆盖")
     p.add_argument("--out", default="out")
     p.add_argument("--backend", choices=["python", "cpp"], default=None,
-                   help="生成器后端（= --set engine.backend=…）：cpp 下 ①–④ 由 C++ 核心算（行星计划 P6c，要先 python core/build.py）；"
-                        "cpp 的阶段缓存 key 与 python 分开，建议配 --set run.id=cpp-seed42 另放一个目录")
+                   help="生成器后端（= --set engine.backend=…）：默认 cpp（①–⑨ 由 C++ 核心算，要先 python core/build.py）；"
+                        "python 是冻结的参考后端（对照用）。两个后端的阶段缓存 key 分开，切后端建议配 --set run.id=… 另放一个目录")
 
 
 def _ctx_from_run(run_dir: str) -> Context:
@@ -99,7 +99,7 @@ def main(argv=None):
     p_isl.add_argument("--jobs", type=int, default=0, help="lod：进程数（0 = CPU 数 − 2）")
     p_isl.add_argument("--force", action="store_true", help="lod：已有的也重跑")
     p_isl.add_argument("--backend", choices=["python", "cpp"], default=None,
-                       help="生成器后端（= --set engine.backend=…；cpp 要先 python core/build.py）")
+                       help="生成器后端（= --set engine.backend=…；默认 cpp，要先 python core/build.py；python = 冻结的参考后端）")
     p_isl.add_argument("--timing", action="store_true", help="compare：只量整群 generate 的用时（顺序跑，不写产物；python / cpp 1 线程 / cpp 4 线程）")
     p_isl.add_argument("--no-python", action="store_true", help="compare --timing：不跑 python 后端（它慢）")
 

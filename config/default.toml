@@ -7,9 +7,10 @@
 [run]
 # id = "my-run"        # 缺省为 seed<N>
 
-[engine]               # 生成器后端（docs/PLAN-CORE.md；行星计划 P6）：已移到 C++ 核心库的段按它分派；python 不进缓存 key，cpp 给 ①–④ 的阶段 key 加 "+cpp"
-backend = "python"     # "python" | "cpp"；已移：第三层全部（P6a / P6b）、管线 ①–④（P6c）；⑤–⑩ 照旧走 Python
-threads = 4            # cpp 后端群内各岛并行的线程数（结果与线程数无关）；批跑多进程时设 1
+[engine]               # 生成器后端（docs/PLAN-CORE.md；行星计划 P6）：python 不进缓存 key，cpp 给 ①–⑨ 的阶段 key 加 "+cpp"
+backend = "cpp"        # "cpp"（默认，P6d 起）| "python"（冻结的参考后端，只作对照）；C++ 核心：第三层全部、管线 ①–⑨；⑩ 输出只在 Python。
+                       # 扩展没编（python core/build.py）时 cpp 会报错；那台机器上先用 --backend python。没有 [engine] 段的旧 run 快照按 python 算 key
+threads = 4            # cpp 后端群内各岛并行、⑥ 抽样介数按源并行的线程数（结果与线程数无关）；批跑多进程时设 1
 
 [shared]
 day_range_km = 500.0   # 1 天 = 中性风因子下的航程
