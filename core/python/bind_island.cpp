@@ -216,6 +216,7 @@ nb::dict terrain_dict(Group& g) {
         e["rim"] = r.rim;
         e["peak"] = r.peak;
         e["keel"] = r.keel;
+        e["float"] = r.fl;
         e["age"] = r.age;
         e["kind"] = age_name(r.kind);
         e["bbox"] = nb::make_tuple(r.r0, r.c0, r.m, r.m);

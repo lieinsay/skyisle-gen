@@ -134,7 +134,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     if backend(ctx) == "cpp":
         from .engine import build_terrain_cpp
         return build_terrain_cpp(ctx, node, c, inp, res_m=res_m, log=log)
-    from .layout import (boundary_axis, island_count, links, place_islands, radial_profile, relief_targets,
+    from .layout import (boundary_axis, float_offsets, island_count, links, place_islands, radial_profile, relief_targets,
                          shoreline_gaps, surface_heights, zipf_sizes)
     from .terrain import age_class, island_shape, sculpt_island
     from .grid import binary_erode
@@ -152,6 +152,10 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     elong = rng_l.uniform(1.0, float(ter["elongation_max"]), n)
     thetas = axis + rng_l.normal(0.0, 0.35 if kernel > 0.3 else 1.2, n)
     reliefs = relief_targets(_rng(ctx, node, "relief"), sizes, ages, ter)   # 独立随机流：不打乱布局的抽样次序
+    # 浮高（四点二十八）：其余岛整座上下平移 δ（主岛 0），另一条随机流；岸缘下限等地形拟合完再夹
+    fc = c.get("float") or {}
+    float_on = bool(fc.get("enabled", False))
+    floats = float_offsets(_rng(ctx, node, "float"), ages, fc) if float_on else np.zeros(n)
     keel = inp["keel_clearance_m"]
 
     res0 = float(res_m or c["res_m"])
@@ -209,6 +213,16 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
         rng_t = _rng(ctx, node, f"terrain:{k}")
         h, kind, rim, peak = sculpt_island(rng_t, mask, inside, X, Y, float(ages[k]), float(sizes[k]), res_km, surf,
                                            float(reliefs[k]), keel_k + float(ter["cliff_min_m"]), k == 0, ter)
+        # 浮高：整座平移（高程、岸缘、峰、台面、岛底一起），在水系、地表、资源、气温、聚落之前——后面按高度算的都读平移后的
+        fl = 0.0
+        if float_on and k > 0:
+            fl, floor = float(floats[k]), float(fc["rim_floor_m"])
+            if fl < 0.0:
+                # 往下的按岸缘离下限的余量缩（余量 ≥ down_max_m 不缩）：低台面的群往下挪得少，岸缘不到下限、也不在下限上堆一摞
+                fl *= min(1.0, max(0.0, (rim - floor) / float(fc["down_max_m"])))
+            fl = max(fl, floor - rim)                                           # 岸缘 + δ ≥ rim_floor_m（兜底）
+            h = h + fl
+            rim, peak, surf, keel_k = rim + fl, peak + fl, surf + fl, keel_k + fl
         rims[k] = rim
         # 写入（不覆盖已有岛：布局保证不重叠）
         sl = (slice(r0, r0 + m), slice(c0, c0 + m))
@@ -224,6 +238,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
             "center_km": [round(float(centers[k, 0]), 3), round(float(centers[k, 1]), 3)],
             "surface_m": round(surf, 1), "relief_m": round(peak - rim, 1), "relief_target_m": round(float(reliefs[k]), 1),
             "peak_m": round(peak, 1), "rim_m": round(rim, 1), "keel_m": round(keel_k, 1), "cliff_m": round(rim - keel_k, 1),
+            "float_m": round(fl, 1),
             "age": round(float(ages[k]), 3), "age_zh": {"young": "新岛", "mid": "中年", "old": "老岛"}[kind],
             "bbox_cells": [r0, c0, m, m],
         })

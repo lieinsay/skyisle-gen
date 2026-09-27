@@ -78,7 +78,8 @@ struct Shape {
 struct IslandRec {
     int id = 0;
     int64_t area_cells = 0;
-    double area_target = 0, cx = 0, cy = 0, surface = 0, relief_target = 0, rim = 0, peak = 0, keel = 0, age = 0;
+    // surface / rim / peak / keel 都已含浮高 fl（整座平移的 δ，m；主岛 0，DESIGN-NOTES 四点二十八）
+    double area_target = 0, cx = 0, cy = 0, surface = 0, relief_target = 0, rim = 0, peak = 0, keel = 0, age = 0, fl = 0;
     AgeKind kind = MID;
     int r0 = 0, c0 = 0, m = 0;          // 局部栅格左上角在群栅格里的行列、边长（裁切后）
     // island.json 里的四舍五入值（Python 版 hydro 读的是它们）

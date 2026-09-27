@@ -245,6 +245,7 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print) -> dict:
             "center_km": [round(float(e["cx"]), 3), round(float(e["cy"]), 3)],
             "surface_m": round(surf, 1), "relief_m": round(peak - rim, 1), "relief_target_m": round(float(e["relief_target"]), 1),
             "peak_m": round(peak, 1), "rim_m": round(rim, 1), "keel_m": round(keel_k, 1), "cliff_m": round(rim - keel_k, 1),
+            "float_m": round(float(e["float"]), 1),
             "age": round(float(e["age"]), 3), "age_zh": AGE_ZH[e["kind"]],
             "bbox_cells": [r0, c0, m, m],
         })

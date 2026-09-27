@@ -29,6 +29,8 @@ std::vector<std::array<double, 2>> place_islands(Rng& rng, const std::vector<std
                                                  const TerritoryPlace* territory = nullptr);
 std::vector<double> surface_heights(Rng& rng, int n, double height_m, bool layered, const Config& c);
 std::vector<double> relief_targets(Rng& rng, const std::vector<double>& sizes, const std::vector<double>& ages, const Config& c);
+// 浮高的原始值（主岛 0；往下的等地形拟合出岸缘后由 build_terrain 按离下限的余量缩）：参数读 float.*（DESIGN-NOTES 四点二十八）
+std::vector<double> float_offsets(Rng& rng, const std::vector<double>& ages, const Config& c);
 std::map<std::pair<int, int>, double> shoreline_gaps(const std::vector<MaskPos>& masks_pos, double res_km,
                                                      const std::vector<std::array<double, 2>>& centers_cell,
                                                      const std::vector<double>& radii_km, double max_gap_km);

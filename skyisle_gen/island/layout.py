@@ -207,6 +207,25 @@ def relief_targets(rng, sizes: np.ndarray, ages: np.ndarray, c: dict) -> np.ndar
     return np.clip(R, float(c["relief_min_m"]), float(c["relief_max_m"]))
 
 
+def float_offsets(rng, ages: np.ndarray, c: dict) -> np.ndarray:
+    """浮高的原始值（DESIGN-NOTES 四点二十八）：各岛整座上下平移 δ（m），主岛 0。
+    z = bias − age_gain × (岛龄 − 主岛岛龄) / age_scale + N(0, 1)：比主岛年轻的往上（浮石足）、老的往下（浮力衰减），再加随机；
+    z > 0：δ = up_max × tanh(up_scale × z / up_max)，z ≤ 0：δ = down_max × tanh(down_scale × z / down_max)（软饱和，往上 / 往下都到不了上限）。
+    岸缘下限要等地形拟合出岸缘才用（build_terrain）：往下的按余量 (岸缘 − rim_floor_m) / down_max 缩（≥ 1 不缩），岸缘 + δ 总在下限之上。随机数只从本流（island:<节点>:float）取，别的抽样次序不动；
+    逐岛标量算（math.tanh = C 库的 tanh，与 C++ 的 std::tanh 同一个函数，逐位相同）。"""
+    n = len(ages)
+    out = np.zeros(n)
+    eps = rng.normal(0.0, 1.0, n)
+    a0 = float(ages[0])
+    bias, gain, scale = float(c["bias"]), float(c["age_gain"]), float(c["age_scale"])
+    up, su = float(c["up_max_m"]), float(c["up_scale_m"])
+    dn, sd = float(c["down_max_m"]), float(c["down_scale_m"])
+    for k in range(1, n):
+        z = bias - gain * ((float(ages[k]) - a0) / scale) + float(eps[k])
+        out[k] = up * math.tanh(su * z / up) if z > 0.0 else dn * math.tanh(sd * z / dn)
+    return out
+
+
 def shoreline_gaps(masks_pos: list[tuple[np.ndarray, int, int]], res_km: float, centers_cell: np.ndarray,
                    radii_km: np.ndarray, max_gap_km: float) -> dict[tuple[int, int], float]:
     """两岛岸线间的最短距离（km），只算圆盘距离可能 ≤ max_gap 的岛对。masks_pos: (mask, row0, col0) 在群栅格中的位置。"""

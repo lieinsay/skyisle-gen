@@ -148,6 +148,14 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
     for (int k = 0; k < n; ++k) thetas[k] = axis + rng_l.normal(0.0, tsig);
     Rng rng_r = part_rng(inp, "relief");
     const std::vector<double> reliefs = relief_targets(rng_r, sizes, ages, c);
+    // 浮高（四点二十八）：其余岛整座上下平移 δ（主岛 0），另一条随机流；岸缘下限等地形拟合完再夹。
+    // 配置里没有 float 段（旧的展平配置）= 不浮，与改前逐位相同
+    const bool float_on = c.get("float.enabled", 0.0) != 0.0;
+    std::vector<double> floats(n, 0.0);
+    if (float_on) {
+        Rng rng_f = part_rng(inp, "float");
+        floats = float_offsets(rng_f, ages, c);
+    }
     const double keel = inp.keel_clearance_m;
 
     const double res0 = res_m > 0 ? res_m : c.get("res_m");
@@ -221,11 +229,23 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
     g.rims.assign(n, 0.0);
     g.islands.resize(n);
     g.masks_pos.resize(n);
+    const double rim_floor = float_on ? c.get("float.rim_floor_m") : 0.0, down_max = float_on ? c.get("float.down_max_m") : 1.0;
     for (int k = 0; k < n; ++k) {
         const Shape& s = ss.shapes[k];
         const int m = s.mask.H;
         const int c0 = static_cast<int>(std::nearbyint((gcx[k] - (m - 1) / 2.0 * res_km - x0) / res_km));
         const int r0 = static_cast<int>(std::nearbyint((y0 - (gcy[k] + (m - 1) / 2.0 * res_km)) / res_km));
+        // 浮高：整座平移（高程、岸缘、峰、台面、岛底一起），在水系、地表、资源、气温、聚落之前
+        double fl = 0.0;
+        if (float_on && k > 0) {
+            fl = floats[k];
+            // 往下的按岸缘离下限的余量缩（余量 ≥ down_max_m 不缩）：低台面的群往下挪得少，岸缘不到下限、也不在下限上堆一摞
+            if (fl < 0.0) fl *= std::min(1.0, std::max(0.0, (sc[k].rim - rim_floor) / down_max));
+            fl = std::max(fl, rim_floor - sc[k].rim);              // 岸缘 + δ ≥ rim_floor_m（兜底）
+            for (double& v : sc[k].h.v) v += fl;                    // 掩膜外是 NaN，加了还是 NaN
+            sc[k].rim += fl;
+            sc[k].peak += fl;
+        }
         g.rims[k] = sc[k].rim;
         MaskPos mp;
         mp.mask = Mask(m, m, 0);
@@ -252,11 +272,12 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         rec.area_target = sizes[k];
         rec.cx = centers[k][0];
         rec.cy = centers[k][1];
-        rec.surface = surfs[k];
+        rec.surface = surfs[k] + fl;
         rec.relief_target = reliefs[k];
         rec.rim = sc[k].rim;
         rec.peak = sc[k].peak;
-        rec.keel = keels[k];
+        rec.keel = keels[k] + fl;
+        rec.fl = fl;
         rec.age = ages[k];
         rec.kind = sc[k].kind;
         rec.r0 = r0;
