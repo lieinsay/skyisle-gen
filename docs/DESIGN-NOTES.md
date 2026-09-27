@@ -975,6 +975,55 @@ P6c 移了管线的前四步；这一期把 ⑤ 障碍、⑥ 航路与抽样介�
   生成一个群：`node_inputs(world.islands, world.climate, node, seed, cfg)` + `apply_polity(society.polity, node, cfg, inputs)` → `island::generate(inputs, view, island_cfg, …)`。
   行星层 ①–⑨ 1.2 s，一群 generate 0.6 s 左右（4 线程）。
 
+## 四点二十七、粗版顺带出逐日天气：全行星 8000 群（2026-09-27，Zhouzhu 行星计划 P5 的前置）
+
+Zhouzhu 的 PLAN-PLANET 第五节 P5 第 0 条：没生成过细版的群没有逐日天气，行星天气场要以各群当天的天气为真值；计划原想用粗版的岸缘高另算一份。
+现在第三层整群已在 C++ 里（四点二十四），粗版本来就在原生分辨率上跑地形 + 水系，天气直接接在后面算——就是细版的那一份，不是近似。
+
+- **天气依赖什么**：四季只看本群的行星层输入（③④ 的标量与网格）；逐日天气另加主岛台面 height_m、直减率与**水系之后**的主岛岸缘 rim_m（只用来分雨雪：岸缘气温 ≤ snow_temp_c 算雪）；
+  随机流 `island:{node}:weather:{year}` 自成一路，资源、聚落不碰它。所以粗版不跑资源：地形 + 水系之后调新绑定 `_core.weather_year`
+  （build_climate → daily_curves → season_params → simulate_year，与 generate 的第 3、4 步同式；python 后端调 climate / weather 的原函数），
+  逐日行由两个后端共用的 `set_weather` 拼——与写 weather_y0.csv、climate.json 逐日表的是同一份行。
+- **存法（拍板）**：存进**同一个粗版 npz**，每个分辨率各带一份（同值）。理由：export_planet 只开一个分辨率目录，npz 自足，不另开文件就不会两处对不齐；
+  一份约 8 KB，全行星每个分辨率多 64 MB（2 km 110 → 174 MB，1 km 280 → 344 MB）。
+  - 列 `weather_<列>`（每列 336 个，一日一个）：day（int16，0 起）、season（uint8，weather_meta.season_names 的下标）、month / day_of_month（uint8，1 起）、
+    type（uint8，weather_meta.types 的下标：晴 / 多云 / 小雨 / 大雨 / 云海漫顶 / 风暴 / 小雪 / 大雪 / 暴风雪）、precip_mm / temp_c / wind_ms（float64，已按 csv 舍到 0.1）、
+    wind_from_deg（int16，取整）、sailable（bool）、storm_event（int16，当年风暴场次号，0 = 不是风暴日），外加 **temp_rim_c**（主岛岸缘处的气温，csv 里没有、climate.json 逐日表里有）。
+  - **按 csv 的位数舍好、存 float64**：`str(float(x))` 就是 csv 里的写法，逐行对照不用再格式化；存 float32 的话 `str(float(np.float32(12.3)))` 是 12.300000190734863，
+    读的一方稍不留神就对不上。原始双精度不存（细版的产物也只有舍过的）。
+  - 头 `weather_meta`（JSON 字符串）：year、n_days、types、season_names、season_type(_zh)、calendar（seasons / months_per_season / days_per_month / days_per_season /
+    year_days / day_offset_solstice_n）、sun（lat / lon / tilt_deg）、climate（ref_m = 台面 temp_ref_height_m、lapse_c_per_km、rim_m、fog_surface_max_m、
+    fog_rise_m = 120 + 0.25 × max(0, fog_surface_max_m − ref_m)（与调试台季相层、Zhouzhu export_skyisle 同式，未舍）、snow_temp_c、heavy_rain_mm、sail_wind_max_ms）、
+    precip_mm（island.json 的 hydro.precip_mm，weather.tsv 头的那个）、precip_climate_mm、summary（island.json 的 weather 摘要）、note（读法）。
+    climate 各键与 Zhouzhu `tools/export_skyisle.py` 写 weather.tsv 头读的那几个一一对应。
+  - `meta` 与块降采样的数组一个字节不动（天气头另放一个键，不塞进 meta）——这样才能与 P0 的粗版逐位对照。
+- **开关**：`--weather` 默认开（`--no-weather` 关），`--year` 选年份（默认 0）。已有的粗版不带天气、或带的不是这一年，就当没有、重跑；index.json 每条多记 `weather_year`。
+  顺手修了 index.json：原先按这次的分辨率整个重写，P0 之后 index 里只剩最后一次跑的 500 m 的 20 群；现在与旧 index 合并，只换这次跑的分辨率。
+- **实测**（seed 42，cpp，Ryzen 9 9950X3D；另一个子任务同时在跑游戏测试，给它留了约 8 线程）：
+  - 全行星 2 km + 1 km：22 进程、群内 1 线程，生成 **7.5 分钟**，连汇总 index.json 共 **8.5 分钟**；每群（地形 + 水系 + 天气 + 两次降采样）中位 1.07 s、P90 2.05 s、最长 7.5 s（#772）。
+    500 m 近邻（`--near 2051 --radius 600`，20 群）3 s。
+  - **与 P0 的粗版逐位对照**（P0 是 python 后端做的，跑之前整个复制到 `out/seed42/islands_lod_p0/` 备份）：8000 群 × 2 km / 1 km，P0 有的每个数组同 dtype、同形、同值（NaN 同位），
+    meta 除 seconds 外相同——**0 群不同**；500 m 的 20 群同样 0 不同；同一群各分辨率的天气逐位相同。越界 > 0 的仍是 49 群（> 1.5 km 的 34 群，同四点二十二）。
+    对照脚本先拿 2050 的新文件冒充 2051 做了反例，7 个数组都报不同。
+  - **天气与细版对照**：当场 `island.generate`（= `skyisle island <节点>`，写到临时目录，免得盖掉 out/seed42/islands 里已有的）48 群——2051、2050、雪日最多（#7966）、
+    暴风雪最多、大雪最多、风暴日最多、云海漫顶最多、降水最多 / 最少、最南 / 最北、#833 / #6239 两个大群、随机 20 群，另加下面 15 个旧细版的群：
+    **weather_y0.csv 336 行全部逐行相同**，temp_rim_c 与 climate.json 逐日表相同，头的岸缘 / 台面 / 年降水 / 摘要 / 季名与 island.json / climate.json 相同。
+    out/seed42/islands 里已有的 59 群细版：weather_y0.csv 也全部逐行相同（P5 要报的「粗细两版天气类型逐日相同的比例」= 100%，计划的门槛是 ≥ 95%）；
+    其中 15 群 island.json 的岸缘差 0.1–7.7 m、temp_rim_c 跟着差——都是 09-26 势力范围（P0）之前生成的旧产物（没有 `constraints.territory`），当场重生成的与粗版全同。
+  - 全行星一年（第 0 年）的天气构成：晴 47.9%、多云 20.6%、小雨 14.7%、大雨 5.0%、风暴 5.4%、小雪 3.0%、大雪 0.5%、暴风雪 1.8%、云海漫顶 1.0%；
+    有雪的群 4,498、有风暴的 7,398、有云海漫顶的 4,261。
+  - pytest 141 个全过（新 `test_lod_weather_matches_generate`；`test_lod_block_reduce_matches` 的两个后端对照覆盖天气列）。
+- **给 P5 的读法**：
+  ```python
+  with np.load("out/seed42/islands_lod/2000/2051.npz") as z:
+      head = json.loads(str(z["weather_meta"]))            # 历法、sun、climate（ref_m / lapse / rim_m / fog_rise_m / snow_temp_c）、types、season_names
+      typ = [head["types"][t] for t in z["weather_type"]]   # 336 天；precip = z["weather_precip_mm"]、wind = z["weather_wind_from_deg"] / z["weather_wind_ms"]……
+  ```
+  写成 weather.tsv 的一行：`day precip_mm temp_c type wind_from_deg wind_ms sailable(0/1) storm_event`，数值 `str(float(x))`，与 export_skyisle 从 csv 转出来的逐字相同。
+  有细版的群以细版为准照旧；两者现在本来就相同（同一群、同一年、同一版生成器）。
+- **没做 / 注意**：只存一年（默认第 0 年；要别的年份 `--year N`，已有的会重跑、覆盖成那一年）；数值是 csv 口径（0.1），不是原始双精度。
+  `out/seed42/islands_lod_p0/`（P0 的备份，约 390 MB）留着没删，确认不再需要对照就可以删。细版 out/seed42/islands 里 P0 之前的 15 个旧群没有重生成（不是这件活的范围）。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。
