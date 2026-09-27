@@ -359,3 +359,47 @@ def test_lod_keeps_land_and_layout(small_ctx):
         assert len(meta["islands"]) == len(g["json"]["islands"])
         assert [i["center_km"] for i in meta["islands"]] == [i["center_km"] for i in g["json"]["islands"]]   # 岸缘等水系之后会改，岛心不会
         assert np.nanmax(arr["peak"]) == pytest.approx(float(np.nanmax(g["height"])), abs=5.0)   # 水系（填洼、河道）会动几米
+
+
+def test_lod_weather_matches_generate(small_ctx, tmp_path):
+    """粗版带的天气（island lod --weather，DESIGN-NOTES 四点二十七）：与 generate 写的 weather_y0.csv 逐行相同、temp_rim_c 与 climate.json 的逐日表相同；
+    带不带天气，块降采样的数组与 meta 一样；气候参数头与 island.json / climate.json 对得上；不带天气（或年份不对）的已有粗版在 --weather 时要重跑。"""
+    import csv
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.lod import _done, build_lod, write_lod
+    node = _pick_node(small_ctx)
+    c = isl.island_config(small_ctx)
+    arr, meta = build_lod(small_ctx, node, c, [1600.0], native_res_m=400.0)[1600.0]
+    arr0, meta0 = build_lod(small_ctx, node, c, [1600.0], native_res_m=400.0, weather=False)[1600.0]
+    assert sorted(arr0) == sorted(k for k in arr if not k.startswith("weather_"))
+    for k in arr0:
+        assert arr0[k].dtype == arr[k].dtype and np.array_equal(arr0[k], arr[k], equal_nan=arr[k].dtype.kind == "f"), k
+    assert {k: v for k, v in meta.items() if k != "seconds"} == {k: v for k, v in meta0.items() if k != "seconds"}
+
+    out = isl.generate(small_ctx, node, res_m=400.0, steps=4, log=lambda *a: None, out_root=tmp_path / "isl")
+    head = json.loads(str(arr["weather_meta"]))
+    with open(out / "weather_y0.csv", encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == head["n_days"] == arr["weather_day"].size
+    for d, r in enumerate(rows):
+        mine = {"day": str(int(arr["weather_day"][d])), "season": str(int(arr["weather_season"][d])),
+                "season_name": head["season_names"][int(arr["weather_season"][d])], "month": str(int(arr["weather_month"][d])),
+                "day_of_month": str(int(arr["weather_day_of_month"][d])), "type": head["types"][int(arr["weather_type"][d])],
+                "precip_mm": str(float(arr["weather_precip_mm"][d])), "temp_c": str(float(arr["weather_temp_c"][d])),
+                "wind_from_deg": str(int(arr["weather_wind_from_deg"][d])), "wind_ms": str(float(arr["weather_wind_ms"][d])),
+                "sailable": str(bool(arr["weather_sailable"][d])), "storm_event": str(int(arr["weather_storm_event"][d]))}
+        assert mine == r, d
+    clim = json.loads((out / "climate.json").read_text(encoding="utf-8"))
+    J = json.loads((out / "island.json").read_text(encoding="utf-8"))
+    assert arr["weather_temp_rim_c"].tolist() == [x["temp_rim_c"] for x in clim["weather"]["days"]]
+    assert head["climate"]["ref_m"] == clim["annual"]["temp_ref_height_m"] and head["climate"]["rim_m"] == J["islands"][0]["rim_m"]
+    assert head["climate"]["rim_m"] == meta["islands"][0]["rim_m"]
+    assert head["precip_mm"] == J["hydro"]["precip_mm"] and head["summary"] == J["weather"]
+    assert head["season_names"] == clim["season_names"] and head["calendar"]["year_days"] == clim["calendar"]["year_days"]
+
+    p = write_lod(tmp_path / "lod", 1600.0, arr0, meta0)
+    assert _done(p, weather=False) and not _done(p, weather=True)
+    p = write_lod(tmp_path / "lod", 1600.0, arr, meta)
+    assert _done(p, weather=True, year=0) and not _done(p, weather=True, year=1)
+    with np.load(p) as z:
+        assert np.array_equal(z["weather_precip_mm"], arr["weather_precip_mm"]) and str(z["weather_meta"]) == str(arr["weather_meta"])

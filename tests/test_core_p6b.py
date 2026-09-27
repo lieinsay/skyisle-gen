@@ -187,8 +187,9 @@ def test_lod_block_reduce_matches(small_ctx):
     small_ctx.cfg["engine"]["backend"] = "python"
     for res in outs["python"]:
         A, B = outs["python"][res][0], outs["cpp"][res][0]
+        assert sorted(A) == sorted(B) and "weather_type" in A and "weather_meta" in A     # 默认带天气（C++ 的 weather_year）
         for k in A:
-            assert A[k].dtype == B[k].dtype and np.array_equal(A[k], B[k], equal_nan=True), (res, k)
+            assert A[k].dtype == B[k].dtype and np.array_equal(A[k], B[k], equal_nan=A[k].dtype.kind == "f"), (res, k)
 
 
 def test_is_daily_and_climate_only_match(small_ctx, tmp_path):
