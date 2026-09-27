@@ -96,7 +96,9 @@ python -m skyisle_gen.cli island lod --run out/seed42 --lod-res 2000,1000   # �
 Python 前端经 nanobind 扩展 `skyisle_gen._core` 调它，命令与产物格式不变。设计稿 `docs/PLAN-CORE.md`，实测 DESIGN-NOTES 四点二十三 / 四点二十四。
 **P6a（已做）**：第三层的地形段——布局（含势力范围）、岛形、地形、水系、河道成形。
 **P6b（已做）**：第三层其余——资源（点 / 片 / 散）、聚落与层级、四季、逐日天气、粗版降采样；cpp 后端下整群 `generate` 一次在 C++ 里算完，
-前端只拼 island.json、写产物、出图、校验。行星层 ①–⑨ 照旧走 Python（P6c / P6d）。
+前端只拼 island.json、写产物、出图、校验。
+**P6c（已做）**：管线的 ①–④（行星与历法、风带、岛群分布与板块、局地风与水汽降水与季节强度）；cpp 后端下这四步由 C++ 算、npz / json 照旧由 Python 写，
+第三层的行星层输入也由 C++ 直接给。⑤–⑨ 照旧走 Python（P6d）。
 
 构建（要 CMake ≥ 3.20、C++17 编译器；Windows 用 VS 2022 的 MSVC，脚本自己进 x64 环境；Linux 直接 cmake，有 Ninja 用 Ninja）：
 
@@ -112,11 +114,12 @@ python core/build.py --test          # 另跑 C++ 自检（ctest）；--debug �
 python -m skyisle_gen.cli island 2051 --run out/seed42 --backend cpp        # = --set engine.backend=cpp；check / batch / lod / stats 同样
 python -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --jobs 10   # 两个后端对照（统计 + island check + 整套产物逐字节）→ islands/compare.json
 python -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --timing    # 整群 generate（不写产物）的用时 → islands/timing.json（--no-python 跳过慢的 python）
+python -m skyisle_gen.cli run --seed 42 --backend cpp --set run.id=cpp-seed42     # 管线 ①–④ 用 C++（⑤–⑩ 仍 Python）；cpp 的阶段缓存 key 与 python 分开，另放一个目录
 ```
 
 随机流与 numpy 逐位一致（PCG64 / SeedSequence / ziggurat 正态与指数 / 泊松 …），浮点运算次序也照 numpy 与 CPython 做，所以两个后端的整套产物
 通常逐字节相同（cpp 后端的 island.json 在 meta 里多一个 `"engine": "cpp"`；逐位一致只在开发机上验过，换 CPU 架构或 C 库可能差一位）；
-整群 generate 快 10–20 倍（4 线程最大的群 2 s 内）。扩展没编时选 cpp 会报错并提示构建命令。
+整群 generate 快 10–20 倍（4 线程最大的群 2 s 内）；行星层 ①–④ 三个 seed 的产物两个后端逐位相同，C++ 0.4 s（python 0.8 s）。扩展没编时选 cpp 会报错并提示构建命令。
 
 ## 可视化（调试全靠看中间层）
 
@@ -229,7 +232,8 @@ A/B/C/D 应基本吻合（D 只取紧贴 D 两缘、在文明核心纬度的节�
 
 ```
 config/           default.toml · slots.toml · production_templates.toml · (traits.toml)
-core/             C++ 核心库（CMake；build.py 一键构建；include/skyisle/、src/、python/ 绑定、tests/ 自检、tools/ 探 numpy 的 ziggurat 表）
+core/             C++ 核心库（CMake；build.py 一键构建；include/skyisle/（island/ 第三层、planet/ 行星层 ①–④）、src/、python/ 绑定、tests/ 自检、
+                  tools/ 探 numpy 的 ziggurat 表、third_party/pocketfft 与 np.fft 同一份的 FFT）
 skyisle_gen/
   stages/         s01_planet … s10_output（十步；s09_polity 为第四批 R7 的政治层）
   polity.py       政治层产物的只读封装（邦名 / 状态 / 探针行 / 摘要）
@@ -239,6 +243,7 @@ skyisle_gen/
   culture.py      槽位份额 / TV 文化距离 / 同言线
   check.py        八条验收 + 气候 + 铁律自检 + 骨架/历法校准
   ninegrid.py     九格表草稿生成（docs/08）
+  engine.py       生成器后端开关（[engine] backend）与行星层的 C++ 桥（各步 C++ 对象的缓存、从 npz 读回）
   probe.py  viz.py  weights.py  noise.py  sphere.py  rng.py  config.py  pipeline.py
-tests/            公式单测 + 确定性/缓存链集成测试
+tests/            公式单测 + 确定性/缓存链集成测试 + C++ 后端对照（test_core_engine / test_core_p6b / test_core_p6c）
 ```

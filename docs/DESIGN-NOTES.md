@@ -837,6 +837,77 @@ P6a 移了第三层的地形段；这一期把第三层剩下的都移进 `core/
   P6c 把 ①–④ 移进 `core/planet/` 后，这些由 C++ 在内存里直接给（游戏新建世界时不经 npz）。`[engine] backend` 那时要并进阶段缓存 key。
   行星层 ① 的历法（almanac）与 ④ 的 grid_interp / local_edges 已有 C++ 同式件可复用；④ 的水汽模型是显式迎风推进，逐位要看 numpy 的逐元素运算与求和次序（同这一期的办法）。
 
+## 四点二十五、生成器后端换 C++：行星层 ①–④（2026-09-27，Zhouzhu 行星计划 P6c）
+
+P6a / P6b 把第三层整个移进了 `core/`；这一期移管线的前四步——① 行星与历法、② 风带与 G、③ 岛群分布（板块、撒点、kNN、陆地、候选边）、
+④ 局地风与气候（障碍场、带界位移、摩擦 / 绕流 / 尾流、温度、风暴、水汽追踪降水、季节强度、各群的气候标量与河流）。设计稿 `docs/PLAN-CORE.md`（一、二、三、五、六、八、九节随之更新）。
+
+- **做了什么**：`core/include/skyisle/planet/planet.hpp`（产物结构 Planet / Winds / Islands / Climate，字段与 npz 同名；stage1–4 与 `run` 一次跑完；
+  球面与经纬网格的公共件）、`view.hpp`（行星层 → 第三层：`planet_view` / `node_inputs`）；`core/src/planet/`（sphere、stage12、stage3、stage4、view，约 1,800 行；另有头文件 200 行、绑定 470 行）；
+  `core/third_party/pocketfft/`；绑定 `bind_planet.cpp`。前端新模块 `skyisle_gen/engine.py`（后端开关、行星层配置展平、阶段 key 的后端分量、各步 C++ 对象的进程内缓存）；
+  s01–s04 的 run() 第一行分派，写产物与摘要抽成两个后端共用的 `_write`；`run / stage --backend`；`island/engine.py` 的 PlanetView / NodeInputs 改由 C++ 给。
+- **拍板的几件事**：
+  - **缓存 key 分不分后端**：分，但只分 cpp。python 后端的 key 一字不差（旧 run 照旧命中，out/seed42 不用重算），cpp 后端下 ①–④ 的版本串另接 "+cpp"，
+    ⑤–⑩ 顺着 key 链也跟着变。两边现在逐位相同，照理可以共用缓存，不共用的理由：① 逐位只在这台机器验过（Linux 的 glibc、带 SVML 的 numpy、别的 BLAS 内核都可能差一位），
+    共用 key 就会把一个后端的产物当成另一个后端的；② 验 cpp 后端时必须真的跑 C++，共用 key 会命中 python 的缓存、什么也没验；③ 代价只是切后端时重算一遍（①–④ 不到 1 s，⑤–⑩ 约 2 分钟）。
+    `_meta.json` 在 cpp 的阶段记 `"engine": "cpp"`，python 的不加（产物一字不改）。
+  - **STAGE_VERSIONS 不加**：阶段代码只加了分派、把写产物挪进 `_write`，python 后端三 seed 的全部产物与摘要逐位不变（与改前的 out/seedN 比过）。
+    加版本会让所有旧 run（含 Zhouzhu 行星包所从出的 out/seed42）白白重算，而 cpp 已经靠 "+cpp" 分开——规矩「改了阶段代码就 +1」防的是旧缓存冒充新结果，这里不存在。
+  - **产物结构存双精度原值、float32 由读的一方舍**：npz 里 float32 的字段（③ 的面积 / 高度 / 岛龄…，④ 的风 / 降水…），C++ 结构里存 Python 在内存里的 float64 原值，
+    下游步（③ 读 ② 的风、④ 读 ③ 的面积、第三层读 ③④）先 `f32()` 一次——与 Python 读 npz 同口径；从 npz 读回的对象已是 float32 的值，再舍一次不变。
+    所以「内存里接着算」与「命中磁盘缓存后读回再算」结果相同（pytest 断言）。
+  - **写产物仍在前端**：npz / json 与 `_meta.json` 的摘要由 Python 写，C++ 只给数组（`*_arrays`）与摘要要的几个量（in_stack、n_exp / n_fallback / n_chord、f0、dt / n_steps）。
+  - **第三层接行星层**：cpp 后端下第三层的 PlanetView 与本群 NodeInputs 由 C++ 从 ①③④ 的对象直接给（`_core.planet_view / node_inputs`），
+    对象按（run 目录, 阶段, 阶段 key）缓存在进程内：同一进程刚用 cpp 跑过 ①–④ 就直接用，不读 npz；否则从 npz 读回成 C++ 对象（`engine.part`）。
+    ⑨ 的人口与邦都仍由前端从 polity.npz 填（P6d 再移）。这就是游戏新建世界的路径：`planet::run` → `planet_view` / `node_inputs` → `island::generate`，全程不落盘。
+    旧 run 缺字段（没有 continentality 之类）时退回 P6b 按 npz 拼 dict 的路径，值相同。
+  - **np.fft 用第三方 pocketfft**：④ 的带界位移是 `rfft → 截到波数 ≤ 4 → irfft`。自己写 FFT 追不上 numpy 的逐位结果，而 numpy 2.x 用的就是 pocketfft 的 C++ 头文件——
+    直接带上 numpy v2.5.2 引用的同一提交（33ae5dc，BSD 3-Clause，单个头文件），按 numpy `_pocketfft_umath.cpp` 的 rfft_impl / irfft_loop 摆数据
+    （实数放在缓冲区第 1 格起、执行后把 I0 挪成 R0；irfft 的 fct = 1/n 乘在输出上），与 np.fft 逐位相同（n = 360 / 180 / 90 / 91 的随机输入都测过）。
+- **踩坑（在四点二十三 / 四点二十四的表上加）**：
+  - **np.maximum / np.minimum 相等时取第二个操作数**（与 x86 的 maxpd / minpd 同，数组长短都一样），±0 的符号跟着走：`np.maximum(0.0, x)` 在 x = −0.0 时给 −0.0。
+    std::max 相等取第一个（= Python 内置 max）。第一轮只差这一处：④ 的 uplift 有 7,352 格是 −0.0 vs +0.0（数值上无影响，按位不同）。C++ 用 `np_maximum / np_minimum`；
+    np.clip 在 x 等于界时返回 x（clip(−0, 0, 1) = −0），grid.hpp 的 clip 本来就是这样。
+  - **复数的 np.abs 不是 C 的 hypot**：numpy 2.x 的 SIMD 版（连续数组连尾巴都走它）是 larger · sqrt(fma(r, r, 1))，r = smaller / larger。
+    日照一阶谐波的傅里叶系数几乎是纯虚数，hypot(1e−13, 50) 两种算法都给 50，所以默认倾角下看不出；倾角 0 时实部虚部都是 1e−16 的噪声才露出来（pytest 覆盖）。
+  - **复数的成对求和**：numpy 按「双精度个数 2n」分块（< 8 顺序加；≤ 128 用 4 个复数累加器、每轮 4 个复数；否则 n2 = n/2 − (n/2) % 8 个双精度处对半分），
+    实部虚部各自沿同一棵树加。mean 除以个数走的是复数除法（Smith），对 (n + 0j) 等于乘以 1/n，不是除以 n。
+  - **BLAS 的乘加次序（本机 OpenBLAS SkylakeX，探针比出来的）**：dgemm / ddot 的 K = 3 是按 k 顺序 FMA：fma(a₂, b₂, fma(a₁, b₁, a₀·b₀))（③ 的 `xyz @ xyz.T`、`pts @ seeds.T`、1 维 norm）；
+    dgemv 的 [M, 3]·[3] 却是 fma(a₂, x₂, fma(a₀, x₀, a₁·x₁))（热点链的 `pts @ q`，与四点二十三 [M, 2] 的 fma(u₀, x₀, u₁·x₁) 同一路数）。dgemm 的尾块（M、N 不是 16 的倍数）同样是按 k 顺序 FMA。
+  - **没追上的一处：dsyrk 的尾块**。`knn` 按 512 行一块算 `xyz[s:e] @ xyz.T`；n ≤ 512 时第一块就是整块 `X @ X.T`，numpy 认出是 A·Aᵀ 改走 dsyrk，
+    它最后几列（n % 16 那几列）的次序既不是按 k 顺序 FMA 也不是别的 18 种三项式里的任何一种（按列分开探了几轮，没找到）。C++ 一律按 dgemm 算，n ≤ 512 的小世界 kNN 角距可能差一位。
+    行星层至少几千个群（默认 8000、pytest 的小世界 1600），碰不到；写进已知问题。
+  - **NEP 50：Python 浮点 × float32 数组按 float32 算**。④ 的 `temp_i = 插值 − lapse × height_m / 1000`，height_m 是从 npz 读的 float32，这一串乘除在 float32 里做
+    （C++ 写成 `static_cast<float>(lapse) * h32 / 1000.0f`）。np.median 对 float32 数组也是 float32 相加再 /2（第三层 NodeInputs 的 area_median_km2，`median_f32`）。
+  - **numpy 标量与 Python 浮点的 `**` 都是 C 的 pow**：`(111.19 * res) ** 2`（res 是 np.float64）、尾流的 `lam ** k`、历法里的 `m ** 3.5` 都用 c_pow；只有数组的 `** 2` 是平方。
+  - np.linspace(0, c, n, endpoint=False) = arange(n) · (c / n)（step 先算好再乘）；`int(round(x))`（分形噪声的格数、热点链的点数）是逢半取偶；
+    `ndarray.std()` = sqrt(成对求和((x − mean)²) / n)，mean 也是成对求和 / n；`O[rows].mean(axis=0)` 是逐行顺序加；np.gradient 等距时内点除以 2·dx、两端一阶。
+  - graph.weak_components 的并查集总把大根挂到小根下，根 = 最小成员，分量号与边的次序无关（C++ 不必照搬 dict 的插入次序）。
+  - 三 seed 里第一次就逐位相同的有：拒绝采样撒点、lexsort 编号、kNN、陆地占比 200 步二分、候选边与远征边、分类与叠层、板块 Voronoi 与热点链、rfft 低通、np.interp 的位移场、
+    尾流的 8 步回溯插值、1,690–1,750 步的水汽推进、98 分位归一、日照一阶谐波与季节强度——只差上面 ±0 那一处。
+- **实测**：
+  - 逐位对照（产物按数组比：npz 的每个数组 dtype / 形状 / 字节，json 按值，`_meta.json` 比摘要；npz 文件本身带 zip 的时间戳，不比文件字节）：
+      - seed 42 / 7 / 2026：cpp 后端的 ①–④（planet.json、bands.json、11 个 npz 的全部数组、四步的摘要）与 python 后端**逐位相同**；
+      - 整条管线：`run --backend cpp` 到 out/cpp-seedN，⑤–⑨ 的产物与摘要也全同；⑩ 的 world.json / islands.json / 九格表全同，32 张图只差标题里的 run 名（像素差都在第 34 行以上）；
+      - python 后端（重构后）重跑到另一个目录，①–⑨ 与改前的 out/seedN 逐位相同、阶段 key 相同（旧缓存照旧命中）；out/seedN 没动。
+  - check：三 seed × 两个后端 6 次全过——每次 21 项（IL-ji / IL-yi / IL-t×2、P1a–P8、C1–C5、SK-perm / SK-cal / SK-south）0 硬 0 软 0 报警，两个后端的 check.json 全同。
+  - 第三层（下游）：在 cpp 后端跑出的行星层上 `island compare`——seed 42 分层抽样 30 群、seed 7 / 2026 各 12 群，**54 / 54 全过、整套产物逐字节相同**（两边的 island check 全过）；
+    这 30 群与 P6b 时在 out/seed42 上做的对照产物相比，除 island.json 的 meta.run 与预览图标题里的 run 名外逐字节相同。
+    另：seed 42 随机 388 群的 NodeInputs（C++ 从 ③④ 直接给）与 Python 拼法逐值相同；2051 走新路径两个后端逐字节相同。
+  - 用时（Ryzen 9 9950X3D；产物留在内存、不写 npz，重复 5 次取中位；三 seed 几乎一样，下为 seed 42）：
+    ① python 0.1 ms / C++ 0.4 ms；② 7.9 / 5.1 ms；③ 484 / 247 ms；④ 277 / 142 ms；**合计 python 0.77 s → C++ 0.39 s**（C++ 单线程）；
+    `planet_run`（游戏新建世界的路径，不经前端）0.38 s。管线里含写 npz（压缩）：③ 0.59 → 0.33 s、④ 0.43 → 0.28 s。numpy 本来就是整场向量化的，
+    ③ 的大头是 8000² 的 kNN、④ 是 1,690 步水汽推进与 16,000 个纬度的日照谐波——要更快就按行并行（结果与线程数无关），行星层 ≤ 10 s 的目标不急。
+  - pytest 120 个全过（约 80 s）（新 `tests/test_core_p6c.py` 20 个：rfft 低通、日照谐波（倾角 0 / 20 / 34）、分形值噪声、kNN、float32 中位数逐位；
+    小世界两个后端的 ①–④ 产物与摘要逐位相同、key 分开且同后端命中、planet_run 与逐步相同、三组开关变体逐位相同、npz 读回与内存里同值、第三层 NodeInputs 与内存行星层生成岛群逐字节相同）。
+- **没做到 / 已知问题**：逐位一致只在这台机器（Windows、MSVC、UCRT、numpy 2.5.2、OpenBLAS SkylakeX 内核）上验过——换 Linux / glibc / 带 SVML 的 numpy / Haswell 内核的 BLAS
+  都可能差一位（BLAS 的乘加次序是探出来的，不是规范）；差一位时在阈值上可能翻（岛数 8000 的拒绝采样、kNN 的第 k 名、河流判据），那时按 check 与各步摘要做统计对照。
+  n ≤ 512 个群时 kNN 的 dsyrk 尾块没追上（见上）。C++ 的行星层是单线程（0.4 s，够用；kNN 与每格的日照谐波都能按行并行，结果与线程数无关）。默认后端仍是 python。ME Pro 上没编。
+- **P6d 从哪接**：⑤ 障碍（s05_barriers：Φ 穿越归一化、局部因子）→ ⑥ 航路（s06_routes：CSR、Dijkstra(heapq)、Brandes 抽样介数——注意 heapq 的平局次序与 inf 比较）
+  → ⑦ 文明中心与地区（s07_centers）→ ⑧ 特征扩散（s08_diffusion：share / strength 场、同言线）→ ⑨ 政治层（s09_polity）。
+  `engine.CPP_STAGES` 加上移完的阶段号，各步照 P6c 的样子：run() 第一行分派、`_write` 两边共用、C++ 对象进 `engine.part` 的缓存（⑤ 起吃 ③④ 的对象，⑨ 的人口给第三层）。
+  ⑩ 输出（九格表、出图）留在 Python。全部移完、三 seed 的 check（P1–P8）在 cpp 下全过后切默认、删 Python 算法（第三层的 Python 版随之删掉，decode.py 留着）。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。

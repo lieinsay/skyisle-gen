@@ -2,7 +2,8 @@
 
 上游：Zhouzhu 的 `docs/PLAN-PLANET.md`（D1 生成器是唯一来源、D3 后端整体换 C++、D15 两种玩法两种世界、D16 仓库不合并算法合一、4.9 分工、第五节 P6）。
 本稿管 skyisle-gen 这一侧：核心库 `core/` 怎么划、按什么顺序移、Python 前端怎么调它、怎么对照验收。**P6a 移了第三层的地形段**（布局含势力范围、岛形、地形、水系、河道成形），
-**P6b 移了第三层其余**（资源、聚落与层级、四季、逐日天气、粗版的降采样，`generate` 整个进 C++，写产物仍在前端）；行星层 ①–⑨ 照旧走 Python，P6c–d 接着移。
+**P6b 移了第三层其余**（资源、聚落与层级、四季、逐日天气、粗版的降采样，`generate` 整个进 C++，写产物仍在前端）；
+**P6c 移了行星层 ①–④**（行星与历法、风带、岛群分布与板块与候选边、局地风与气候 / 水汽模型；`core/planet/`，npz / json 仍由前端写）；⑤–⑨ 照旧走 Python，P6d 接着移。
 
 ## 一、范围与不变的东西
 
@@ -36,11 +37,18 @@ core/
       climate.hpp           5.4 / 5.5（P6b）：build_climate、daily_curves、season_params、simulate_year、multi_year（IS-daily）
       settle.hpp            聚落与层级（P6b）：build_settlements（settle.py + tiers.py）、kmeans_split
       generate.hpp          整群 generate（steps 1–5 同 Python 版）与粗版块降采样 block_reduce
+    planet/                 （P6c）行星层 ①–④
+      planet.hpp            产物结构（Planet / Winds / Islands / Climate，同 npz 的字段，浮点存双精度原值）、stage1–4、run（一次跑完）、
+                            球面与经纬网格公共件（grid_axes、latlon_to_xyz、angdist、knn、fractal_noise、gradient / divergence、np_std、rfft_lowpass）、
+                            wind_profile / g_vortex、plate_fields、season_range / insolation_first_harmonic、np_maximum / np_minimum
+      view.hpp              行星层 → 第三层：planet_view（PlanetView）、node_inputs（NodeInputs）、island_calendar、median_f32
     json.hpp                极简 JSON 值（有序对象、整数与浮点分开）：资源 / 聚落 / 四季的记录交给前端与游戏的形（字符串是 ASCII 代码）
-  src/                      同名 .cpp；ziggurat_tables.inc（numpy 的 ziggurat 表，探出来的，见四）
-  python/module.cpp         nanobind 绑定（_core）
+  src/                      同名 .cpp；ziggurat_tables.inc（numpy 的 ziggurat 表，探出来的，见四）；planet/（sphere、stage12、stage3、stage4、view）
+  third_party/pocketfft/    pocketfft_hdronly.h（BSD 3-Clause；numpy 2.5.2 引用的同一提交 33ae5dc）：④ 带界位移的 np.fft.rfft / irfft
+  python/module.cpp         nanobind 绑定（_core）；bind_island.cpp（第三层）、bind_planet.cpp（P6c 行星层）
   tests/selftest.cpp        C++ 自检（随机数对 numpy 的参考值、确定性）
-skyisle_gen/island/engine.py   后端开关与 cpp 桥：把 [island] 段展平成键值表、准备 NodeInputs / PlanetView、调 _core、把结果拼回和 Python 版同形的 g
+skyisle_gen/engine.py          （P6c）后端开关（backend / core）、行星层配置展平（planet_config）、阶段 key 的后端分量、各步 C++ 对象的进程内缓存与从 npz 读回（part）
+skyisle_gen/island/engine.py   第三层的 cpp 桥：把 [island] 段展平成键值表、取 PlanetView / NodeInputs（P6c 起由 C++ 从行星层对象给）、调 _core、把结果拼回和 Python 版同形的 g
 skyisle_gen/island/decode.py   （P6b）C++ 记录里的 ASCII 代码 → 中文、带数的备注按 Python 版的 f-string 拼；赋存区的长度 / 走向按 numpy 重算
 skyisle_gen/island/compare.py  `skyisle island compare`：分层抽样 N 群，两个后端各跑一遍，统计对照 + island check + 用时
 ```
@@ -71,6 +79,16 @@ P6b（第三层其余）接着：
     （resource_record / resource_summary / set_climate / set_weather / set_settlements），python 后端产物逐字节不变。
 12. **对照工具加判据**：村数、户数、资源处数、雨日比例、季型，外加整套产物逐字节对照；`--timing` 改量整群 generate。
 
+P6c（行星层 ①–④）接着：
+
+13. **公共件**：经纬网格（grid_axes）、球面几何（xyz、角距、叉积）、kNN（BLAS dgemm 的乘加次序）、经度周期的分形值噪声（noise.py）、
+    np.gradient、球面散度、ndarray.std、np.fft.rfft / irfft 的低通（第三方 pocketfft，与 numpy 同一份）、复数的成对求和与 np.abs、np.maximum / minimum 的平局。
+14. **① 行星与历法**（s01_planet、almanac）→ **② 风带与 G**（s02_wind）→ **③ 岛群分布**（s03_islands、tectonics、graph.weak_components）
+    → **④ 局地风与气候**（s04_climate、localwind、moisture、skeleton.season_range）→ **run**（一次跑完）。
+15. **前端**：s01–s04 的 run() 第一行按后端分派，产物与摘要的写出抽成两个后端共用的 `_write`（python 后端产物逐字节不变）；
+    `[engine] backend` 并进 ①–④ 的阶段缓存 key（cpp 另混入 "+cpp"，python 不变）；`run / stage --backend`。
+16. **第三层接行星层**：`planet_view / node_inputs` 从 ①③④ 的产物对象直接给（同进程刚跑过 cpp 的 ①–④ 就用内存里的，不经 npz）。
+
 ## 四、随机数（比计划多做的一步）
 
 计划说随机数不必与 numpy 逐位一致（D3）。实际做下来 numpy 这几样的算法都是公开的定式，追得上，而且追上了好处很大：
@@ -99,10 +117,14 @@ BLAS 是 OpenBLAS 的 SkylakeX 内核（`blas_ddot` 照它的乘加次序）；�
 | `block_reduce(island_id, height, landcover, river, lake, f)`（P6b） | 群栅格 | 粗版一层：land / height / peak / island / landcover / water（dtype 同 lod._block_reduce） |
 | `climate_only(inp, planet, cfg)`、`weather_years(inp, planet, cfg, rim_m, years)`（P6b） | 同 generate | 四季记录；多年逐日的季降水和 P[年, 季]、季雨日比例 F[年, 季]、f_rain_days |
 | `build_hydro(state, planet, cfg, threads=0)` | state：build_terrain 的数组与各岛的 rim / keel / age（**用 island.json 里已四舍五入的值**，与 Python 版同口径）、origin_km（同样是四舍五入后的）；planet：局地风网格、年长秒数；inp 的降水 / 海面温 / 直减率 / 有河 / 河级 / 可耕率 | dict：height（改后）、filled、flowacc、river / stream / lake、宽 / 深 / 漫滩 / 下切、recv_i / recv_j / route_h、landcover、arable、slope、各岛水系摘要、主岛盆地、河口表、河道折线、台面校正量 dz |
-| 公共件 | `rng_raw / rng_draw / rng_choice_p / rng_choice_noreplace`（各分布，P6b 加 exponential / gamma2 / lognormal / poisson）、`np_quantile`、`np_interp`、`np_convolve_valid`、`blas_ddot`、`np_sum_f32`、`label_by_island`、`window_extrema`、`kmeans_split`、`crc32`、`np_sum`、`pyround`、`math_fns`（numpy 同式的幂与斜边）、`grid_interp`、`fractal_noise`、`label_components`、`largest_component`、`binary_erode / dilate`、`distance_bands`、`nearest_propagate`、`block_mean / any`、`upsample_bilinear`、`smooth121`、`laplacian`、`slope_deg`、`priority_fill`、`fill_iter`、`d8`、`d8_random`、`accumulate`、`island_shape`、`radial_profile`、`sculpt_island`、`territory_limits`、`nearest_fit`、`boundary_axis` | 同 Python 版的返回 |
+| `planet_stage1(cfg)` → `planet_stage2(cfg, P)` → `planet_stage3(cfg, seed, P, W)` → `planet_stage4(cfg, seed, P, W, I)`；`planet_run(cfg, seed)`（P6c） | cfg：`make_config(engine.planet_config(cfg))`（shared / skeleton / s01–s04 展平，有字符串键）；上游是前一步返回的不透明对象（或从产物读回的） | 不透明对象 `PlanetParams` / `Winds` / `Islands` / `Climate`；`planet_run` 返回四个的元组（游戏新建世界的路径，不经 npz） |
+| `planet_json(P)`、`winds_arrays(W)`、`islands_arrays(I)`、`climate_arrays(C)`（P6c） | 各步对象 | planet.json 的 dict；各 npz 的数组（双精度原值，前端照 Python 版转 float32 再写）与摘要要的量（in_stack、n_exp / n_fallback / n_chord、f0、dt_s / n_steps） |
+| `planet_from_json`、`winds_from(wind, bands)`、`islands_from(islands, plates, cand_edges, density_grid)`、`climate_from(wind_local, band_local, climate_grid, climate_islands)`（P6c） | 产物（npz 的数组 dict / json 的 dict） | 各步对象（上游命中磁盘缓存、换了进程时用） |
+| `planet_view(P, I, C, cfg)`、`node_inputs(I, C, node, seed, cfg)`（P6c） | 行星层对象 | 第三层的 PlanetView（`Planet` 对象）与本群 NodeInputs（dict，同 `engine.inputs`；⑨ 的 pop / capital 前端另加） |
+| 公共件 | `rng_raw / rng_draw / rng_choice_p / rng_choice_noreplace`（各分布，P6b 加 exponential / gamma2 / lognormal / poisson）、`np_quantile`、`np_interp`、`np_convolve_valid`、`blas_ddot`、`np_sum_f32`、`label_by_island`、`window_extrema`、`kmeans_split`、`crc32`、`np_sum`、`pyround`、`math_fns`（numpy 同式的幂与斜边）、（P6c）`rfft_lowpass`、`insolation_first_harmonic`、`planet_fractal_noise`、`planet_knn`、`median_f32`、`grid_interp`、`fractal_noise`、`label_components`、`largest_component`、`binary_erode / dilate`、`distance_bands`、`nearest_propagate`、`block_mean / any`、`upsample_bilinear`、`smooth121`、`laplacian`、`slope_deg`、`priority_fill`、`fill_iter`、`d8`、`d8_random`、`accumulate`、`island_shape`、`radial_profile`、`sculpt_island`、`territory_limits`、`nearest_fit`、`boundary_axis` | 同 Python 版的返回 |
 
 配置用**扁平键值表**：前端把 `[island]` 段展平成 `{"layout.n0": 30.0, "territory.stretch": [1.0, 1.6, 2.4], "territory.enabled": 1.0, …}`（布尔 → 0 / 1，字符串跳过），
-C++ 按键取、缺键抛异常。以后游戏从 TOML / 行星包读同一张表。`[engine] threads`（默认 4）控制群内各岛并行的线程数，结果与线程数无关（每岛自己的随机流、写各自的格）。
+C++ 按键取、缺键抛异常。以后游戏从 TOML / 行星包读同一张表。行星层（P6c）展平 shared / skeleton / s01–s04 全路径（`"s03.islands.n_islands"`），另有 `"str"`（`s01.calendar.mode`、`skeleton.g_anchor_edge`）。`[engine] threads`（默认 4）控制群内各岛并行的线程数，结果与线程数无关（每岛自己的随机流、写各自的格）。
 
 **J（island.json）的拼装留在前端**：C++ 给原始的双精度数，前端照 Python 版的键序与 `round()` 位数拼（`engine.py`），所以两个后端的 island.json 同形。
 P6b 的资源 / 聚落 / 四季记录量大，改由 C++ 直接给 JSON 形（`Json`，数已按 Python 的 round 舍好，因为 Python 版后面的计算读的就是舍过的值），字符串是 ASCII 代码，
@@ -113,9 +135,11 @@ C++ 内部凡是 Python 版读的是「已四舍五入的 J 值」的地方（hy
 ## 六、前端开关
 
 - `config/default.toml` 新增 `[engine]`：`backend = "python"`、`threads = 4`。读法与 `[island]` 同：default.toml ← run 的 config.resolved.toml ← `--set engine.backend=cpp`；
-  `skyisle island … --backend cpp` 是它的简写。**不进任何阶段的缓存 key**（第三层本来就不进；P6c 起行星层的阶段要把它并进 key）。
+  `skyisle island … --backend cpp` 是它的简写（`run / stage --backend cpp` 同理）。第三层不进缓存 key；**P6c 起有 C++ 实现的管线阶段（①–④）在 cpp 后端下 key 另混入 "+cpp"**，
+  python 后端的 key 与以前一字不差（旧 run 照旧命中）。两个后端现在逐位相同，仍分开缓存：逐位只在本机验过，切后端要真的重算一遍（也免得拿另一个后端的产物去验它）。
 - 分派点（P6a）：`island.build_terrain` 与 `hydro.build_hydro` 的第一行；（P6b）`island.generate` 的第一处（整群一次调 `_core.generate`）、`weather.multi_year_stats`（IS-daily）、
-  `lod.build_lod` 的块降采样、`climate.classify_all`（全量季型）。cpp 后端但扩展没编：报错并给出构建命令（不静默退回，免得以为跑的是 C++）。
+  `lod.build_lod` 的块降采样、`climate.classify_all`（全量季型）；（P6c）`s01_planet` … `s04_climate` 的 run() 第一行（产物与摘要由共用的 `_write` 写）。
+  cpp 后端下各步的 C++ 对象按（run 目录, 阶段, 阶段 key）缓存在进程内（`engine.part`），下一步与第三层直接吃；没有就从该步的 npz / json 读回。cpp 后端但扩展没编：报错并给出构建命令（不静默退回，免得以为跑的是 C++）。
 - cpp 后端下写产物、出图、校验、对照、操作台照旧是 Python，读的是同形的 g。
 
 ## 七、构建
@@ -143,13 +167,21 @@ Linux（ME Pro）：直接 `cmake -G Ninja`（没有 Ninja 用 Makefiles）。�
 
 另：pytest 加 `tests/test_core_engine.py`（扩展没编就跳过）——随机数逐位、公共件同输入对照、小世界上两个后端的 build_terrain / build_hydro 对照、cpp 后端 IS-det、线程数不影响结果。
 
+P6c（行星层 ①–④）的对照不走 `island compare`：
+- 三 seed 各用两个后端跑整条管线（cpp 放 out/cpp-seedN），①–④ 的 npz 逐数组逐位、json 逐值、各步摘要比；⑤–⑩ 顺带比（仍是 Python，输入相同就该相同）；
+- 三 seed 的 `check` 两个后端都要 0 硬 0 软（C1–C5、P1–P8、IL-*、SK-*）；
+- 在 cpp 后端的行星层上再跑 `island compare` 抽样，确认第三层不受影响；
+- pytest `tests/test_core_p6c.py`：公共件逐位、小世界两个后端的 ①–④ 逐位、key 分开、开关变体、第三层从 C++ 行星层对象取输入。
+
 ## 九、以后各期从哪接
 
 - **P6b**（第三层其余）：已做（DESIGN-NOTES 四点二十四）。第三层现在整条在 C++：`island::generate(NodeInputs, PlanetView, Config)` 一次出地形到聚落，
   `block_reduce` 出粗版；Python 前端只拼 island.json、写产物、出图、校验。
-- **P6c**（行星层 ①–④）：`core/planet/` 按阶段移（行星与历法、风带与局地风、岛群分布与板块、水汽追踪降水与气候）；`[engine] backend` 并进阶段缓存 key；
-  三 seed 的 check（C1–C5）在 C++ 后端下全过。第三层读的行星层产物（③ islands / plates、④ wind_local / climate_grid / band_local / climate_islands）
-  那时直接由 C++ 在内存里给 PlanetView，不经 npz。
-- **P6d**（行星层 ⑤–⑨ 与切换）：三 seed 的 check 在 C++ 后端下全过后切默认、删 Python 算法（第三层的 Python 版随之删掉，decode.py 留着）。
-- 游戏（P6e）：`core/` 作子模块编进 GDExtension；`generate` / `block_reduce` 已经不依赖 Python，NodeInputs / PlanetView 由行星包填；
+- **P6c**（行星层 ①–④）：已做（DESIGN-NOTES 四点二十五）。`planet::run(Config, seed)` 一次出 ①–④，`planet_view` / `node_inputs` 直接给第三层；
+  管线里各步照旧写 npz / json（前端），cpp 后端的阶段 key 另混入 "+cpp"。三 seed 的产物两个后端逐位相同、check 全过。
+- **P6d**（行星层 ⑤–⑨ 与切换）：⑤ 障碍 → ⑥ 航路与抽样介数（heapq 的平局次序、inf 比较）→ ⑦ 文明中心与地区 → ⑧ 特征扩散 → ⑨ 政治层；
+  每步照 P6c：`engine.CPP_STAGES` 加阶段号、run() 第一行分派、`_write` 两边共用、C++ 对象进 `engine.part` 的缓存（⑤ 起吃 ③④ 的对象；⑨ 的人口直接给第三层的 NodeInputs.pop）。
+  ⑩ 输出留在 Python。三 seed 的 check 在 C++ 后端下全过后切默认、删 Python 算法（第三层的 Python 版随之删掉，decode.py 留着）。
+- 游戏（P6e）：`core/` 作子模块编进 GDExtension；`generate` / `block_reduce` 已经不依赖 Python；剧情模式 NodeInputs / PlanetView 由行星包填，
+  生存模式新建世界 `planet::run` → `planet_view` / `node_inputs`（⑨ 的人口 P6d 之后才有 C++ 的；之前没有 ⑨ 时 NodeInputs.pop 取 NaN，按可耕地 × 人口密度）；
   记录是 JSON 形（`Json`），游戏按代码自己映射显示名。
