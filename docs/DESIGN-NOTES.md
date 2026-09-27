@@ -935,10 +935,11 @@ P6c 移了管线的前四步；这一期把 ⑤ 障碍、⑥ 航路与抽样介�
     结果与线程数无关（pytest 1 / 4 / 7 线程）。
   - **游戏的新建世界**：`planet::run` → `run_society(cfg, seed, world, 9, skip_diffusion, threads)`（⑧ 可跳过，⑨ 照算）→ `planet_view` / `node_inputs` + `apply_polity`
     → `island::generate`，全程不落盘。绑定里是 `planet_run(cfg, seed, upto=9)`。
-  - **照抄了参考实现的一处怪处**：⑨ 附庸判定 `dts = cap_dist[t].get(capitals[s])` 拿**都城的节点号**去查以**邦号**为键的表（`cap_dist[sid]` 的键是 cap_arr 的下标），
+  - **照抄了参考实现的一处怪处（2026-09-27 用户定了修，两个后端一起改，⑨ 版本号 1 → 2）**：⑨ 附庸判定 `dts = cap_dist[t].get(capitals[s])` 拿**都城的节点号**去查以**邦号**为键的表（`cap_dist[sid]` 的键是 cap_arr 的下标），
     只有都城节点号恰好小于第一遍的邦数、又碰巧在对方威慑距离内时才查得到。结果三 seed 的附庸只有 0 / 1 / 0 个；改成 `get(s)` 后是 147 / 158 / 164 个，兼并史一条不变
-    （附庸只在被并时转给兼并者，不进兼并的次序），变的是 polities.json 的 overlord / vassals 与九格表 ⑧ 的附庸文字。两个后端都照抄着（逐位对照优先），**修不修待定**
-    ——修了 seed42 的 ⑨ 与 ⑩ 会变（邦与人口不变，第三层不受影响）。
+    （附庸只在被并时转给兼并者，不进兼并的次序），变的是 polities.json 的 overlord / vassals 与九格表 ⑧ 的附庸文字。
+    修后实测：seed 42 / 7 / 2026 两个后端的 ⑨ 产物逐字节相同；seed42 与修前比，polity.npz 与 history.md 逐字节不变、polities.json 只有 overlord / vassals 两个字段变，
+    邦、人口、第三层与游戏的行星包都不受影响。
 - **踩坑（在四点二十三 – 四点二十五的表上加；这一期 C++ 第一次跑三 seed 就逐位相同，下面是写之前逐行对出来的）**：
   - **heapq 的平局次序**：堆元素是 (dist, node)，距离相同按节点号；`std::priority_queue<pair<double, int64>, …, greater<>>` 比较同式，−0.0 与 +0.0 相等再比节点号，也同。
     同一节点的重复项值相同，先弹哪个都一样。松弛只在严格更小时替换前驱；有界搜索弹出 > 界即停，再把界外的有限值清回 inf。
@@ -968,7 +969,7 @@ P6c 移了管线的前四步；这一期把 ⑤ 障碍、⑥ 航路与抽样介�
   - pytest 140 个全过（约 110 s；新 `tests/test_core_p6d.py` 20 个：Dijkstra / 介数 / 弱连通分量 / 抽签逐位，小世界两个后端的 ⑤–⑨ 逐位、key 分开、planet_run(upto=9)、
     读回的对象接着算、四组开关变体（fast、band 障碍 + 政治性障碍、起源指定中心 + 指定变法之国、手工特征表）、第三层的人口与邦都、内存里的 ①–⑨ 生成邦都岛群逐字节相同）。
 - **没做到 / 已知问题**：逐位一致只在这台机器（Windows、MSVC、UCRT、numpy 2.5.2、OpenBLAS SkylakeX 内核）上验过；**ME Pro（Linux）上还没编过**，删 Python 算法要等那边编过、
-  与参考后端对照过。n ≤ 512 个群时 kNN 的 dsyrk 尾块没追上（四点二十五）。⑨ 附庸的怪处照抄着（见上）。C++ 的 `Config` 仍由 Python 前端展平 default.toml 给，
+  与参考后端对照过。n ≤ 512 个群时 kNN 的 dsyrk 尾块没追上（四点二十五）。⑨ 附庸的怪处照抄着（见上；后来已修）。C++ 的 `Config` 仍由 Python 前端展平 default.toml 给，
   游戏要一份不经 Python 的配置来源（P6e 定）。⑧ 的对象不从产物读回。⑩ 仍是 Python（出图慢，不影响游戏）。
 - **P6e 从哪接**：`core/` 的静态库目标 `skyisle_core`（`SKYISLE_PYTHON=OFF`、`SKYISLE_TESTS=OFF` 就只编它；依赖 C++17 标准库、`Threads::Threads` 与随仓库的
   pocketfft 头文件，没有 Python）。新建世界：`planet::run(cfg, seed)` → `run_society(cfg, seed, world, 9, true, threads)` → `planet_view(...)`；
