@@ -16,6 +16,7 @@ import numpy as np
 AGE_ZH = {"young": "新岛", "mid": "中年", "old": "老岛"}
 KEY_ASCII = {"汇聚": "convergent", "离散": "divergent", "走滑": "transform"}   # [island.resources] ore_gain 的键
 _PLANET_CACHE: dict = {}
+_PLANET_OBJ: dict = {}
 
 
 def backend(ctx) -> str:
@@ -110,6 +111,19 @@ def planet_view(ctx) -> dict:
     return pv
 
 
+def planet_obj(ctx):
+    """planet_view 转成 C++ 的 PlanetView 对象（按 run 缓存）：各步每次调用不再把行星层网格重新拷进 C++（全量季型要调 8000 次）。"""
+    if not hasattr(core(), "make_planet"):        # 旧的扩展：各步也收 dict
+        return planet_view(ctx)
+    key = str(ctx.out_dir.resolve())
+    o = _PLANET_OBJ.get(key)
+    if o is None:
+        o = core().make_planet(planet_view(ctx))
+        _PLANET_OBJ.clear()
+        _PLANET_OBJ[key] = o
+    return o
+
+
 def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
     d = {"node": int(node), "seed": int(ctx.seed), "lat": inp["lat"], "lon": inp["lon"], "area_km2": inp["area_km2"],
          "main_area_km2": inp["main_area_km2"], "height_m": inp["height_m"], "age": inp["age"], "layered": bool(inp["layered"]),
@@ -139,7 +153,7 @@ def _polity_pop(ctx, node: int):
 
 # ---------------------------------------------------------------- 第 1 步：布局 + 岛形 + 高程
 def build_terrain_cpp(ctx, node: int, c: dict, inp: dict, res_m: float | None = None, log=print) -> dict:
-    R = core().build_terrain(inputs(ctx, node, inp), planet_view(ctx), flat_config(c), float(res_m or 0.0), threads(ctx))
+    R = core().build_terrain(inputs(ctx, node, inp), planet_obj(ctx), flat_config(c), float(res_m or 0.0), threads(ctx))
     return _terrain_from(ctx, node, inp, R, log)
 
 
@@ -232,7 +246,7 @@ def build_hydro_cpp(ctx, node: int, c: dict, g: dict, log=print) -> None:
              "island_id": np.ascontiguousarray(g["island_id"], dtype=np.int16), "cliff": np.ascontiguousarray(g["cliff"], dtype=bool),
              "res_km": float(g["res_km"]), "origin_x": float(ox), "origin_y": float(oy),
              "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "age": float(i["age"])} for i in J["islands"]]}
-    R = core().build_hydro(state, planet_view(ctx), flat_config(c), threads(ctx))
+    R = core().build_hydro(state, planet_obj(ctx), flat_config(c), threads(ctx))
     _hydro_from(c, g, R, log)
 
 
@@ -337,7 +351,7 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
     from .settle import set_settlements
     from .weather import set_weather
     t0 = time.perf_counter()
-    R = core().generate(inputs(ctx, node, inp, full=steps >= 5), planet_view(ctx), flat_config(c), int(year), int(steps),
+    R = core().generate(inputs(ctx, node, inp, full=steps >= 5), planet_obj(ctx), flat_config(c), int(year), int(steps),
                         float(res_m or 0.0), threads(ctx))
     t_core = time.perf_counter() - t0
     secs = R["seconds"]
@@ -384,7 +398,7 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
 
 def weather_years_cpp(ctx, node: int, c: dict, g: dict, years: int):
     """IS-daily 的多年逐日模拟（weather.multi_year_stats 的 cpp 分支）：返回 P[年, 季]（季降水和）与 F[年, 季]（季雨日比例）。"""
-    P, F, _frd = core().weather_years(inputs(ctx, node, g["inp"]), planet_view(ctx), flat_config(c), float(g["json"]["islands"][0]["rim_m"]),
+    P, F, _frd = core().weather_years(inputs(ctx, node, g["inp"]), planet_obj(ctx), flat_config(c), float(g["json"]["islands"][0]["rim_m"]),
                                       int(years))
     return P, F
 
@@ -396,12 +410,13 @@ def block_reduce_cpp(g: dict, f: int) -> dict:
                                np.ascontiguousarray(g["lake"], dtype=bool), int(f))
 
 
-def climate_only_cpp(ctx, node_inp: dict, c: dict) -> dict:
-    """只算四季（climate.classify_all 的 cpp 分支）。node_inp：classify_all 拼的 inp（lat / lon / height_m / 气候标量 / planet / keel）。"""
+def climate_only_cpp(ctx, node_inp: dict, c: dict, cfg_obj=None) -> dict:
+    """只算四季（climate.classify_all 的 cpp 分支）。node_inp：classify_all 拼的 inp（lat / lon / height_m / 气候标量 / planet / keel）；
+    cfg_obj：core().make_config(flat_config(c)) 预先转好的（逐群调用时省掉每次展平）。"""
     from . import decode
     d = {"node": 0, "seed": int(ctx.seed), "area_km2": 0.0, "main_area_km2": 0.0, "age": 0.0, "layered": False, "area_median_km2": 1.0,
          "lapse_c_per_km": 6.0, "arable_frac": 0.0, "river_size": 0.0, "has_river": False}
     for k in ("lat", "lon", "height_m", "keel_clearance_m", "precip", "temp", "temp_sea", "storm", "window", "season_range", "season_range_sea",
               "temp_winter", "temp_summer"):
         d[k] = float(node_inp[k])
-    return decode.climate(core().climate_only(d, planet_view(ctx), flat_config(c)), node_inp["planet"])
+    return decode.climate(core().climate_only(d, planet_obj(ctx), cfg_obj if cfg_obj is not None else flat_config(c)), node_inp["planet"])

@@ -356,6 +356,9 @@ def classify_all(ctx, c: dict, log=print) -> dict:
     names_all = []
     from .engine import backend
     cpp = backend(ctx) == "cpp"
+    if cpp:
+        from .engine import core, flat_config
+        cfg_obj = core().make_config(flat_config(c)) if hasattr(core(), "make_config") else None
     t0 = time.perf_counter()
     for j in range(n):
         inp = {k: float(isl[k][j]) for k in ("lat", "lon", "height_m")}
@@ -365,7 +368,7 @@ def classify_all(ctx, c: dict, log=print) -> dict:
         inp["keel_clearance_m"] = keel
         if cpp:                                  # 行星计划 P6b：四季在 C++ 里算（同式）
             from .engine import climate_only_cpp
-            C = climate_only_cpp(ctx, inp, c)
+            C = climate_only_cpp(ctx, inp, c, cfg_obj)
         else:
             g = {"inp": inp, "json": {}}
             build_climate(ctx, j, c, g, log=lambda *a: None, grids=grids)

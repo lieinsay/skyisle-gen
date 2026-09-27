@@ -430,14 +430,33 @@ nb::dict lod_dict(LodBlock&& B) {
 
 using ArrU2 = nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 
+// planet / cfg 参数：make_planet / make_config 转好的对象直接用，dict 就当场转
+const PlanetView& pv_of(nb::handle h, PlanetView& tmp) {
+    if (nb::isinstance<PlanetView>(h)) return nb::cast<const PlanetView&>(h);
+    tmp = planet_from(nb::cast<nb::dict>(h));
+    return tmp;
+}
+const Config& cfg_of(nb::handle h, Config& tmp) {
+    if (nb::isinstance<Config>(h)) return nb::cast<const Config&>(h);
+    tmp = cfg_from(nb::cast<nb::dict>(h));
+    return tmp;
+}
+
 }  // namespace
 
 void bind_island(nb::module_& m) {
+    nb::class_<PlanetView>(m, "Planet", "行星层的网格与全体群（make_planet 转好，按 run 缓存）");
+    nb::class_<Config>(m, "Config", "展平的 [island] 段（make_config 转好）");
+    m.def("make_planet", [](nb::dict planet) { return planet_from(planet); });
+    m.def("make_config", [](nb::dict cfg) { return cfg_from(cfg); });
+
     // ---------------------------------------------------------------- 整群生成（P6b）：地形 → 水系 → 资源 → 四季 → 天气 → 聚落
-    m.def("generate", [](nb::dict inp, nb::dict planet, nb::dict cfg, int year, int steps, double res_m, int threads) {
+    m.def("generate", [](nb::dict inp, nb::handle planet, nb::handle cfg, int year, int steps, double res_m, int threads) {
         const NodeInputs ni = inp_from(inp);
-        const PlanetView pv = planet_from(planet);
-        const Config c = cfg_from(cfg);
+        PlanetView pv_tmp;
+        Config c_tmp;
+        const PlanetView& pv = pv_of(planet, pv_tmp);
+        const Config& c = cfg_of(cfg, c_tmp);
         Group g;
         {
             nb::gil_scoped_release rel;
@@ -484,16 +503,20 @@ void bind_island(nb::module_& m) {
     });
 
     // 只算四季（island stats 全量季型用）与多年逐日天气（IS-daily）
-    m.def("climate_only", [](nb::dict inp, nb::dict planet, nb::dict cfg) {
+    m.def("climate_only", [](nb::dict inp, nb::handle planet, nb::handle cfg) {
         const NodeInputs ni = inp_from(inp);
-        const PlanetView pv = planet_from(planet);
-        const Config c = cfg_from(cfg);
+        PlanetView pv_tmp;
+        Config c_tmp;
+        const PlanetView& pv = pv_of(planet, pv_tmp);
+        const Config& c = cfg_of(cfg, c_tmp);
         return json_py(climate_json(build_climate(ni, pv, c)));
     });
-    m.def("weather_years", [](nb::dict inp, nb::dict planet, nb::dict cfg, double rim_m, int years) {
+    m.def("weather_years", [](nb::dict inp, nb::handle planet, nb::handle cfg, double rim_m, int years) {
         const NodeInputs ni = inp_from(inp);
-        const PlanetView pv = planet_from(planet);
-        const Config c = cfg_from(cfg);
+        PlanetView pv_tmp;
+        Config c_tmp;
+        const PlanetView& pv = pv_of(planet, pv_tmp);
+        const Config& c = cfg_of(cfg, c_tmp);
         std::vector<double> P, F;
         std::vector<SeasonParams> par;
         {
@@ -514,10 +537,12 @@ void bind_island(nb::module_& m) {
         return vec_np(kmeans_split(r, ii, jj, k));
     });
 
-    m.def("build_terrain", [](nb::dict inp, nb::dict planet, nb::dict cfg, double res_m, int threads) {
+    m.def("build_terrain", [](nb::dict inp, nb::handle planet, nb::handle cfg, double res_m, int threads) {
         const NodeInputs ni = inp_from(inp);
-        const PlanetView pv = planet_from(planet);
-        const Config c = cfg_from(cfg);
+        PlanetView pv_tmp;
+        Config c_tmp;
+        const PlanetView& pv = pv_of(planet, pv_tmp);
+        const Config& c = cfg_of(cfg, c_tmp);
         Group g;
         {
             nb::gil_scoped_release rel;
@@ -526,7 +551,7 @@ void bind_island(nb::module_& m) {
         return terrain_dict(g);
     }, "inp"_a, "planet"_a, "cfg"_a, "res_m"_a = 0.0, "threads"_a = 1);
 
-    m.def("build_hydro", [](nb::dict state, nb::dict planet, nb::dict cfg, int threads) {
+    m.def("build_hydro", [](nb::dict state, nb::handle planet, nb::handle cfg, int threads) {
         Group g;
         g.inp = inp_from(nb::cast<nb::dict>(state["inp"]));
         const ArrD2 h = nb::cast<ArrD2>(state["height"]);
@@ -550,8 +575,10 @@ void bind_island(nb::module_& m) {
             r.age_j = dget(e, "age");
             g.islands.push_back(r);
         }
-        const PlanetView pv = planet_from(planet);
-        const Config c = cfg_from(cfg);
+        PlanetView pv_tmp;
+        Config c_tmp;
+        const PlanetView& pv = pv_of(planet, pv_tmp);
+        const Config& c = cfg_of(cfg, c_tmp);
         {
             nb::gil_scoped_release rel;
             build_hydro(g, pv, c, threads);
