@@ -9,6 +9,7 @@ skyisle ninegrid --run out/seed42 [--region K]
 skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
 skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N] [--no-weather]
 skyisle island compare --sample 30 [--jobs N] [--timing [--no-python]]   # 两个后端（python / cpp）的对照；各命令默认 cpp（C++ 核心），加 --backend python 走冻结的参考后端
+skyisle island floats [--jobs N] [--nodes a,b]   # 浮高的全行星统计（只跑布局 + 地形）→ islands/float_stats.json / .npz；不在标定区间退出码 1
 """
 from __future__ import annotations
 
@@ -83,7 +84,7 @@ def main(argv=None):
     p_pol.add_argument("--top", type=int, default=15)
 
     p_isl = sub.add_parser("island", help="岛群生成器（第三层）：生成 / check / batch")
-    p_isl.add_argument("what", help="节点号，或 check / batch / stats（全量季型统计）/ lod / compare（两个后端对照）")
+    p_isl.add_argument("what", help="节点号，或 check / batch / stats（全量季型统计）/ lod / compare（两个后端对照）/ floats（浮高统计）")
     p_isl.add_argument("node", nargs="?", type=int, default=None, help="check 时的节点号")
     p_isl.add_argument("--run", default="out/seed42")
     p_isl.add_argument("--year", type=int, default=0)
@@ -170,6 +171,14 @@ def main(argv=None):
         if a.what == "batch":
             from .island.batch import run_batch
             return run_batch(ctx, sample=a.sample, year=a.year, sets=a.sets)
+        if a.what == "floats":
+            import os
+            from .island.floats import run_floats
+            jobs = a.jobs if a.jobs > 0 else max(1, (os.cpu_count() or 4) - 2)
+            if jobs > 1 and not any(s.startswith("engine.threads=") for s in a.sets):
+                a.sets = list(a.sets) + ["engine.threads=1"]
+            nodes = [int(x) for x in a.nodes.split(",") if x.strip()] if a.nodes else None
+            return run_floats(ctx, jobs=jobs, sets=a.sets, nodes=nodes)
         if a.what == "stats":
             from .island.climate import classify_all, print_stats
             print_stats(classify_all(ctx, isl.island_config(ctx, a.sets)))

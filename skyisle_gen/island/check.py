@@ -1,6 +1,6 @@
 """第六节：岛群生成器的一致性校验（`skyisle island check <节点>`）。
 
-IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap 为软项；
+IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-float / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap 为软项；
 资源 RES-site / RES-occ / RES-work / RES-geo 为硬项，RES-quarry 为软项；
 聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
@@ -155,6 +155,21 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             {"violation_km": v, "constrained": t.get("constrained"), "neighbours": t.get("neighbours")}, "≤ 0", v <= half)
         if 0.0 < v <= half:
             add("IS-terr-gap", "离分界线不到半道缝（两群之间的缝比 gap_km 窄）", {"violation_km": v}, "≤ 0", False, hard=False)
+    # IS-float：浮高（四点二十八）——主岛不动；其余岛 δ 在 [−down_max, +up_max] 里、平移后岸缘 ≥ rim_floor_m。
+    # 全行星的分布是否落在标定区间（|δ| 中位 300–600 m、p90 约 1 km、七成往上、与 Δ岛龄的秩相关 ≤ −0.4）由 `island floats` 查
+    fl = [i.get("float_m") for i in J["islands"]]
+    if fl and all(x is not None for x in fl):
+        fc = (c or {}).get("float") or {}
+        up, dn, floor = float(fc.get("up_max_m", 1500.0)), float(fc.get("down_max_m", 500.0)), float(fc.get("rim_floor_m", 20.0))
+        rest = J["islands"][1:]
+        vals = [float(i["float_m"]) for i in rest]
+        out_rng = [i["id"] for i in rest if not (-dn <= float(i["float_m"]) <= up)]
+        low = [i["id"] for i in rest if float(i["rim_m"]) < floor]
+        add("IS-float", "浮高：主岛 δ = 0，其余岛 δ ∈ [−down_max, +up_max]、平移后岸缘 ≥ rim_floor_m（全行星分布对标定区间用 island floats 查）",
+            {"main_m": fl[0], "n_up": sum(v > 0 for v in vals), "n_down": sum(v < 0 for v in vals), "max_m": max(vals, default=0.0),
+             "min_m": min(vals, default=0.0), "rim_min_m": min((float(i["rim_m"]) for i in rest), default=None),
+             "out_of_range": out_rng[:10], "rim_below_floor": low[:10]},
+            f"主岛 0；δ ∈ [−{dn:.0f}, +{up:.0f}] m；岸缘 ≥ {floor:.0f} m", fl[0] == 0.0 and not out_rng and not low)
     # IS-link：索桥 + 短渡连通
     from ..graph import weak_components
     n = len(J["islands"])

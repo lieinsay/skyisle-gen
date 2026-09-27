@@ -8,7 +8,8 @@
     island    块内陆地最多的岛号（−1 = 虚空）
     landcover 块内陆地最多的地表类（output.LANDCOVER_CLASSES 的下标）
     water     块内河道与湖的占比（0–255）
-每群一个 `out/<run>/islands_lod/<分辨率>/<节点>.npz`（外加 meta：栅格头、各岛的岸缘 / 岛底 / 峰、势力范围记录），`index.json` 汇总。
+每群一个 `out/<run>/islands_lod/<分辨率>/<节点>.npz`（外加 meta：栅格头、各岛的岸缘 / 岛底 / 峰 / 浮高 float_m / 岛龄、势力范围记录），`index.json` 汇总。
+浮高（四点二十八）之前做的粗版 meta 里没有 float_m，算没做（要重跑）。
 
 `--weather`（默认开，DESIGN-NOTES 四点二十七）：地形 + 水系之后接着算四季 → 逐日曲线 → 第 --year 年（默认 0）的逐日天气（与 `skyisle island <节点>` 同式、
 同随机流、同一个主岛岸缘），同一个 npz 里多存 weather_<列>（与 weather_y0.csv 同列同值，外加 temp_rim_c）与 weather_meta（气候参数头，JSON）。
@@ -162,7 +163,8 @@ def build_lod(ctx, node: int, c: dict, res_list: list[float], native_res_m: floa
             "raster": {"res_m": native * f, "rows": Hb, "cols": Wb, "origin_km": J["raster"]["origin_km"],
                        "native_res_m": native, "factor": f,
                        "note": "格 (r, c) 覆盖原生栅格的 [r·f, (r+1)·f) × [c·f, (c+1)·f)；格心 = origin + ((c+0.5)·res, −(r+0.5)·res)（km，x 东 y 北）"},
-            "islands": [{k: i[k] for k in ("id", "is_main", "area_km2", "center_km", "surface_m", "rim_m", "keel_m", "peak_m", "cliff_m", "age_zh")}
+            "islands": [{k: i[k] for k in ("id", "is_main", "area_km2", "center_km", "surface_m", "rim_m", "keel_m", "peak_m", "cliff_m", "float_m",
+                                           "age", "age_zh")}
                         for i in J["islands"]],
             "territory": {k: v for k, v in J["constraints"].get("territory", {}).items() if k != "note"},
             "seconds": round(time.perf_counter() - t0, 2),
@@ -225,9 +227,18 @@ def _weather_year_of(p: Path) -> int | None:
         return None
 
 
+def _has_float(p: Path) -> bool:
+    """meta 的各岛记着浮高（float_m）：浮高之前做的粗版没有，地形也是没浮的，要重跑。"""
+    try:
+        with np.load(p) as z:
+            return "float_m" in json.loads(str(z["meta"]))["islands"][0]
+    except (OSError, ValueError, KeyError, IndexError):
+        return False
+
+
 def _done(p: Path, weather: bool, year: int = 0) -> bool:
-    """这份粗版已有（要天气时还得带着同一年的天气：P0 时做的不带，要重跑）。"""
-    return p.exists() and (not weather or _weather_year_of(p) == year)
+    """这份粗版已有（要天气时还得带着同一年的天气：P0 时做的不带，要重跑；浮高之前做的也要重跑）。"""
+    return p.exists() and _has_float(p) and (not weather or _weather_year_of(p) == year)
 
 
 def select_nodes(ctx, nodes: str | None, near: int | None, radius_km: float | None) -> list[int]:

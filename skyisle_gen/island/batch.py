@@ -57,7 +57,8 @@ def run_batch(ctx, sample: int = 30, year: int = 0, sets: list[str] | None = Non
                "lakes": J["hydro"]["n_lakes"], "large_basins": J["hydro"]["main_basins"].get("n_large", 0),
                "forest": J["landcover"]["share"].get("林地", 0.0), "arable_err": round(abs(J["constraints"]["arable_frac"]["actual"] - J["constraints"]["arable_frac"]["target"]), 5),
                "storm_days": J["weather"].get("storm_days", J["weather"]["types"].get("风暴", 0)), "snow_days": J["weather"].get("snow_days", 0), "fog_days": J["weather"]["types"].get("云海漫顶", 0),
-               "sailable_days": J["weather"]["sailable_days"], "code": code, "fails": fails}
+               "sailable_days": J["weather"]["sailable_days"], "code": code, "fails": fails,
+               "float_m": [min((i.get("float_m", 0.0) for i in J["islands"]), default=0.0), max((i.get("float_m", 0.0) for i in J["islands"]), default=0.0)]}
         R = g.get("resources")
         if R:                            # 资源（四点二十一）：赋存区 / 采场计数、村有采石场的占比、林木外占陆地
             wk = g.get("settle", {}).get("workings", {})
