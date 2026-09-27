@@ -86,9 +86,18 @@ python -m skyisle_gen.cli check --run out/seed42 # 单独重跑验收
 python -m skyisle_gen.cli island 2051 --run out/seed42            # 一个岛群的全部产物 → out/seed42/islands/2051/（5–40 s）
 python -m skyisle_gen.cli island check 2051 --run out/seed42      # IS-* / RES-* / SET-* 校验（含重跑比哈希、势力范围 IS-terr）
 python -m skyisle_gen.cli island lod --run out/seed42 --lod-res 2000,1000   # 全行星粗版（原生分辨率生成再降采样，多进程；默认顺带出一年逐日天气，--no-weather 关）
+python -m skyisle_gen.cli island floats --run out/seed42 --jobs 28          # 浮高的全行星统计（只跑布局 + 地形）→ islands/float_stats.json / .npz，对标定区间
 ```
 
 邻群的陆地不许叠：每群与邻群按陆地规模分界、各退半道缝，越界了才重摆（DESIGN-NOTES 四点二十二）。
+
+**浮高**（DESIGN-NOTES 四点二十八，`[island.float]`）：同一群里的岛高低错落——主岛不动，其余岛按岛龄整座上下平移 δ
+（比主岛年轻的往上、老的往下，再加随机；往上最多约 +1.5 km、往下最多 −500 m，七成在主岛之上；平移后岸缘不低于 20 m，低台面的群往下挪得少）。
+平移在地形那一步、水系之前做，所以高岛的气温（直减率）、地表、高山区、村与资源点的海拔都按新高度；群的四季与逐日天气只看主岛，不变。
+产物里：`island.json` 每座岛多一个 `float_m`（δ，m；主岛 0），`surface_m` / `rim_m` / `peak_m` / `keel_m` 与 `terrain.npz` / `height.png` 的高程都**已含** δ
+（`cliff_m` 与起伏不变）；岸缘高差变大，高差 > 250 m 的相邻岛不再架索桥、改成短渡（导水槽随之少了）；
+粗版（`islands_lod/<分辨率>/<节点>.npz`）meta 的各岛也记 `float_m` 与 `age`，浮高之前做的粗版算没做、`island lod` 会重跑。
+`--set island.float.enabled=false` 关掉（与改前逐位相同，只多 `float_m` = 0）。
 
 ## C++ 核心库（生成器后端，行星计划 P6）
 

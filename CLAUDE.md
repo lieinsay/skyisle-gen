@@ -27,6 +27,7 @@
                                                   # 第三层岛群生成器：out/seed42/islands/1165/（约 5–15 s；不进管线、不回灌）
   $py -m skyisle_gen.cli island check 1165 --run out/seed42   # IS-* / SET-* / RES-* 校验（含重跑比哈希）
   $py -m skyisle_gen.cli island batch --run out/seed42 --sample 30   # 分层抽样批跑 + 校验 → islands/batch.json
+  $py -m skyisle_gen.cli island floats --run out/seed42 [--jobs 28]  # 浮高的全行星统计（只跑布局 + 地形，cpp 约 5 分钟）→ islands/float_stats.json / .npz；不在标定区间退出码 1
   $py -m skyisle_gen.cli island stats --run out/seed42   # 全量季型统计（只算气候，8000 群 4 s）→ islands/season_stats.json；操作台气候视角「季型」着色读它
   $py -m skyisle_gen.cli island lod --run out/seed42 --lod-res 2000,1000 [--nodes a,b | --near 2051 --radius 600] [--jobs N] [--force] [--no-weather] [--year 0]
                                                   # 岛群粗版（远处看的低模）：原生分辨率生成再按块降采样 → islands_lod/<分辨率>/<节点>.npz + index.json；
@@ -40,8 +41,8 @@
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 141 个测试，约 2 分钟（test_island / test_core_engine / test_core_p6b / p6c 跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
-                                                  # 扩展没编时 C++ 的 87 个跳过，其余经 tests/conftest.py 自动用 python 后端）
+  $py -m pytest tests -q                          # 155 个测试，约 3 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
+                                                  # 扩展没编时 C++ 的 101 个跳过，其余经 tests/conftest.py 自动用 python 后端）
   ```
 - **C++ 核心库（`core/`，行星计划 P6；设计稿 `docs/PLAN-CORE.md`，DESIGN-NOTES 四点二十三 – 四点二十六）**：`[engine] backend = "cpp" | "python"`（**P6d 起默认 cpp**）。
   P6a / P6b 移了第三层全部（cpp 后端的 `island.generate` 一次调 `_core.generate` 算完、前端只拼 island.json 与写产物）；
@@ -91,7 +92,9 @@ skyisle_gen/
                  （stages/ 与 check/ninegrid/polity/culture 不得 import 它，pytest 与 IS-iso 有静态断言）
                  __init__  island_config（[island] 段：默认值 ← run 的 resolved ← --set，不进缓存 key）、_node_inputs、build_terrain、generate
                  grid      局部分形噪声（LatticeNoise / FractalNoise，特征尺度以 km 给）、行程并查集连通分量、形态学、块均值 / 双线性、PNG 写出
-                 layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、各岛台面高度与目标起伏（岛龄 × 面积^0.3，另一条随机流）、索桥 / 短渡 / 导水槽 MST
+                 layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、各岛台面高度与目标起伏（岛龄 × 面积^0.3，另一条随机流）、
+                           浮高 float_offsets（四点二十八：其余岛按岛龄整座上下平移 δ，又一条随机流；往下的等岸缘拟合出来再按离 rim_floor_m 的余量缩，平移在 build_terrain 里、水系之前）、
+                           索桥 / 短渡 / 导水槽 MST（岸缘高差按平移后的算）
                  terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（锥 / 脊 / 台地）+ 幂次定测高曲线、粗网格**隐式河流功率下切**（只切汇流 ≥ 0.3 km² 的河道格、坡面靠休止角；随机流向 + 细网格平滑去方格纹）、
                            仿射拟合（陆地中位 = 台面、峰 − 岸缘 = 目标起伏）；priority_fill / d8 / d8_random / accumulate（5.3 共用）
                  hydro     5.3 河（主岛按 has_river 调阈值）/ 溪涧 / 湖 / 河口盆地、地表 12 类、可耕地按适宜度分位取到 arable_frac；
@@ -118,7 +121,9 @@ skyisle_gen/
                            （主岛挪进来 → 转向 → 拉长；其余岛带约束重摆），没越界的群产物逐字节不变
                  lod       岛群粗版（四点二十二）：原生分辨率跑布局 + 地形 + 水系再降采样——不能在粗分辨率上生成，布局随分辨率变；
                            `--weather`（默认开，四点二十七）接着算四季与一年逐日天气（不跑资源：天气只看行星层输入与主岛岸缘），存进同一个 npz 的 weather_<列> + weather_meta
-                 check     第六节 IS-area/surface/arable/river/channel/season/link/terr/det/iso（硬）+ RES-site/occ/work/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
+                 floats    `island floats`（四点二十八）：全行星每群只跑布局 + 地形，收全部非主岛的浮高、Δ岛龄、岸缘与每群的索桥数，对标定区间（|δ| 中位 300–600 m、p90 0.8–1.2 km、
+                           最高 ≥ 1.3 km、往上 60–80%、与 Δ岛龄秩相关 ≤ −0.4、岸缘 ≥ rim_floor_m）
+                 check     第六节 IS-area/surface/arable/river/channel/season/float/link/terr/det/iso（硬）+ RES-site/occ/work/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home（硬）/ SET-water（软）；batch 分层抽样批跑
                  engine    后端开关与 C++ 桥（`[engine] backend`，四点二十三 / 四点二十四）：`generate` 第一处按后端分派（cpp：整群一次调 `_core.generate`），
                            `build_terrain` / `hydro.build_hydro`（粗版、用时）、`weather.multi_year_stats`（IS-daily）、`lod` 的块降采样与天气（`_core.weather_year`）、`climate.classify_all` 也分派；
                            把原始的数拼回与 Python 版同形的 g 与 island.json（键序、round 位数照抄）
@@ -227,6 +232,9 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   西风带以北 100% 四季分明，信风带一半冷暖两季一半风暴季。
   势力范围 `[island.territory]`（四点二十二）：缝 3 km（两边各退 1.5）、看群心距 ≤ 3 × 等效半径之和 + 40 km 的邻群、主岛转 8 个走向、拉长 1.6 / 2.4、重摆时群内最小岸距 0.3 km；
   seed 42 全行星重摆 67%（密接几乎全部、中疏 68%），仍越过分界线的 34 群（③ 里群心挤在一起的，第三层摆不开）；IS-terr 硬 / IS-terr-gap 软。
+  浮高 `[island.float]`（2026-09-27，四点二十八，Zhouzhu 浮高计划 G 期）：主岛不动，其余岛整座平移 δ——z = 0.65 − 0.75 × Δ岛龄 / 0.08 + N(0, 1)，
+  往上 1500 × tanh(550 z / 1500)、往下 500 × tanh(450 z / 500)，往下的再按 (岸缘 − 20) / 500 缩（岸缘 ≥ 20 m、不在下限堆一摞）；
+  三 seed 全部非主岛：往上 70%、|δ| 中位 405 m、p90 1.02 km、最高 +1.47 km、与 Δ岛龄秩相关 −0.58；索桥按平移后的岸缘高差判，seed 42 全行星 75,768 → 27,513。
 - **生成器后端 `[engine]`（2026-09-27，行星计划 P6a – P6d，四点二十三 – 四点二十六）**：**`backend = "cpp"`（P6d 切的默认；三 seed 的 check 在 cpp 下 0 硬 0 软 0 报警、①–⑨ 与 python 逐位相同之后）**、
   `threads = 4`（cpp 群内各岛并行、⑥ 抽样介数按源并行，结果与线程数无关；`island lod` 多进程时自动 1）。cpp 后端的 island.json 在 meta 多 `"engine": "cpp"`，python 后端产物一字不改。
   P6b 实测：seed 42 / 7 / 2026 共 210 群（对照 30 + 随机 180）整套产物逐字节相同；整群 generate（不写产物）4 线程中位 0.62 s、最长 1.65 s（python 7.3 / 22 s）；
