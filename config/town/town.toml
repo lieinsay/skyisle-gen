@@ -1,0 +1,128 @@
+# 聚落营建器的工具参数（docs/PLAN-TOWN.md 7.1）：窗口、地面细化、合成地形、出图。
+# 与风格无关——同一块地换风格，地面逐字节不变。命令行覆盖：--set town.site.res_village_m=2
+
+[window]                          # 窗口半边长（m）：半边长 = spread × √(户 × 毛用地 / π) + margin，不小于各规模的下限
+compound_half_m = 60.0            # 宅院：只看单体
+hamlet_half_m = 250.0             # 小庄（散户 1–7 户）
+village_min_half_m = 400.0
+town_min_half_m = 700.0           # 集镇
+city_min_half_m = 1200.0          # 城与都
+village_m2_per_household = 600.0  # 估窗口用的毛用地（比任何风格的村都宽，林地排村这种再按风格加大）
+town_m2_per_household = 500.0
+city_m2_per_household = 300.0     # 城居 150–200 人 / ha、一户 5 口
+spread = 1.6
+margin_m = 250.0
+
+[site]                            # 岛群窗口细化与公共收尾
+res_village_m = 1.0               # 宅院 / 小庄 / 村的细栅格
+res_town_m = 2.0                  # 集镇 / 城
+detail_wavelength_m = 40.0        # 细节噪声的特征波长
+detail_octaves = 3
+detail_min_m = 0.25               # 平地的细节起伏
+detail_max_m = 3.0
+detail_slope_gain = 6.0           # 振幅 = min + gain × tan(坡)，夹到 [min, max]
+detail_river_fade_m = 150.0       # 离河 / 溪（粗栅格）这么近以内细节噪声渐弱到 0，免得河边起包
+coast_noise = 0.12                # 岸线（岛号掩码）边界的扰动（0–0.5）
+class_jitter_m = 35.0             # 田的边界的扰动距离
+class_vote_noise = 0.35           # 地表类别软投票的噪声（0 = 纯双线性，边界成直线段）
+farm_edge_noise = 0.3             # 田与上游漫滩的边界（掩码的 0.5 等值线）加的噪声
+edge_setback_m = 15.0             # 离虚空（崖缘）这么近不可建
+river_smooth = 3                  # 河中心线的 Chaikin 平滑次数
+bank_m = 6.0                      # 河岸带宽（岸坡压到水面 + 干舷 + 岸坡 × 离岸距离）
+bank_freeboard_m = 0.6
+bank_slope = 0.5
+flood_rise_m = 1.5                # 漫水：离水面高差 < 它、且离水 < flood_reach_m——河按大小缩：
+flood_reach_m = 150.0             #   高差 × clip(水深 / flood_ref_depth_m, 0.3, 1)，距离 ≤ flood_reach_widths × 河宽
+flood_ref_depth_m = 2.0
+flood_reach_widths = 8.0
+flood_lake_rise_m = 1.0           # 湖海的涨落
+flood_max_slope_deg = 4.0         # 坡比它陡的不漫水
+lake_depth_m = 3.0
+
+[synth]                           # 合成地形（十种）：尺寸都是绝对米数，窗口只决定裁多大
+lat_deg = 35.0                    # 所在纬度（正 = 北半球）：定向阳一侧
+base_m = 100.0                    # 基准高程
+scale_m = 420.0                   # 地貌的特征尺度：岸线、坡脚的溪、支沟长度都按它摆（与窗口无关，窗口只决定裁多大）
+extent_m = 4000.0                 # 河、沟、溪的线画到 ±extent_m
+farm_max_slope_deg = 6.0          # 自动划田：坡 < 它是平田
+terrace_max_slope_deg = 16.0      # 再陡到它为止开梯田
+farm_noise_cut = -0.15            # 自动划田：噪声低于它的地块不种（留草地、林地的空）
+
+[synth.plain]                     # 平原
+relief_m = 3.0
+
+[synth.meander]                   # 曲流平原：一条弯弯的河穿过
+river_width_m = 25.0
+river_depth_m = 2.5
+amplitude_m = 160.0
+wavelength_m = 900.0
+gradient = 0.0005
+relief_m = 1.5
+floodplain_rise = 0.006           # 离河每米抬高多少（漫滩到阶地）
+
+[synth.valley]                    # 河谷：谷底平、两侧谷坡
+river_width_m = 15.0
+river_depth_m = 1.5
+amplitude_m = 40.0
+wavelength_m = 1200.0
+gradient = 0.003
+floor_width_m = 320.0
+floor_rise = 0.012                # 谷底离河每米抬高多少（谷底边上高出河面约 3 m，不全是漫水）
+wall_height_m = 140.0
+wall_slope_deg = 18.0
+
+[synth.sunslope]                  # 朝阳坡：整面坡朝赤道，坡脚一条溪
+slope_deg = 10.0
+stream_offset = 0.75              # 溪在向阳一侧，离中心 offset × scale_m
+stream_width_m = 4.0
+stream_depth_m = 0.5
+
+[synth.hilltop]                   # 山顶：一座孤丘带一道山嘴
+height_m = 80.0
+radius_m = 280.0
+
+[synth.lakeshore]                 # 湖岸：向阳一侧是湖，一条溪流进湖
+shore_offset = 0.3
+rise = 0.025
+wave_m = 70.0
+lake_depth_m = 6.0
+stream_width_m = 5.0
+stream_depth_m = 0.6
+
+[synth.fjord]                     # 峡湾岸：向阳一侧是水，一条窄窄的平地，背后陡壁
+water_offset = 0.35
+strip_m = 160.0
+wall_height_m = 320.0
+wall_slope_deg = 32.0
+wave_m = 50.0
+water_depth_m = 20.0
+stream_width_m = 4.0
+stream_depth_m = 0.5
+
+[synth.gully]                     # 黄土沟：塬面被沟切开，沟壁陡
+table_m = 60.0                    # 塬面比基准高多少
+depth_m = 40.0
+floor_width_m = 24.0
+wall_width_m = 40.0
+gradient = 0.006
+branches = 5
+stream_width_m = 3.0
+
+[synth.confluence]                # 两河交汇：两条支流在中心汇成一条
+river_width_m = 18.0
+main_width_m = 28.0
+river_depth_m = 2.0
+gradient = 0.0006
+relief_m = 1.5
+floodplain_rise = 0.008
+
+[synth.rim]                       # 岛缘崖台：台地一侧是崖缘外的虚空（空岛特有），一条溪从崖缘跌下
+edge_offset = 0.35
+plateau_slope = 0.02
+wave_m = 60.0
+stream_width_m = 4.0
+stream_depth_m = 0.5
+
+[render]                          # 出图
+max_px = 1600                     # 长边像素
+contour_m = 2.0                   # 等高线间距（起伏大时自动放大到 5 / 10 / 20 m）

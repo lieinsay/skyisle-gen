@@ -10,6 +10,7 @@ skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]  
 skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N] [--no-weather]
 skyisle island compare --sample 30 [--jobs N] [--timing [--no-python]]   # 两个后端（python / cpp）的对照；各命令默认 cpp（C++ 核心），加 --backend python 走冻结的参考后端
 skyisle island floats [--jobs N] [--nodes a,b]   # 浮高的全行星统计（只跑布局 + 地形）→ islands/float_stats.json / .npz；不在标定区间退出码 1
+skyisle town site <节点> --site 村037 | synth --terrain 河谷   # 聚落营建器（独立工具，docs/PLAN-TOWN.md）：地形 + 规模 + 风格 → 建筑群
 """
 from __future__ import annotations
 
@@ -106,6 +107,9 @@ def main(argv=None):
     p_isl.add_argument("--timing", action="store_true", help="compare：只量整群 generate 的用时（顺序跑，不写产物；python / cpp 1 线程 / cpp 4 线程）")
     p_isl.add_argument("--no-python", action="store_true", help="compare --timing：不跑 python 后端（它慢）")
 
+    from .town.cli import add_parser as _add_town
+    _add_town(sub)
+
     p_serve = sub.add_parser("serve", help="本地 3D 操作台（可改参数重跑）")
     p_serve.add_argument("--out", default="out")
     p_serve.add_argument("--port", type=int, default=8642)
@@ -119,6 +123,10 @@ def main(argv=None):
         from .web.server import serve
         serve(Path(a.out), a.port, open_browser=not a.no_open, host=a.host)
         return 0
+
+    if a.cmd == "town":
+        from .town.cli import run_town
+        return run_town(a)
 
     if a.cmd in ("run", "stage"):
         if a.backend:
