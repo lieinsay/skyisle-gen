@@ -9,7 +9,10 @@
 #include "skyisle/grid.hpp"
 #include "skyisle/rng.hpp"
 #include "skyisle/town/geom.hpp"
+#include "skyisle/town/network.hpp"
+#include "skyisle/town/orient.hpp"
 #include "skyisle/town/raster.hpp"
+#include "skyisle/town/site.hpp"
 
 using namespace skyisle;
 
@@ -98,6 +101,68 @@ int main() {
         chaikin(L, &at, 2);
         CHECK(L.front().x == 0.0 && L.back().y == 10.0 && at.back()[0] == 2.0 && L.size() == at.size());
         CHECK(std::fabs(dist_point_polyline({5.0, 3.0}, {{0.0, 0.0}, {10.0, 0.0}}) - 3.0) < 1e-12);
+    }
+    {
+        // 朝向规则链：朝阳（权 3，容差 15°）为主、顺街成排（权 1，容差 4°，模 90°）为辅
+        using namespace skyisle::town;
+        const double D = PI / 180.0;
+        const std::vector<OrientRule> rules = {{"sun", 3.0, 15 * D, 0.0}, {"align_street", 1.0, 4 * D, 0.0}};
+        OrientCtx c;
+        c.sun = PI;
+        c.street_dir = PI / 2 + 10 * D;   // 街偏 10°：朝阳容差里就能顺街，两条都满足
+        double f = solve_facing(rules, c, 0.0, NaN);
+        CHECK(angle_diff(f, PI) <= 15 * D + 1e-9);
+        CHECK(rule_deviation(rules[1], c, f) <= 4 * D + 1e-6);
+        c.street_dir = PI / 2 + 40 * D;   // 街偏 40°：顺不了街；容差外是软的，朝阳让出几度但不丢
+        f = solve_facing(rules, c, 0.0, NaN);
+        CHECK(angle_diff(f, PI) < 22 * D && rule_deviation(rules[1], c, f) > 4 * D);
+        c.sun = 0.0, c.street_dir = NaN;  // 南半球朝北；没有街的语境，顺街那条跳过
+        CHECK(angle_diff(solve_facing(rules, c, 0.0, NaN), 0.0) < 1e-9);
+        c.street_dir = 0.3;               // 山墙朝街模 180°：反过来也算顺
+        CHECK(std::fabs(rule_deviation(OrientRule{"gable_street", 1.0, 0.0, 0.0}, c, 0.3 + PI)) < 1e-9);
+        CHECK(solve_facing({OrientRule{"water", 1.0, 0.0, 0.0}}, OrientCtx{}, 0.0, 1.25) == 1.25);   // 规则都没目标：回退
+    }
+    {
+        // 寻路：60 × 40 格平地，x = 30 一堵南北墙只在行 17–22 留 6 m 的口；路从口里过、离墙 ≥ 间距；间距比口的一半还大就不过；湖不架桥、窄河架桥
+        using namespace skyisle::town;
+        const int H = 40, W = 60;
+        Site s;
+        s.res_m = 1.0, s.H = H, s.W = W, s.x0 = 0.0, s.y0 = 40.0;
+        s.height = GridF(H, W, 100.0f), s.water_level = GridF(H, W, std::nanf("")), s.water = Grid<uint8_t>(H, W, WATER_NONE);
+        s.sky = Mask(H, W, 0), s.edge = Mask(H, W, 0), s.farmland = Mask(H, W, 0), s.flood = Mask(H, W, 0);
+        s.landcover = Grid<uint8_t>(H, W, 0), s.island = Grid<int16_t>(H, W, 0), s.water_dist_m = GridF(H, W, 1e6f);
+        Mask blocked(H, W, 0), road(H, W, 0), goal(H, W, 0);
+        for (int i = 0; i < H; ++i) {
+            if (i < 17 || i > 22) blocked(i, 30) = 1;
+            goal(i, 55) = 1;
+        }
+        PathParams pp;
+        pp.clearance_m = 1.5;
+        std::vector<V2> out;
+        CHECK(find_path(s, blocked, road, goal, pp, s.center(20, 5), out));
+        bool through = false;
+        double dmin = 1e9;
+        for (size_t k = 0; k + 1 < out.size(); ++k) {
+            if ((out[k].x - 30.5) * (out[k + 1].x - 30.5) <= 0.0) through = through || (out[k].y > 17.0 && out[k].y < 23.0);
+            for (int i = 0; i < H; ++i)
+                if (blocked(i, 30)) dmin = std::min(dmin, dist_point_segment(s.center(i, 30), out[k], out[k + 1]));
+        }
+        CHECK(through && out.back().x > 54.0 && out.back().x < 57.0);
+        CHECK(dmin >= 1.5 - 0.9);   // 格心量的间距，平滑后差不过一格
+        pp.clearance_m = 3.0;       // 口的中线离两头的墙格 3 格：刚好过
+        CHECK(find_path(s, blocked, road, goal, pp, s.center(20, 5), out));
+        pp.clearance_m = 3.5;
+        CHECK(!find_path(s, blocked, road, goal, pp, s.center(20, 5), out));
+        pp.clearance_m = 0.0;
+        for (int i = 0; i < H; ++i)
+            for (int j = 40; j < 43; ++j) s.water(i, j) = WATER_RIVER, s.water_level(i, j) = 98.0f, s.height(i, j) = 96.5f;
+        CHECK(find_path(s, blocked, road, goal, pp, s.center(20, 5), out));   // 3 m 宽、岸高出水面 2 m 的河：架桥
+        pp.bridge_max_m = 2.0;
+        CHECK(!find_path(s, blocked, road, goal, pp, s.center(20, 5), out));  // 比能架的宽：不过
+        pp.bridge_max_m = 24.0;
+        for (int i = 0; i < H; ++i)
+            for (int j = 40; j < 43; ++j) s.water(i, j) = WATER_LAKE;
+        CHECK(!find_path(s, blocked, road, goal, pp, s.center(20, 5), out));  // 湖：不过
     }
     if (fails) {
         std::printf("%d 项失败\n", fails);

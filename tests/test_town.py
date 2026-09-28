@@ -173,3 +173,110 @@ def test_heightmap_source(tmp_path):
     assert (sd["water"][95:105, 10:230] > 0).all() and not (sd["water"][:80] > 0).any()
     dry = ~(sd["water"] > 0) & ~sd["flood"]
     assert np.allclose(sd["height"][dry], h[dry] * 0.1, atol=1e-3)
+
+
+# ---------------- 营建（第二步：华北集村）：风格、方案、硬校验、朝向、产物 ----------------
+import json  # noqa: E402
+import math  # noqa: E402
+
+from skyisle_gen.town.output import plan_json  # noqa: E402
+from skyisle_gen.town.plan import hard_failures, make_plan, plan_seed  # noqa: E402
+from skyisle_gen.town.style import list_styles, load_style, style_flat, style_hash  # noqa: E402
+
+
+def test_style_load_and_override(tmp_path):
+    assert "华北集村" in {s["name"] for s in list_styles()}
+    st = load_style("华北集村")
+    assert st == load_style("huabei"), "中文名与 id 是同一个风格"
+    assert st["ground"]["max_slope_deg"] == 12 and st["street"]["plot_gap_m"] is not None   # 风格盖 base、base 补齐
+    assert st["functions"]["temple"]["enabled"] and st["functions"]["temple"]["name"] == "关帝庙"
+    assert st["functions"]["well"]["mode"] == "well", "通用目录里的字段合进来"
+    assert load_style("华北集村", ["style.ground.max_slope_deg=8"])["ground"]["max_slope_deg"] == 8
+    flat = style_flat(st)   # 给 C++ 的 {num, vec, str}：模板与启用的功能展成数组
+    assert flat["num"]["style.compound.template.n"] == len(st["compound"]["templates"])
+    assert flat["num"]["style.func.n"] == sum(bool(v.get("enabled")) for v in st["functions"].values())
+    with pytest.raises(ValueError):
+        load_style("没有这个风格")
+    bad = tmp_path / "bad.toml"
+    bad.write_text('[meta]\nid = "bad"\nname = "坏"\n[functions.nope]\nenabled = true\n', encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_style(str(bad))
+
+
+def _plan(terrain, op, lat=None, seed=1, hh=60):
+    cfg = town_config()
+    sd, meta = site_synth(terrain, "village", hh, cfg, seed=seed, lat_deg=lat)
+    st = load_style("华北集村")
+    return sd, meta, st, make_plan(sd, meta, st, operator=op)
+
+
+def _local(c, p):
+    o = c["plot"]
+    f = math.radians(o["facing_deg"])
+    d = np.asarray(p, float) - np.asarray(o["c"], float)
+    return d @ np.array([math.cos(f), -math.sin(f)]), d @ np.array([math.sin(f), math.cos(f)])   # 右、前
+
+
+@pytest.mark.parametrize("terrain,op", [("平原", "fishbone"), ("平原", "organic"), ("朝阳坡", "fishbone"), ("河谷", "organic"),
+                                        ("山顶", "organic"), ("两河交汇", "fishbone"), ("岛缘崖台", "organic")])
+def test_plan_hard_checks(terrain, op):
+    sd, meta, st, P = _plan(terrain, op)
+    assert P["op"] == op
+    assert not hard_failures(P), [c["id"] + "：" + c["msg"] for c in hard_failures(P)]
+    assert (P["households"]["compound"] >= 0).all(), "每户都住下"
+    assert any(c["func"] == "temple" for c in P["compounds"]) and any(f["kind"] == "well" for f in P["features"])
+    assert sum(b["func"] == "landing" or b["name"] == "货棚" for b in P["buildings"]) >= 1 or any(f["kind"] == "landing" for f in P["features"])
+
+
+def test_plan_deterministic_and_seeded():
+    sd, meta, st, P = _plan("河谷", "organic")
+    before = {k: sd[k].copy() for k in ARRAYS}
+    P2 = make_plan(sd, meta, st, operator="organic")
+    for k in ARRAYS:
+        assert np.array_equal(before[k], sd[k], equal_nan=True), f"营建改了地面的 {k}"
+    h = style_hash(st)
+
+    def dump(Q):   # 用时每次不同，不算
+        return json.dumps({k: v for k, v in plan_json(Q, st, h).items() if not k.startswith("timing")}, sort_keys=True)
+
+    a = dump(P)
+    assert a == dump(P2) and np.array_equal(P["occ"], P2["occ"]), "同一地面同一风格重跑逐字节相同"
+    _, _, _, P3 = _plan("河谷", "organic", seed=2)
+    assert dump(P3) != a, "换种子方案不同"
+    # 方案的种子跟风格走、地面的种子不跟：换风格地面不变
+    assert plan_seed(meta, "huabei") != plan_seed(meta, "other")
+
+
+@pytest.mark.parametrize("lat,sun", [(35.0, 180.0), (-35.0, 0.0)])
+@pytest.mark.parametrize("op", ["fishbone", "organic"])
+def test_courtyards_face_the_equator(lat, sun, op):
+    """北半球院子朝南、南半球朝北；正房在院子后头，门按「前沿开左、后沿开右、侧边开前头」。"""
+    _, _, _, P = _plan("平原", op, lat=lat)
+    houses = [c for c in P["compounds"] if c["kind"] == "house"]
+    dev = np.array([abs((c["plot"]["facing_deg"] - sun + 180.0) % 360.0 - 180.0) for c in houses])
+    assert (dev <= 15.0).mean() >= 0.9, f"朝阳的只有 {(dev <= 15.0).mean():.0%}"
+    for c in houses:
+        o = c["plot"]
+        for b in c["buildings"]:
+            if P["buildings"][b]["role"] == "main":
+                assert _local(c, P["buildings"][b]["c"])[1] < 0, "正房在院子后半"
+        x, y = _local(c, c["gate"])
+        side = c["access_side"]
+        if side == 0:
+            assert abs(y - o["d"] / 2) < 0.8 and x < 0, "前沿开门在左手（北半球即东南角）"
+        elif side == 1:
+            assert abs(y + o["d"] / 2) < 0.8 and x > 0
+        else:
+            assert abs(abs(x) - o["w"] / 2) < 0.8 and y > 0
+
+
+def test_plan_cli_products(tmp_path):
+    from skyisle_gen.cli import main
+    assert main(["town", "synth", "--terrain", "平原", "--households", "30", "--style", "华北集村", "--out", str(tmp_path)]) == 0
+    out = next((tmp_path / "town" / "synth").iterdir())
+    for f in ("site.npz", "plan.json", "plan.png", "plan-detail.png", "plan.svg", "style.resolved.toml"):
+        assert (out / f).stat().st_size > 0, f
+    J = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    assert J["style"]["id"] == "huabei" and J["compounds"] and J["checks"]
+    assert all(c["ok"] for c in J["checks"] if c["hard"])
+    assert load_style(str(out / "style.resolved.toml")) is not None, "解析后的风格能原样再读回来"
