@@ -124,5 +124,6 @@ stream_width_m = 4.0
 stream_depth_m = 0.5
 
 [render]                          # 出图
-max_px = 1600                     # 长边像素
+max_px = 1600                     # 长边像素（整个窗口）
+detail_max_px = 2400              # plan-detail.png（建成区放大）的长边像素
 contour_m = 2.0                   # 等高线间距（起伏大时自动放大到 5 / 10 / 20 m）

@@ -1,0 +1,303 @@
+# 华北集村（docs/PLAN-TOWN.md 6.6 第 1 卡；数与出处 docs/TOWN-SOURCES.md §1）
+# 集村，东西主街 1–2 条 + 南北胡同（鱼骨 / 井字）；三合院 / 四合院坐北朝南（南半球整座转 180°，坐南朝北），门开前沿左角（巽位），
+# 路在院后时开后沿右角（乾位，北京「路南院」）；村口土地庙，十字街关帝庙，村边低处坑塘与龙王庙，场院环村边，井。
+
+[meta]
+id = "huabei"
+name = "华北集村"
+region = "华北平原（冀鲁豫）"
+sources = ["TOWN-SOURCES §1：Smith 1899 [1]、合院规制 [3]、坑塘 [4]†、场院 [5]†、寨墙 [6]†、街宽 [7]†；其余为估"]
+
+[site]
+center_search_m = 300.0
+[site.weights]
+flat = 1.5
+water = 0.8
+dry = 1.2                    # 高燥
+sun = 0.3
+farmland = -0.2
+edge = -1.0
+
+[ground]
+max_slope_deg = 12.0           # 平原村；到了坡上（太行山区的石头村）院子做成台地
+max_cut_m = 1.2
+max_terrace_m = 3.0
+
+[village]
+operators = { fishbone = 0.6, organic = 0.4 }   # 鱼骨街村 0.6、团块生长 0.4
+households_per_compound = [1, 1]
+founders = [1, 3]
+kin_p = 0.65
+
+[street]
+main_width_m = [5.0, 8.0]      # 村主街 5–8 m（估）
+street_width_m = [3.5, 5.0]
+lane_width_m = [2.0, 4.0]      # 胡同 2–4 m（估）
+trunk_width_m = [4.0, 6.0]
+plot_gap_m = [0.0, 0.8]        # 院墙多相贴
+setback_m = [0.0, 0.3]
+
+[fishbone]
+street_spacing_m = [50.0, 62.0]   # 一个街坊前后两排合院（宅基进深 20–30 m，估）
+lane_spacing_m = [45.0, 95.0]
+warp_m = 3.0
+vacant_p = 0.05
+
+[organic]
+jitter_deg = 2.0                     # 院落大体成排
+stagger_m = 0.8
+
+[growth]
+w_contact = 0.6
+main_discount = 0.75
+
+[orient]
+snap_deg = 0.0
+[[orient.rule]]
+kind = "sun"                   # 正房朝阳，偏角 ±15° 内（估）
+weight = 3.0
+tol_deg = 15.0
+[[orient.rule]]
+kind = "align_street"          # 院落顺街成排
+weight = 1.0
+tol_deg = 4.0
+
+[gate]
+front = "left"
+back = "right"
+side = "front"
+width_m = [2.6, 3.2]
+
+# 宅基 12–20 × 20–30 m（≈ 0.4 亩，估）；正房 3–5 间，两厢，倒座；开间 3.0–3.6 m（估）
+[compound.templates.siheyuan]
+name = "四合院"
+kind = "house"
+weight = 0.25
+plot_w_m = [15.0, 20.0]
+plot_d_m = [24.0, 30.0]
+bay_m = [3.0, 3.6]
+wall = true
+gate_house = true              # 门楼占倒座靠角的一间
+[[compound.templates.siheyuan.b]]
+role = "main"
+name = "正房"
+func = "dwelling"
+side = "back"
+bays = [3, 5]
+odd = true
+depth_m = [6.0, 7.5]
+face = "front"
+eave_m = 3.3
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.45
+[[compound.templates.siheyuan.b]]
+role = "ear"
+name = "耳房"
+func = "store"
+side = "back"
+attach = "left"
+bays = [1, 2]
+depth_m = [4.2, 5.5]
+face = "front"
+prob = 0.8
+eave_m = 2.9
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.siheyuan.b]]
+role = "ear"
+name = "耳房"
+func = "store"
+side = "back"
+attach = "right"
+bays = [1, 2]
+depth_m = [4.2, 5.5]
+face = "front"
+prob = 0.8
+eave_m = 2.9
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.siheyuan.b]]
+role = "wing"
+name = "东厢房"
+func = "dwelling"
+side = "left"
+bays = [2, 3]
+depth_m = [4.0, 5.0]
+pos = 0.6
+face = "in"
+eave_m = 3.0
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.siheyuan.b]]
+role = "wing"
+name = "西厢房"
+func = "dwelling"
+side = "right"
+bays = [2, 3]
+depth_m = [4.0, 5.0]
+pos = 0.6
+face = "in"
+eave_m = 3.0
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.siheyuan.b]]
+role = "front"
+name = "倒座房"
+func = "store"
+side = "front"
+len_frac = [0.9, 1.0]
+depth_m = [4.0, 4.8]
+face = "in"
+eave_m = 2.9
+roof = "gable"
+pitch_deg = 26.0
+plinth_m = 0.2
+
+[compound.templates.sanheyuan]
+name = "三合院"
+kind = "house"
+weight = 0.5
+plot_w_m = [13.0, 18.0]
+plot_d_m = [20.0, 27.0]
+bay_m = [3.0, 3.5]
+wall = true
+gate_house = false             # 前面是院墙，墙上开小门楼
+[[compound.templates.sanheyuan.b]]
+role = "main"
+name = "正房"
+func = "dwelling"
+side = "back"
+bays = [3, 5]
+odd = true
+depth_m = [5.8, 7.2]
+face = "front"
+eave_m = 3.2
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.4
+[[compound.templates.sanheyuan.b]]
+role = "ear"
+name = "耳房"
+func = "store"
+side = "back"
+attach = "left"
+bays = [1, 2]
+depth_m = [4.2, 5.5]
+face = "front"
+prob = 0.6
+eave_m = 2.9
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.sanheyuan.b]]
+role = "ear"
+name = "耳房"
+func = "store"
+side = "back"
+attach = "right"
+bays = [1, 2]
+depth_m = [4.2, 5.5]
+face = "front"
+prob = 0.6
+eave_m = 2.9
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.sanheyuan.b]]
+role = "wing"
+name = "东厢房"
+func = "dwelling"
+side = "left"
+bays = [2, 3]
+depth_m = [3.8, 4.6]
+pos = 0.6
+face = "in"
+eave_m = 2.9
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.sanheyuan.b]]
+role = "wing"
+name = "西厢房"
+func = "kitchen"
+side = "right"
+bays = [2, 3]
+depth_m = [3.8, 4.6]
+pos = 0.6
+face = "in"
+prob = 0.85
+eave_m = 2.9
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+
+[compound.templates.yizi]
+name = "一字院"
+kind = "house"
+weight = 0.25
+plot_w_m = [12.0, 16.0]
+plot_d_m = [18.0, 24.0]
+bay_m = [3.0, 3.4]
+wall = true
+gate_house = false
+[[compound.templates.yizi.b]]
+role = "main"
+name = "正房"
+func = "dwelling"
+side = "back"
+bays = [3, 3]
+depth_m = [5.2, 6.5]
+face = "front"
+eave_m = 3.1
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.35
+[[compound.templates.yizi.b]]
+role = "kitchen"
+name = "灶屋"
+func = "kitchen"
+side = "left"
+bays = [1, 2]
+depth_m = [3.2, 4.0]
+pos = 0.3
+face = "in"
+prob = 0.6
+eave_m = 2.6
+roof = "shed"
+pitch_deg = 20.0
+plinth_m = 0.2
+
+[compound.templates.temple]    # 关帝庙：正殿三间 + 山门 + 可能有两庑
+name = "关帝庙"
+
+[functions.temple]
+enabled = true
+name = "关帝庙"                # 十字街或村中（估）
+site = { crossroad = 3.0, center = 2.0, main = 1.0 }
+[functions.shrine]
+enabled = true
+name = "土地庙"                # 村口（估）
+[functions.pond]
+enabled = true
+name = "坑塘"                  # 挖土筑房留下的坑，每村 1–4 个，多在村边低处（[4]†，数与位置为估）
+[functions.pond_temple]
+enabled = true
+name = "龙王庙"                # 坑塘或河边（估）
+[functions.threshing]
+enabled = true
+name = "场院"                  # 环村边、离家近，每处 500–2000 m²（[5]†，估）
+[functions.tree]
+enabled = true
+name = "村口大树"
+[functions.landing]
+shed_name = "货棚"
+
+[targets]                      # 均为估，待按口径 n 标定
+lambda = [1.0, 1.6]            # 团状
+orient_sun_share = [0.9, 1.0]  # 主屋朝向在 ±15° 内 ≥ 90%
+coverage = [0.22, 0.45]        # 覆盖率 25–40%（估），放宽一点

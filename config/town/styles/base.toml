@@ -1,0 +1,162 @@
+# 风格的基础表（docs/PLAN-TOWN.md 第六节）：全部键的默认值与注释。内置风格在同目录下，只写与这里不同的键。
+# 加载次序：base ← 风格 ← --set style.键=值。表与表逐键深合并，列表与「表的数组」整个替换。
+# 单位：m、度；区间 [lo, hi] 均匀抽样。「估」= 资料里没有、按量级估的（docs/TOWN-SOURCES.md）。
+# C++ 只读展平后的键（style.*），不读 TOML；模板与功能由前端整理成数组再展平。
+
+[meta]
+id = "base"
+name = "基础表"
+region = ""
+note = "不单独用：内置风格与自定义风格都从它继承"
+sources = []
+
+# ---------------------------------------------------------------- 选址（7.2）
+[site]
+center_search_m = 300.0     # 村心在上游点位多远以内挑（TP-shift）
+water_scale_m = 200.0       # 「近水」这一场按 exp(−离水 / 它) 衰减
+edge_scale_m = 80.0         # 「近崖缘」按 exp(−离虚空 / 它)
+[site.weights]              # 住宅兴趣图 = Σ 权重 × 归一化的场（负数 = 躲开）
+flat = 1.0                  # 平：1 − 坡 / 可建坡上限
+water = 1.0                 # 近水
+dry = 1.0                   # 高燥：大尺度地势（TPI 200 m）高于四周
+sun = 0.5                   # 朝阳：冬至正午的日照强度（相对平地）
+farmland = -0.3             # 压田（农户舍不得在好田上盖房）
+edge = -1.0                 # 近崖缘
+shelter = 0.0               # 背风：冬季风上风向地势高
+
+[ground]
+max_slope_deg = 10.0        # 可建坡上限（地块里有比它陡的格就不要）
+max_cut_m = 1.5             # 一栋房的台基挖 / 填深度上限（每栋按自己脚下的地面定台基）
+max_terrace_m = 2.5         # 一个宅院地块里的高差上限（超过 max_cut_m 的院子做成台地：后排高、前院低）
+allow_flood = false         # 漫水区能不能建（吊脚楼风格才开）
+
+# ---------------------------------------------------------------- 村的形态（6.2）
+[village]
+operators = { fishbone = 1.0 }       # 形态算子与权重：每个村按权重挑一个（第二步有 fishbone / organic）
+households_per_compound = [1, 1]     # 一个宅院住几户
+founders = [1, 3]                    # 开基户
+kin_p = 0.6                          # 一户有「父户」（同一房支）的概率，否则算外来户
+
+[street]                             # 路的宽度（m）
+trunk_width_m = [4.0, 6.0]           # 出村大路
+main_width_m = [5.0, 7.0]            # 主街
+street_width_m = [3.0, 4.5]          # 街
+lane_width_m = [2.0, 3.5]            # 巷 / 胡同
+path_width_m = [1.5, 2.5]            # 田间道、小径
+plot_gap_m = [0.0, 1.0]              # 相邻地块之间的空隙
+setback_m = [0.0, 0.5]               # 地块离路边
+max_grade = 0.12                     # 路的最大纵坡（超过就绕，之字路自然长出来）
+bridge_max_m = 24.0                  # 最长的桥（过水更宽就不过）
+exits = 3                            # 出村大路最多几条（朝相邻聚落 / 治所 / 泊场）
+
+[fishbone]                           # 鱼骨 / 井字街村（华北）：主街 + 平行的街 + 垂直的巷
+street_spacing_m = [50.0, 64.0]      # 平行的街的间距（一个街坊前后两排宅院）
+lane_spacing_m = [40.0, 90.0]        # 巷的间距（每个街坊各自抽，不对齐，路口多成丁字）
+warp_m = 3.0                         # 街的缓弯幅度
+warp_wavelength_m = 300.0
+extent = 1.8                         # 候选街网的范围 = extent × 预计半径
+vacant_p = 0.06                      # 候选地块空着（菜园、闲地）的概率
+main_cross = true                    # 过村心的那条巷是主街（十字街）
+lane_extend_m = [60.0, 160.0]        # 外排的巷伸进田里成田间道
+lane_extend_p = 0.4
+
+[organic]                            # 团块生长：一户一户挨着长，巷子随门长出来
+candidates = 24                      # 每户在父户 / 邻户周围试几个位置
+gap_m = [0.0, 2.0]                   # 与邻户的间隙
+jitter_deg = 4.0                     # 与邻户朝向的偏差
+stagger_m = 1.5                      # 与左右邻户前沿（前后邻户侧边）错开多少（0 = 对齐成排）
+lane_reach_m = 40.0                  # 门离现有路多远以内才考虑（再远就要修太长的巷）
+main_street = true                   # 先按坡度代价修一条过村心的主街
+
+[growth]                             # 一户一户落位的评分（值越大越先）
+w_dist = 1.0                         # 离村心（直线）
+w_net = 1.0                          # 离村心（沿路）
+w_interest = 0.6                     # 兴趣图
+w_kin = 0.8                          # 离父户（同一房支挨着住）
+w_contact = 0.3                      # 与已有宅院贴着（成排）
+noise = 0.15                         # 每个候选地块固定的一点随机
+main_discount = 0.7                  # 主街上每米的「路程」打折（村子顺主街长）
+
+# ---------------------------------------------------------------- 朝向（6.3）
+[orient]
+snap_deg = 0.0                       # 朝向量化（相对朝阳方向）；0 = 不量化
+sun_offset_deg = 0.0                 # 朝阳的偏角（正 = 顺时针）
+[[orient.rule]]
+kind = "sun"                         # sun / wind / street / gable_street / align_street / water / downslope / fixed
+weight = 1.0
+tol_deg = 30.0
+
+[gate]                               # 门开在哪（从门所在的一侧看；左右 = 站在院里面朝前沿时的左手 / 右手）
+front = "left"                       # 路在前沿：前沿靠左的角（坐北朝南即东南巽位）
+back = "right"                       # 路在后面：后沿靠右的角（坐北朝南即西北乾位）
+side = "front"                       # 路在侧面：侧边靠前的一端
+width_m = [2.4, 3.2]
+
+# ---------------------------------------------------------------- 宅院模板（6.5）
+# [compound.templates.<id>]：weight > 0 的是住宅模板（按权重挑）；其余给功能引用。
+# 各栋 b：side = back / front / left / right（贴着地块的哪条边）；bays × bay_m 定面阔（没有 bays 就按 len_frac 占这条边的比例）；
+# pos = 在这条边上的位置（0 = 左 / 前端，1 = 右 / 后端，0.5 = 居中）；face = front（朝地块前沿）/ in（朝院心）/ out；
+# prob = 这一栋出现的概率；plinth_m = 台基高；roof = gable 硬山 / hip 庑殿 / hip_gable 歇山 / flat / shed 单坡 / saddle 悬山；
+# attach = left / right：贴在同一条边上前一栋的左 / 右头（耳房贴正房），放不下就不要。
+[compound]
+wall_thickness_m = 0.4
+yard_min_m = 4.0                     # 院心最窄（两厢之间、前后排之间）
+
+[compound.templates.temple]          # 通用的庙：正殿 + 山门 + 两庑（风格可以覆盖）
+name = "庙"
+kind = "public"
+weight = 0.0
+plot_w_m = [18.0, 24.0]
+plot_d_m = [22.0, 30.0]
+bay_m = [3.6, 4.2]
+wall = true
+gate = "center"                      # 山门居中
+gate_house = true
+[[compound.templates.temple.b]]
+role = "hall"
+name = "正殿"
+func = "worship"
+side = "back"
+bays = [3, 3]
+depth_m = [7.0, 9.0]
+face = "front"
+storeys = 1
+eave_m = 4.2
+roof = "hip_gable"
+pitch_deg = 30.0
+plinth_m = 0.9
+[[compound.templates.temple.b]]
+role = "side_hall"
+name = "配殿"
+func = "worship"
+side = "left"
+bays = [2, 3]
+depth_m = [4.0, 5.0]
+pos = 0.7
+face = "in"
+prob = 0.5
+eave_m = 3.2
+roof = "gable"
+plinth_m = 0.45
+[[compound.templates.temple.b]]
+role = "side_hall"
+name = "配殿"
+func = "worship"
+side = "right"
+bays = [2, 3]
+depth_m = [4.0, 5.0]
+pos = 0.7
+face = "in"
+prob = 0.5
+eave_m = 3.2
+roof = "gable"
+plinth_m = 0.45
+
+# ---------------------------------------------------------------- 公共设施（6.4）
+# 通用功能表在 config/town/functions.toml；风格在 [functions.<id>] 里改名、改数、改谓词、enabled = false 关掉。
+[functions]
+
+# ---------------------------------------------------------------- 目标（八：TP-style，软项）
+# 形态指标的目标区间；缺的不查。λ = 外包长宽比，S = 形状指数，coverage = 建筑占地 / 外包（30 m 虚边界），
+# orient_sun_share = 主屋朝向在朝阳容差内的比例，clark_evans = 最近邻指数（< 1 聚、≈ 1 随机、> 1 匀）
+[targets]

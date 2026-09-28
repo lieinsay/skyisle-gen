@@ -1,0 +1,106 @@
+# 通用功能目录（docs/PLAN-TOWN.md 6.4）：风格只做映射——[functions.<id>] 里改名（name）、改数、改谓词、enabled 开关。
+# 字段：
+#   name      显示名
+#   enabled   默认开不开（各风格特有的设施默认关，由风格打开）
+#   mode      怎么落：compound（占一块地块，套 template 宅院模板；在户落位之前挑）
+#                     roadside（路边一栋小房，size_w_m × size_d_m）· pond 塘 · threshing 晒场 / 场院 · well 井 · tree 树 · landing 泊场
+#   count     数量 = base + floor(户数 / per_households)，户数 < min_households 时为 0，最多 max
+#   site      选址谓词的权重（候选处各项归一到 0–1 后加权求和，取最高）：
+#               center 近村心 · crossroad 路口 · main 主街边 · entrance 村口（出村大路离开建成区处）· edge 村边
+#               low 低处（小尺度 TPI）· high 高处 · water 近水 · pond 近塘 · farmland 近田 · flat 平 · sun 朝阳 · landing 近泊场
+#   face      roadside 的朝向：road 朝路 / sun 朝阳 / pond 朝塘 / water 朝水（朝塘或谓词里有 pond 的，村里没塘就不修）
+#   reach_m   roadside / tree 离建成区边最远多远（默认 40 m）；要塘的改看 pond_reach_m：离塘边最远多远（默认 20 m）
+#   required  TP-func：风格要求它必须在（数量规则给出 ≥ 1 时）
+
+[temple]                    # 村庙（关帝庙、真武庙、村中的教堂……）
+name = "庙"
+enabled = false
+mode = "compound"
+template = "temple"
+count = { base = 1, per_households = 0, min_households = 40, max = 1 }
+site = { center = 2.0, crossroad = 3.0, main = 1.0 }
+required = true
+
+[shrine]                    # 小庙（土地庙、路边神龛）
+name = "小庙"
+enabled = false
+mode = "roadside"
+size_w_m = [2.0, 3.0]
+size_d_m = [2.0, 2.6]
+eave_m = 2.2
+roof = "gable"
+plinth_m = 0.3
+face = "road"
+count = { base = 1, per_households = 0, min_households = 8, max = 1 }
+site = { entrance = 5.0 }
+required = true
+
+[pond_temple]               # 塘边小庙（龙王庙）
+name = "塘边庙"
+enabled = false
+mode = "roadside"
+size_w_m = [4.0, 6.0]
+size_d_m = [3.5, 4.5]
+eave_m = 2.8
+roof = "gable"
+plinth_m = 0.4
+face = "pond"
+count = { base = 1, per_households = 0, min_households = 60, max = 1 }
+site = { pond = 5.0, edge = 1.0 }
+
+[well]                      # 井：按覆盖半径贪心铺，井落在路边或路口
+name = "井"
+enabled = true
+mode = "well"
+radius_m = [70.0, 100.0]    # 覆盖半径（集村 60–120 m，估）
+site = { crossroad = 2.0, center = 0.5 }
+required = true
+
+[pond]                      # 塘（坑塘、取土塘、风水塘）
+name = "塘"
+enabled = false
+mode = "pond"
+count = { base = 1, per_households = 70, min_households = 20, max = 4 }
+area_per_household_m2 = 15.0          # 总面积，按个数分
+area_m2 = [300.0, 3000.0]             # 单个塘的面积夹到这里
+ring_m = [6.0, 60.0]                  # 离建成区边的距离
+aspect = [1.0, 1.8]
+site = { low = 3.0, edge = 1.0, flat = 1.0 }
+
+[threshing]                 # 晒场 / 场院 / 打谷场
+name = "场院"
+enabled = false
+mode = "threshing"
+households_per = [6.0, 12.0]          # 几户合一块
+area_m2 = [500.0, 2000.0]
+ring_m = [4.0, 40.0]                  # 离建成区边（环村边、离家近）
+aspect = [1.0, 1.6]
+spacing_m = 45.0                      # 两块之间至少隔这么远
+max_slope_deg = 2.5
+platform_max_m = 1.5                  # 坡地上找不到平地时，垫台地的挖填上限
+site = { farmland = 2.0, flat = 2.0, sun = 1.0, edge = 1.0 }
+
+[tree]                      # 村口大树
+name = "村口大树"
+enabled = false
+mode = "tree"
+radius_m = [4.0, 7.0]
+count = { base = 1, per_households = 0, min_households = 0, max = 1 }
+site = { entrance = 5.0 }
+
+[landing]                   # 泊场（空岛特有，照上游；每个村都有）
+name = "泊场"
+enabled = true
+mode = "landing"
+pad_w_m = [30.0, 42.0]                # 场地（夯土平场）
+pad_d_m = [20.0, 28.0]
+shed_w_m = [10.0, 14.0]               # 货棚
+shed_d_m = [5.0, 7.0]
+shed_name = "货棚"
+shed_roof = "shed"
+search_m = 250.0                      # 离上游泊场点多远以内挑
+max_slope_deg = 3.0
+platform_max_m = 3.5                  # 坡地上找不到平地时，垫台地的挖填上限
+ring_m = [10.0, 120.0]                # 离建成区边
+site = { flat = 2.0, landing = 2.0, edge = 1.0 }
+required = true
