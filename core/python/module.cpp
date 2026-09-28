@@ -24,6 +24,7 @@ using namespace skyisle;
 void bind_island(nb::module_& m);
 void bind_planet(nb::module_& m);
 void bind_civ(nb::module_& m);
+void bind_town(nb::module_& m);
 
 namespace {
 
@@ -189,4 +190,5 @@ NB_MODULE(_core, m) {
     bind_island(m);
     bind_planet(m);
     bind_civ(m);
+    bind_town(m);
 }

@@ -43,6 +43,11 @@ add_library(skyisle_core STATIC
   src/planet/stage7.cpp
   src/planet/stage8.cpp
   src/planet/stage9.cpp
+  src/town/geom.cpp
+  src/town/raster.cpp
+  src/town/site.cpp
+  src/town/site_window.cpp
+  src/town/site_synth.cpp
 )
 target_include_directories(skyisle_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(skyisle_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -71,7 +76,7 @@ if(SKYISLE_PYTHON)
                     OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_DIR)
   endif()
   find_package(nanobind CONFIG REQUIRED)
-  nanobind_add_module(_core NB_STATIC python/module.cpp python/bind_island.cpp python/bind_planet.cpp python/bind_civ.cpp)
+  nanobind_add_module(_core NB_STATIC python/module.cpp python/bind_island.cpp python/bind_planet.cpp python/bind_civ.cpp python/bind_town.cpp)
   target_link_libraries(_core PRIVATE skyisle_core)
   set(_pkg ${CMAKE_CURRENT_SOURCE_DIR}/../skyisle_gen)
   set_target_properties(_core PROPERTIES
