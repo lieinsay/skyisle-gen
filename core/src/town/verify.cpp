@@ -1,0 +1,402 @@
+// 校验与形态指标（PLAN-TOWN 第八节）：TP-hh / overlap / ground / access / anchor / func 硬项，TP-shift / style 软项；
+// 指标：外包长宽比 λ、形状指数 S（30 m 虚边界）、覆盖率、朝阳比例、Clark–Evans R、丁字 / 十字路口、离井 / 离田中位数、密度、路长、土方。
+#include <algorithm>
+#include <array>
+#include <functional>
+#include <cmath>
+#include <numeric>
+#include <sstream>
+#include <unordered_map>
+
+#include "plan_work.hpp"
+#include "skyisle/town/raster.hpp"
+
+namespace skyisle::town {
+
+namespace {
+
+std::vector<V2> convex_hull(std::vector<V2> p) {
+    std::sort(p.begin(), p.end(), [](V2 a, V2 b) { return a.x != b.x ? a.x < b.x : a.y < b.y; });
+    if (p.size() < 3) return p;
+    std::vector<V2> h(2 * p.size());
+    size_t k = 0;
+    for (size_t i = 0; i < p.size(); ++i) {
+        while (k >= 2 && cross(h[k - 1] - h[k - 2], p[i] - h[k - 2]) <= 0) --k;
+        h[k++] = p[i];
+    }
+    for (size_t i = p.size() - 1, t = k + 1; i > 0; --i) {
+        while (k >= t && cross(h[k - 1] - h[k - 2], p[i - 1] - h[k - 2]) <= 0) --k;
+        h[k++] = p[i - 1];
+    }
+    h.resize(k - 1);
+    return h;
+}
+
+// 最小面积外接矩形的长、短边（旋转卡壳的朴素版：每条凸包边试一次）
+void min_rect(const std::vector<V2>& hull, double& L, double& S) {
+    L = S = 0.0;
+    double best = INF;
+    for (size_t i = 0; i < hull.size(); ++i) {
+        const V2 e = hull[(i + 1) % hull.size()] - hull[i];
+        const double l = len(e);
+        if (l < 1e-9) continue;
+        const V2 u = e * (1.0 / l), v{-u.y, u.x};
+        double a0 = INF, a1 = -INF, b0 = INF, b1 = -INF;
+        for (const V2& q : hull) a0 = std::min(a0, dot(q, u)), a1 = std::max(a1, dot(q, u)), b0 = std::min(b0, dot(q, v)), b1 = std::max(b1, dot(q, v));
+        const double area = (a1 - a0) * (b1 - b0);
+        if (area < best) best = area, L = std::max(a1 - a0, b1 - b0), S = std::min(a1 - a0, b1 - b0);
+    }
+}
+
+double median(std::vector<double> v) {
+    if (v.empty()) return NaN;
+    std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+    return v[v.size() / 2];
+}
+
+void check(Work& w, const std::string& id, bool hard, bool ok, const std::string& msg) { w.plan.checks.push_back({id, hard, ok, msg}); }
+
+bool seg_cross(V2 a, V2 b, V2 c, V2 d) {
+    const double d1 = cross(b - a, c - a), d2 = cross(b - a, d - a), d3 = cross(d - c, a - c), d4 = cross(d - c, b - c);
+    return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0)) && d1 != 0 && d2 != 0 && d3 != 0 && d4 != 0;
+}
+
+// 两条路相交或相接（一条的某个顶点落在另一条上——路网图里共用的节点就是这样）
+bool lines_cross(const std::vector<V2>& A, const std::vector<V2>& B) {
+    for (size_t i = 0; i + 1 < A.size(); ++i)
+        for (size_t j = 0; j + 1 < B.size(); ++j)
+            if (seg_cross(A[i], A[i + 1], B[j], B[j + 1])) return true;
+    for (const V2& p : A)
+        if (dist_point_polyline(p, B) < 0.5) return true;
+    for (const V2& p : B)
+        if (dist_point_polyline(p, A) < 0.5) return true;
+    return false;
+}
+
+std::string fmt(double x, int prec = 2) {
+    std::ostringstream o;
+    o.setf(std::ios::fixed);
+    o.precision(prec);
+    o << x;
+    return o.str();
+}
+
+}  // namespace
+
+void verify(Work& w) {
+    Plan& P = w.plan;
+    const Site& s = w.s;
+    const Style& st = w.st;
+    const double cell = s.res_m * s.res_m;
+    std::map<std::string, double>& M = P.metrics;
+
+    // ---- TP-hh
+    {
+        int placed = 0, want = static_cast<int>(P.households.size());
+        int kinds[3] = {0, 0, 0}, kinds_placed[3] = {0, 0, 0};
+        for (const Household& h : P.households) {
+            ++kinds[h.kind];
+            if (h.compound >= 0) ++placed, ++kinds_placed[h.kind];
+        }
+        const bool ok = placed == want && want == w.req.hh_farm + w.req.hh_market + w.req.hh_special;
+        check(w, "TP-hh", true, ok, "住下 " + std::to_string(placed) + " / " + std::to_string(want) + " 户（农 " + std::to_string(kinds_placed[0]) + "、市 " +
+                                       std::to_string(kinds_placed[1]) + "、专业 " + std::to_string(kinds_placed[2]) + "）");
+        M["households"] = want;
+        M["households_placed"] = placed;
+    }
+    // ---- TP-overlap：房两两不交；房不压路、不压水；地块两两不交
+    {
+        std::unordered_map<int64_t, std::vector<int>> grid;
+        auto key = [](int a, int b) { return (static_cast<int64_t>(a) << 32) ^ static_cast<uint32_t>(b); };
+        const double cs = 24.0;
+        for (int k = 0; k < static_cast<int>(P.buildings.size()); ++k) {
+            const V2 c = P.buildings[k].box.c;
+            grid[key(static_cast<int>(std::floor(c.x / cs)), static_cast<int>(std::floor(c.y / cs)))].push_back(k);
+        }
+        int bb = 0;
+        for (int k = 0; k < static_cast<int>(P.buildings.size()); ++k) {
+            const V2 c = P.buildings[k].box.c;
+            const int a = static_cast<int>(std::floor(c.x / cs)), b = static_cast<int>(std::floor(c.y / cs));
+            for (int da = -1; da <= 1; ++da)
+                for (int db = -1; db <= 1; ++db) {
+                    auto it = grid.find(key(a + da, b + db));
+                    if (it == grid.end()) continue;
+                    for (int q : it->second)
+                        if (q > k && overlap(P.buildings[k].box, P.buildings[q].box, -0.05)) ++bb;
+                }
+        }
+        int pp = 0;
+        for (size_t a = 0; a < P.compounds.size(); ++a)
+            for (size_t b = a + 1; b < P.compounds.size(); ++b)
+                if (len(P.compounds[a].plot.c - P.compounds[b].plot.c) < 80.0 && overlap(P.compounds[a].plot, P.compounds[b].plot, -0.1)) ++pp;
+        int on_road = 0, on_water = 0;
+        for (const Building& b : P.buildings) {
+            bool wt = false;
+            raster_obb(s, b.box, 0.5 * s.res_m, [&](int i, int j) { wt = wt || s.water(i, j) != WATER_NONE; });
+            on_road += road_hits_obb(w, b.box, 0.1), on_water += wt;
+        }
+        check(w, "TP-overlap", true, bb == 0 && pp == 0 && on_road == 0 && on_water == 0,
+              "房相交 " + std::to_string(bb) + " 对、地块相交 " + std::to_string(pp) + " 对、房压路 " + std::to_string(on_road) + " 栋、房压水 " + std::to_string(on_water) + " 栋");
+    }
+    // ---- TP-ground
+    {
+        int bad = 0, cut = 0;
+        for (const Building& b : P.buildings) {
+            bool x = false;
+            raster_obb(s, b.box, 0.5 * s.res_m, [&](int i, int j) {
+                x = x || s.sky(i, j) || s.edge(i, j) || (!st.allow_flood && s.flood(i, j));
+            });
+            bad += x;
+        }
+        int terr = 0, deep = 0;
+        for (const Compound& c : P.compounds) cut += c.max_cut_m > st.max_terrace_m + 1e-6, terr += c.max_cut_m > st.max_cut_m + 1e-6;
+        for (const Building& b : P.buildings) deep += b.max_cut_m > st.max_cut_m + 0.3;   // 半格的余量：台基按格心的中位
+        check(w, "TP-ground", true, bad == 0 && cut == 0 && deep == 0,
+              "房在虚空 / 崖缘 / 漫水上 " + std::to_string(bad) + " 栋、地块高差超 " + fmt(st.max_terrace_m, 1) + " m 的宅院 " + std::to_string(cut) +
+                  " 个、台基挖填超 " + fmt(st.max_cut_m, 1) + " m 的房 " + std::to_string(deep) + " 栋（台地院 " + std::to_string(terr) + " 个）");
+        M["terraced_compounds"] = terr;
+    }
+    // ---- 路的连通（按端点贴着别的路算相连）
+    const int nr = static_cast<int>(P.roads.size());
+    std::vector<int> comp(nr);
+    std::iota(comp.begin(), comp.end(), 0);
+    std::function<int(int)> find = [&](int x) { return comp[x] == x ? x : comp[x] = find(comp[x]); };
+    int n_t = 0, n_x = 0;
+    {
+        std::vector<std::pair<V2, int>> ends;   // 路口：端点落在别的路上
+        std::vector<std::array<double, 4>> bb(nr);
+        for (int a = 0; a < nr; ++a) {
+            bb[a] = {INF, -INF, INF, -INF};
+            for (const V2& q : P.roads[a].line) bb[a] = {std::min(bb[a][0], q.x), std::max(bb[a][1], q.x), std::min(bb[a][2], q.y), std::max(bb[a][3], q.y)};
+        }
+        for (int a = 0; a < nr; ++a)
+            for (int b = a + 1; b < nr; ++b)
+                if (bb[a][0] <= bb[b][1] && bb[b][0] <= bb[a][1] && bb[a][2] <= bb[b][3] && bb[b][2] <= bb[a][3] &&
+                    lines_cross(P.roads[a].line, P.roads[b].line))
+                    comp[find(a)] = find(b);
+        for (int a = 0; a < nr; ++a)
+            for (const V2& e : {P.roads[a].line.front(), P.roads[a].line.back()})
+                for (int b = 0; b < nr; ++b) {
+                    if (a == b) continue;
+                    int seg;
+                    double t;
+                    const double d = dist_point_polyline(e, P.roads[b].line, &seg, &t);
+                    if (d <= 0.5 * P.roads[b].width_m + 1.5) {
+                        comp[find(a)] = find(b);
+                        ends.push_back({e, b});
+                    }
+                }
+        // 丁字 / 十字：鱼骨有路网图就按节点度数；否则按「端点落在别的路中段」数
+        bool graph = false;
+        for (int e = 0; e < static_cast<int>(w.net.edges.size()); ++e) graph = graph || (w.net.used(e) && w.net.edges[e].street > 0);
+        if (graph) {
+            for (int n = 0; n < static_cast<int>(w.net.nodes.size()); ++n) {
+                const int d = w.net.degree_used(n);
+                n_t += d == 3, n_x += d >= 4;
+            }
+        } else {
+            std::vector<V2> js;
+            for (auto& [p, b] : ends) {
+                const V2 f = P.roads[b].line.front(), l = P.roads[b].line.back();
+                if (len(p - f) < 3.0 || len(p - l) < 3.0) continue;
+                bool dup = false;
+                for (const V2& q : js) dup = dup || len(q - p) < 4.0;
+                if (!dup) js.push_back(p);
+            }
+            n_t = static_cast<int>(js.size());
+        }
+    }
+    int main_comp = -1;
+    {
+        std::map<int, double> L;
+        for (int a = 0; a < nr; ++a) L[find(a)] += polyline_length(P.roads[a].line);
+        double bl = -1;
+        for (auto& [c, l] : L)
+            if (l > bl) bl = l, main_comp = c;
+    }
+    auto road_near = [&](V2 p, double extra) {
+        for (int a = 0; a < nr; ++a)
+            if (find(a) == main_comp && dist_point_polyline(p, P.roads[a].line) <= 0.5 * P.roads[a].width_m + extra) return true;
+        return false;
+    };
+    // ---- TP-access
+    if (w.req.scale != "compound") {
+        int no_access = 0;
+        for (const Compound& c : P.compounds) no_access += !road_near(c.access, 1.5) && !road_near(c.gate, 2.5);
+        int split = 0;
+        for (int a = 0; a < nr; ++a) split += find(a) != main_comp;
+        bool landing_ok = true;
+        for (const Feature& f : P.features)
+            if (f.kind == "landing") {
+                bool any = false;
+                for (const V2& q : f.poly) any = any || road_near(q, 6.0);
+                for (size_t k = 0; k < f.poly.size(); ++k) any = any || road_near(lerp(f.poly[k], f.poly[(k + 1) % f.poly.size()], 0.5), 6.0);
+                landing_ok = any;
+            }
+        check(w, "TP-access", true, no_access == 0 && split == 0 && landing_ok,
+              "门不接路的宅院 " + std::to_string(no_access) + " 个、不连通的路 " + std::to_string(split) + " 条" + (landing_ok ? "" : "、泊场没接上路"));
+    }
+    // ---- TP-anchor
+    if (w.req.scale != "compound" && w.req.want_landing && st.func("landing")) {
+        int n = 0;
+        for (const Feature& f : P.features) n += f.kind == "landing";
+        check(w, "TP-anchor", true, n > 0, n > 0 ? "泊场在" : "上游有泊场，这里没摆下");
+    }
+    // ---- TP-func
+    const int N = static_cast<int>(P.households.size());
+    std::vector<V2> wells;
+    for (const Feature& f : P.features)
+        if (f.kind == "well") wells.push_back(f.p);
+    std::vector<double> dwell;
+    for (const Compound& c : P.compounds) {
+        if (c.kind != "house") continue;
+        double d = INF;
+        for (const V2& q : wells) d = std::min(d, len(q - c.gate));
+        dwell.push_back(d);
+    }
+    if (w.req.scale != "compound") {
+        std::string missing;
+        for (const FuncSpec& f : st.funcs) {
+            if (!f.required) continue;
+            if ((f.mode == "compound" || f.mode == "roadside") && f.count(N) <= 0) continue;
+            if (f.mode == "landing" && !w.req.want_landing) continue;
+            bool have = false;
+            if (f.mode == "compound")
+                for (const Compound& c : P.compounds) have = have || c.func == f.id;
+            else if (f.mode == "roadside")
+                for (const Building& b : P.buildings) have = have || b.func == f.id;
+            else
+                for (const Feature& ft : P.features) have = have || ft.func == f.id;
+            if (!have) missing += (missing.empty() ? "" : "、") + f.name;
+        }
+        const double R = M.count("well_radius_m") ? M["well_radius_m"] : 0.0;
+        int far = 0;
+        for (double d : dwell) far += d > R + 1e-6;
+        check(w, "TP-func", true, missing.empty() && far == 0,
+              (missing.empty() ? std::string("要求的设施都在") : "缺：" + missing) + "；离井超过 " + fmt(R, 0) + " m 的宅院 " + std::to_string(far) + " 个");
+    }
+    // ---- TP-shift（软）
+    const double shift = len(w.center - w.req.anchor);
+    check(w, "TP-shift", false, shift <= st.center_search_m + 1e-6, "村心离上游点位 " + fmt(shift, 0) + " m");
+    M["center_shift_m"] = shift;
+
+    // ---- 形态指标
+    std::vector<V2> pts, ctrs;
+    double footprint = 0.0;
+    for (const Compound& c : P.compounds) {
+        const auto cs = corners(c.plot);
+        pts.insert(pts.end(), cs.begin(), cs.end());
+        if (c.kind == "house") ctrs.push_back(c.plot.c);
+    }
+    for (const Building& b : P.buildings)
+        if (b.compound >= 0) footprint += 4.0 * b.box.hw * b.box.hd;
+    M["compounds"] = static_cast<double>(P.compounds.size());
+    M["buildings"] = static_cast<double>(P.buildings.size());
+    M["footprint_m2"] = footprint;
+    if (pts.size() >= 3) {
+        double L, S;
+        min_rect(convex_hull(pts), L, S);
+        M["lambda"] = S > 0 ? L / S : NaN;
+        M["extent_long_m"] = L;
+        M["extent_short_m"] = S;
+    }
+    // 30 m 虚边界的外廓（闭运算：离地块 ≤ 15 m 的区域，再内缩 15 m）
+    {
+        Mask plot(s.H, s.W, 0);
+        bool any = false;
+        for (size_t k = 0; k < plot.size(); ++k) plot.v[k] = P.occ.v[k] == OCC_PLOT || P.occ.v[k] == OCC_BUILDING, any = any || plot.v[k];
+        if (any) {
+            GridF d1;
+            edt(plot, d1, nullptr);
+            const float r = static_cast<float>(15.0 / s.res_m);
+            Mask outside(s.H, s.W, 0);
+            for (size_t k = 0; k < plot.size(); ++k) outside.v[k] = d1.v[k] > r;
+            GridF d2;
+            edt(outside, d2, nullptr);
+            Mask body(s.H, s.W, 0);
+            double A = 0.0, per = 0.0;
+            for (size_t k = 0; k < plot.size(); ++k) body.v[k] = d2.v[k] > r || plot.v[k];
+            for (int i = 0; i < s.H; ++i)
+                for (int j = 0; j < s.W; ++j) {
+                    if (!body(i, j)) continue;
+                    A += cell;
+                    for (auto& o : N4) {
+                        const int a = i + o[0], b = j + o[1];
+                        if (!body.in(a, b) || !body(a, b)) per += s.res_m;
+                    }
+                }
+            M["outline_area_m2"] = A;
+            M["shape_index"] = A > 0 ? per / (2.0 * std::sqrt(PI * A)) : NaN;
+            M["coverage"] = A > 0 ? footprint / A : NaN;
+            M["density_hh_per_ha"] = A > 0 ? N / (A / 1e4) : NaN;
+            if (ctrs.size() >= 2) {
+                double sum = 0.0;
+                for (size_t a = 0; a < ctrs.size(); ++a) {
+                    double d = INF;
+                    for (size_t b = 0; b < ctrs.size(); ++b)
+                        if (a != b) d = std::min(d, len(ctrs[a] - ctrs[b]));
+                    sum += d;
+                }
+                const double robs = sum / ctrs.size(), rexp = 0.5 / std::sqrt(ctrs.size() / A);
+                M["clark_evans"] = robs / rexp;
+            }
+        }
+    }
+    // 朝向：宅院朝向与朝阳的偏差（容差取风格 sun 规则的，没有就 15°）
+    {
+        double tol = 15.0 * PI / 180.0;
+        for (const OrientRule& r : st.rules)
+            if (r.kind == "sun") tol = r.tol;
+        int ok = 0, n = 0;
+        double dev = 0.0;
+        for (const Compound& c : P.compounds) {
+            if (c.kind != "house") continue;
+            const double d = angle_diff(c.plot.facing, w.f.sun_bearing);
+            ok += d <= tol + 1e-6, ++n, dev += d;
+        }
+        if (n) {
+            M["orient_sun_share"] = static_cast<double>(ok) / n;
+            M["orient_dev_mean_deg"] = dev / n * 180.0 / PI;
+        }
+    }
+    M["junction_t"] = n_t;
+    M["junction_x"] = n_x;
+    M["t_x_ratio"] = n_x > 0 ? static_cast<double>(n_t) / n_x : NaN;
+    M["well_dist_median_m"] = median(dwell);
+    M["wells"] = static_cast<double>(wells.size());
+    {
+        Mask farm(s.H, s.W, 0);
+        bool any = false;
+        for (size_t k = 0; k < farm.size(); ++k) farm.v[k] = s.farmland.v[k] && P.occ.v[k] == OCC_FREE, any = any || farm.v[k];
+        if (any) {
+            GridF d;
+            edt(farm, d, nullptr);
+            std::vector<double> v;
+            for (const Compound& c : P.compounds) {
+                int i, j;
+                if (c.kind == "house" && s.cell_of(c.gate, i, j)) v.push_back(d(i, j) * s.res_m);
+            }
+            M["field_dist_median_m"] = median(v);
+        }
+    }
+    const char* cls_name[5] = {"trunk", "main", "street", "lane", "path"};
+    for (const Road& r : P.roads) M[std::string("road_m_") + cls_name[std::clamp(r.cls, 0, 4)]] += polyline_length(r.line);
+    M["bridges"] = static_cast<double>(P.bridges.size());
+    double cut = 0.0, fill = 0.0;
+    for (const Building& b : P.buildings) cut += b.cut_m3, fill += b.fill_m3;
+    M["cut_m3"] = cut;
+    M["fill_m3"] = fill;
+
+    // ---- TP-style（软）：风格的目标区间
+    std::string miss;
+    int nt = 0;
+    for (auto& [k, rg] : st.targets) {
+        auto it = M.find(k);
+        if (it == M.end() || !std::isfinite(it->second)) continue;
+        ++nt;
+        if (it->second < rg.lo - 1e-9 || it->second > rg.hi + 1e-9) miss += (miss.empty() ? "" : "；") + k + " = " + fmt(it->second) + " 不在 [" + fmt(rg.lo) + ", " + fmt(rg.hi) + "]";
+    }
+    if (nt) check(w, "TP-style", false, miss.empty(), miss.empty() ? "形态指标都在风格的目标区间里（" + std::to_string(nt) + " 项）" : miss);
+}
+
+}  // namespace skyisle::town

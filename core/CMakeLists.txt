@@ -48,6 +48,16 @@ add_library(skyisle_core STATIC
   src/town/site.cpp
   src/town/site_window.cpp
   src/town/site_synth.cpp
+  src/town/style.cpp
+  src/town/analysis.cpp
+  src/town/orient.cpp
+  src/town/network.cpp
+  src/town/plan.cpp
+  src/town/op_fishbone.cpp
+  src/town/op_organic.cpp
+  src/town/functions.cpp
+  src/town/compound.cpp
+  src/town/verify.cpp
 )
 target_include_directories(skyisle_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(skyisle_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

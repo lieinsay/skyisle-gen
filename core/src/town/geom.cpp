@@ -25,8 +25,8 @@ std::array<V2, 4> corners(const Obb& o) {
 
 bool overlap(const Obb& a, const Obb& b, double clearance) {
     Obb A = a, B = b;
-    const double e = 0.5 * std::max(0.0, clearance);
-    A.hw += e, A.hd += e, B.hw += e, B.hd += e;
+    const double e = 0.5 * clearance;   // 负数 = 各自内缩（贴边不算相交，留一点浮点余量）
+    A.hw = std::max(0.0, A.hw + e), A.hd = std::max(0.0, A.hd + e), B.hw = std::max(0.0, B.hw + e), B.hd = std::max(0.0, B.hd + e);
     const std::array<V2, 4> ca = corners(A), cb = corners(B);
     const V2 axes[4] = {bearing_vec(A.facing), bearing_right(A.facing), bearing_vec(B.facing), bearing_right(B.facing)};
     for (const V2& ax : axes) {

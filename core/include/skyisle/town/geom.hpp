@@ -32,7 +32,7 @@ struct Obb {
     double facing = 0.0, hw = 0.0, hd = 0.0;
 };
 std::array<V2, 4> corners(const Obb& o);   // 右前、左前、左后、右后（逆时针）
-// 两个有向矩形是否相交（分离轴）；clearance > 0 时各自外扩 clearance / 2 再判
+// 两个有向矩形是否相交（分离轴；只贴边不算）；clearance > 0 时各自外扩 clearance / 2 再判，< 0 时各自内缩
 bool overlap(const Obb& a, const Obb& b, double clearance = 0.0);
 bool contains(const Obb& o, V2 p);
 
