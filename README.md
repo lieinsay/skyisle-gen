@@ -100,6 +100,24 @@ python -m skyisle_gen.cli island floats --run out/seed42 --jobs 28          # �
 粗版（`islands_lod/<分辨率>/<节点>.npz`）meta 的各岛也记 `float_m` 与 `age`，浮高之前做的粗版算没做、`island lod` 会重跑。
 `--set island.float.enabled=false` 关掉（与改前逐位相同，只多 `float_m` = 0）。
 
+## 聚落营建器（独立工具，建设中）
+
+给一块地形、一个规模、一种风格，营建出一个建筑群（设计稿 `docs/PLAN-TOWN.md`，各风格的数与出处 `docs/TOWN-SOURCES.md`）。
+独立工具，只读岛群生成器的产物（地形地貌、水系、聚落点位、气候），不回写，管线与岛群生成器都不 import 它。风格由用户指定。
+**已做第一步：场地地形**——把 100 m 的岛群地形细化到 1–2 m（河按中心线与河宽重刻、岸线与田的边界去方格），或者用十种合成地形 / 外部高程图，
+出 `site.npz`（细化后的地面）、`plan.json`（元数据与统计）、`plan.png`（地面图：地表、田、水、漫水、崖缘退让带、晕渲、等高线）。风格、路网、建筑从第二步起。
+
+```bash
+python -m skyisle_gen.cli town site 2051 --run out/seed42 --site 村037      # 岛群里一个聚落所在的一块地 → out/seed42/islands/2051/town/村037-地面/
+python -m skyisle_gen.cli town site 1592 --run out/seed42 --site 城         # 都城（聚落名还可以是 散户NNN / 邑治 / 镇NN / 矿村NN …）
+python -m skyisle_gen.cli town synth --terrain 河谷 [--households 60] [--seed 1] [--lat -30]   # 合成地形 → out/town/synth/
+python -m skyisle_gen.cli town synth --heightmap h.png --res 1 [--water w.png] [--height-scale 0.01]
+```
+
+窗口大小按规模与户数定（村约 0.9 km 见方、都约 3 km；`--half` 可改）；窗口只决定裁多大，同一个地方换窗口、换风格地面逐格不变。
+「朝阳」按所在半球：#2051 在南纬 31.7°，朝阳 = 朝北。工具参数在 `config/town/town.toml`（`--set town.键=值`）。
+河道成形之前生成的旧岛群产物没有 `rivers.json`，会报错让先重跑 `skyisle island <节点>`。
+
 ## C++ 核心库（生成器后端，行星计划 P6）
 
 生成器的算法已整体移植成 `core/` 里的 C++17 核心库（不含 Python、不含 Godot；Zhouzhu 以后以子模块只编它），
@@ -248,7 +266,8 @@ A/B/C/D 应基本吻合（D 只取紧贴 D 两缘、在文明核心纬度的节�
 
 ```
 config/           default.toml · slots.toml · production_templates.toml · (traits.toml)
-core/             C++ 核心库（CMake；build.py 一键构建；include/skyisle/（island/ 第三层、planet/ 行星层 ①–⑨）、src/、python/ 绑定、tests/ 自检、
+                  town/（聚落营建器：town.toml 工具参数；styles/ 风格，第二步起）
+core/             C++ 核心库（CMake；build.py 一键构建；include/skyisle/（island/ 第三层、planet/ 行星层 ①–⑨、town/ 聚落营建器）、src/、python/ 绑定、tests/ 自检、
                   tools/ 探 numpy 的 ziggurat 表、third_party/pocketfft 与 np.fft 同一份的 FFT）
 skyisle_gen/
   stages/         s01_planet … s10_output（十步；s09_polity 为第四批 R7 的政治层）
@@ -260,6 +279,7 @@ skyisle_gen/
   check.py        八条验收 + 气候 + 铁律自检 + 骨架/历法校准
   ninegrid.py     九格表草稿生成（docs/08）
   engine.py       生成器后端开关（[engine] backend）与行星层的 C++ 桥（各步 C++ 对象的缓存、从 npz 读回）
+  town/           聚落营建器前端（独立工具，PLAN-TOWN）：配置、裁窗口、产物、出图、命令；算法在 core/.../town/
   probe.py  viz.py  weights.py  noise.py  sphere.py  rng.py  config.py  pipeline.py
 tests/            公式单测 + 确定性/缓存链集成测试 + C++ 后端对照（test_core_engine / test_core_p6b / test_core_p6c / test_core_p6d；
                   conftest.py：扩展没编时不依赖 C++ 的测试自动用 python 后端）
