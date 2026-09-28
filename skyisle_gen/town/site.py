@@ -83,6 +83,46 @@ def _winter_wind(C: dict) -> dict:
     return out
 
 
+def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
+    """上游锚点，换成窗口平面坐标（m）：本聚落的泊场（在前）与出村大路的去向（同岛的邻村、集镇 / 治所、主泊场、桥头）。"""
+    def local(km):
+        return [round(float(km[0]) * 1000.0 - frame_x, 2), round(float(km[1]) * 1000.0 - frame_y, 2)]
+
+    rec = site["rec"]
+    v = rec.get("village") if isinstance(rec, dict) and "village" in rec else rec
+    isl = int(site["island"])
+    landings = []
+    lid = v.get("landing") if isinstance(v, dict) else None
+    for L in S.get("landings", []):
+        if lid is not None and L["id"] == lid:
+            landings.insert(0, local(L["km"]))
+    exits = []
+    me = np.array([frame_x, frame_y]) / 1000.0
+
+    def add(km, weight, kind, max_km):
+        d = float(np.hypot(km[0] - me[0], km[1] - me[1]))
+        if 0.15 < d <= max_km:
+            exits.append({"bearing_deg": round(math.degrees(math.atan2(km[0] - me[0], km[1] - me[1])), 2), "dist_m": round(d * 1000.0, 1),
+                          "weight": round(weight, 4), "kind": kind})
+
+    mt = v.get("market_town") if isinstance(v, dict) else None
+    for t in S.get("towns", []):
+        if t.get("island") == isl and (t.get("id") == mt or t.get("seat")):
+            add(t["km"], 3.0 if t.get("id") == mt else 2.5, "集镇" if not t.get("seat") else "治所", 12.0)
+    near = sorted((x for x in S.get("villages", []) if x.get("island") == isl and x["name"] != site["name"]),
+                  key=lambda x: math.hypot(x["km"][0] - me[0], x["km"][1] - me[1]))[:4]
+    for x in near:
+        d = math.hypot(x["km"][0] - me[0], x["km"][1] - me[1])
+        add(x["km"], 1.5 / (1.0 + d / 2.0), "邻村", 6.0)
+    for L in S.get("landings", []):
+        if L.get("main") and L.get("island") == isl:
+            add(L["km"], 2.0, "主泊场", 8.0)
+    for bh in S.get("bridgeheads", []):
+        if bh.get("island") == isl:
+            add(bh["km"], 1.2, "桥头", 4.0)
+    return {"landings": landings, "exits": exits}
+
+
 def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, half_m: float | None = None) -> tuple[dict, dict]:
     """岛群 node 里名叫 name 的聚落所在的一块地：返回 (Site, meta)。"""
     gdir = _group_dir(ctx, node)
@@ -144,6 +184,7 @@ def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, hal
         "lat_deg": round(lat, 4), "winter": _winter_wind(C), "half_m": half,
         "upstream": {k: v for k, v in (site["rec"].items() if isinstance(site["rec"], dict) and "cell" in site["rec"] else [])
                      if k in ("elev_m", "field", "landing", "water", "shore_dist_km", "market_town", "seat", "subtype", "note")},
+        "anchors": _anchors(S, site, frame_x, frame_y),
     }
     return sd, meta
 

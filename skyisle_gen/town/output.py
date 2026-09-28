@@ -1,4 +1,5 @@
-"""产物（PLAN-TOWN 7.10）：site.npz（细化后的地面）、plan.json（元数据、统计，之后加路网 / 地块 / 宅院 / 建筑）、plan.png。"""
+"""产物（PLAN-TOWN 7.10）：site.npz（细化后的地面 + 占地栅格）、plan.json（元数据、地面统计、路 / 桥 / 宅院 / 房 / 塘场井树 / 户 / 指标 / 校验）、
+style.resolved.toml（这次实际用的风格参数）、plan.png / plan-detail.png / plan.svg。"""
 from __future__ import annotations
 
 import json
@@ -8,7 +9,7 @@ import numpy as np
 
 from . import SCALE_ZH, TERRAIN_ZH
 
-VERSION = 1
+VERSION = 2
 SITE_ARRAYS = ("height", "water_level", "water", "sky", "edge", "farmland", "flood", "landcover", "island", "water_dist_m")
 
 
@@ -27,8 +28,10 @@ def out_dir(ctx_out: Path | None, meta: dict, style: str | None) -> Path:
     return d
 
 
-def write_site(out: Path, sd: dict) -> Path:
+def write_site(out: Path, sd: dict, occ: np.ndarray | None = None) -> Path:
     arrs = {k: sd[k] for k in SITE_ARRAYS}
+    if occ is not None:
+        arrs["occ"] = occ   # 0 空 · 1 路 · 2 院 · 3 房 · 4 塘 · 5 场院 · 6 泊场 · 7 桥
     # 河：顶点拼成一张表，river_start[k] 是第 k 条的起点下标
     lines = sd["rivers"]
     if lines:
@@ -58,4 +61,47 @@ def write_plan_json(out: Path, sd: dict, meta: dict, stats: dict, extra: dict | 
         J.update(extra)
     p = out / "plan.json"
     p.write_text(json.dumps(J, ensure_ascii=False, indent=1), encoding="utf-8")
+    return p
+
+
+def _r(x, nd=2):
+    if isinstance(x, float):
+        return round(x, nd)
+    if isinstance(x, (list, tuple)):
+        return [_r(e, nd) for e in x]
+    if isinstance(x, np.ndarray):
+        return np.round(x.astype(np.float64), nd).tolist()
+    if isinstance(x, dict):
+        return {k: _r(v, nd) for k, v in x.items()}
+    return x
+
+
+def plan_json(P: dict, st: dict, style_hash: str) -> dict:
+    """方案 → plan.json 的各段（坐标保留两位小数）。"""
+    from .plan import HH_KIND, ROAD_CLASSES, ROAD_ZH, SIDE_ZH
+    hh = P["households"]
+    return {
+        "style": {"id": st["meta"]["id"], "name": st["meta"]["name"], "region": st["meta"].get("region", ""), "hash": style_hash},
+        "request": P["request"],
+        "plan": {"operator": P["op"], "center": _r(P["center"]), "facing_deg": round(P["facing_deg"] % 360.0, 2), "radius_m": round(P["radius_m"], 1)},
+        "checks": P["checks"],
+        "metrics": {k: (round(v, 4) if isinstance(v, float) and np.isfinite(v) else None if isinstance(v, float) else v) for k, v in P["metrics"].items()},
+        "timing_plan_s": _r(P["timing"], 4),
+        "roads": [{"cls": ROAD_CLASSES[r["cls"]], "name": ROAD_ZH[ROAD_CLASSES[r["cls"]]], "width_m": round(r["width_m"], 2), "line": _r(r["line"])}
+                  for r in P["roads"]],
+        "bridges": [_r(b) for b in P["bridges"]],
+        "compounds": [{**_r({k: v for k, v in c.items() if k not in ("access_side",)}), "access_side": SIDE_ZH[c["access_side"]]}
+                      for c in P["compounds"]],
+        "buildings": [_r(b) for b in P["buildings"]],
+        "features": [_r(f) for f in P["features"]],
+        "households": [{"id": int(i), "kind": HH_KIND[int(k)], "parent": int(p), "compound": int(c)}
+                       for i, k, p, c in zip(hh["id"], hh["kind"], hh["parent"], hh["compound"])],
+    }
+
+
+def write_style(out: Path, st: dict) -> Path:
+    from .style import dump_toml
+    p = out / "style.resolved.toml"
+    head = "# 这次实际用的风格参数（base ← 风格 ← --set 展开后；functions = 通用目录 ← 风格覆盖）\n"
+    p.write_text(head + dump_toml(st), encoding="utf-8")
     return p
