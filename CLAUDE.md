@@ -38,14 +38,15 @@
   $py -m skyisle_gen.cli island 2051 --run out/seed42 --backend python   # 第三层用参考后端（= --set engine.backend=python）；check / batch（cpp 写 batch_cpp.json）/ lod / stats 同样
   $py -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --jobs 10   # 两个后端对照（generate + island check + 整套产物逐字节）→ islands/compare.json，产物在 islands_compare/<后端>/
   $py -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --timing [--no-python]   # 整群 generate（不写产物）的用时（顺序跑）→ islands/timing.json
-  $py -m skyisle_gen.cli town site 2051 --run out/seed42 --site 村037   # 聚落营建器（独立工具，PLAN-TOWN）：岛群里一个聚落所在的一块地细化到 1–2 m
-                                                  # → islands/2051/town/村037-地面/（site.npz / plan.json / plan.png）；第一步只有地面，风格与建筑从第二步起
-  $py -m skyisle_gen.cli town synth --terrain 河谷 [--households 60] [--seed 1] [--lat 35]   # 十种合成地形 → out/town/synth/；--heightmap h.png --res 1 用外部高程图
+  $py -m skyisle_gen.cli town site 2051 --run out/seed42 --site 村037 --style 华北集村   # 聚落营建器（独立工具，PLAN-TOWN）：岛群里一个聚落的地细化到 1–2 m 并营建
+                                                  # → islands/2051/town/村037-华北集村/（site.npz / plan.json / plan.png / plan-detail.png / plan.svg / style.resolved.toml）；不给 --style 只出地面
+  $py -m skyisle_gen.cli town synth --terrain 河谷 --style 华北集村 [--operator fishbone|organic] [--scale 村|小庄|宅院] [--households 60] [--seed 1] [--lat 35]
+                                                  # 十种合成地形 → out/town/synth/；--heightmap h.png --res 1 用外部高程图；town style list / show 华北集村
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 177 个测试，约 3 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
-                                                  # 扩展没编时 C++ 的 104 个跳过，其余经 tests/conftest.py 自动用 python 后端）
+  $py -m pytest tests -q                          # 191 个测试，约 4 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
+                                                  # 扩展没编时 C++ 的 118 个跳过，其余经 tests/conftest.py 自动用 python 后端）
   ```
 - **C++ 核心库（`core/`，行星计划 P6；设计稿 `docs/PLAN-CORE.md`，DESIGN-NOTES 四点二十三 – 四点二十六）**：`[engine] backend = "cpp" | "python"`（**P6d 起默认 cpp**）。
   P6a / P6b 移了第三层全部（cpp 后端的 `island.generate` 一次调 `_core.generate` 算完、前端只拼 island.json 与写产物）；
@@ -132,12 +133,16 @@ skyisle_gen/
                            把原始的数拼回与 Python 版同形的 g 与 island.json（键序、round 位数照抄）
                  decode    （P6b）C++ 记录里的 ASCII 代码 → 中文、带数的备注按 Python 版 f-string 拼；赋存区的长度 / 走向按 numpy 的 cov / eigh 重算
                  compare   `island compare`：两个后端逐群对照（陆地 / 主岛 / 岛数 / 峰 / 河长 / 村数 / 户数 / 资源处数 / 雨日 / 季型 + 两边 island check + 整套产物逐字节）与 `--timing` 用时
-  town/        **聚落营建器**（PLAN-TOWN，DESIGN-NOTES 四点二十九）：独立工具，只读岛群产物、不回写；任何别的模块不得 import 它（test_town 静态断言）。
-                 算法只有 C++（core/.../town/：geom 几何、raster 哈希噪声 / 采样 / 精确欧氏距离 edt、site 场地——岛群窗口细化 / 十种合成地形 / 外部高程图 → 统一的 Site），
-                 前端 __init__（town.toml ← --set town.*、规模与地形的中英名、窗口大小）/ site（裁窗口、找聚落）/ output / render / cli；随机流号 TOWN_STREAM = 22，
-                 地面噪声按来源坐标取、种子不含聚落名与风格（窗口只决定裁多大）。没写 Python 参考后端（新模块，拍板 b）
+  town/        **聚落营建器**（PLAN-TOWN，DESIGN-NOTES 四点二十九、四点三十）：独立工具，只读岛群产物、不回写；任何别的模块不得 import 它（test_town 静态断言）。
+                 算法只有 C++（core/.../town/：geom 几何、raster 哈希噪声 / 采样 / 精确欧氏距离 edt、site 场地——岛群窗口细化 / 十种合成地形 / 外部高程图 → 统一的 Site；
+                 style 风格的强类型结构、analysis 场地分析、orient 朝向规则链、network 路网与 A* 寻路、plan 编排 plan_site，src 里另有 op_fishbone / op_organic 形态算子、
+                 compound 宅院成形、functions 设施、verify TP 校验与指标，内部头 plan_work.hpp 放编排状态 Work——状态只在编排里，各步拿 Work 改 Work），
+                 前端 __init__（town.toml ← --set town.*、规模与地形的中英名、窗口大小）/ site（裁窗口、找聚落、上游锚点）/ style（base ← 风格 ← --set style.*、功能目录合并、
+                 展平给 C++、风格哈希）/ plan（营建请求与种子）/ output / render / cli；随机流号 TOWN_STREAM = 22，地面噪声按来源坐标取、种子不含聚落名与风格（窗口只决定裁多大），
+                 方案种子含风格（换风格地面不变）。没写 Python 参考后端（新模块，拍板 b）
 config/default.toml（所有参数；[web] 段只管操作台显示，不进缓存 key；[engine] 后端开关，python 不进缓存 key、cpp 给 ①–⑨ 的 key 加 "+cpp"）slots.toml（槽位→模式/阻力档；⑧ 的 C++ 也读它）production_templates.toml（④⑤⑥模板）
-config/town/town.toml（聚落营建器的工具参数：窗口、地面细化、合成地形、出图，与风格无关；`--set town.键=值`）
+config/town/town.toml（聚落营建器的工具参数：窗口、地面细化、合成地形、出图，与风格无关；`--set town.键=值`）functions.toml（通用功能目录）
+config/town/styles/（base.toml 全部风格键的默认与注释；huabei.toml 华北集村；风格只写与 base 不同的键，`--set style.键=值`）
 core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）：include/skyisle/ rng（与 numpy 逐位一致的 SeedSequence / PCG64 / 分布）、grid（栅格、噪声、连通分量、
                  形态学、倒角传播、重采样，外加 numpy 同式的 np_pow / c_pow / np_hypot / py_hypot / np_sum / np_median / pyround）、flow（填洼、D8、汇流、拓扑序）、config（扁平键值表）、
                  island/（types 群状态与各层记录、layout、territory、terrain、river、build：build_terrain / build_hydro（群内各岛并行）、

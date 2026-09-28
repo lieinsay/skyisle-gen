@@ -1,6 +1,6 @@
 # 聚落营建器设计稿：给一块地形、一个规模、一种风格，营建出一个建筑群
 
-> 状态：**已拍板，实施中**（2026-09-28）；**第一步已做**（场地地形，DESIGN-NOTES 四点二十九），下一步华北集村。拍板：b 用 C++；g 同意，另写出扩展风格的方法（6.7），自定义风格的实现往后放；j 同意；
+> 状态：**已拍板，实施中**（2026-09-28）；**第一、二步已做**（场地地形，DESIGN-NOTES 四点二十九；华北集村端到端，四点三十），下一步其余村级算子与风格。拍板：b 用 C++；g 同意，另写出扩展风格的方法（6.7），自定义风格的实现往后放；j 同意；
 > n 往后放——目标指标先用资料与估值，OSM 标定以后再说；其余按默认。**先固定内置风格，扩展以后再说。**
 > 用户补充：**建筑群的风格由用户决定**；这是一个**独立工具**，只是用了行星生成器的地形地貌与天气环境数据。
 > 上游：`PLAN-SETTLE.md`（聚落层只给到「村 / 镇 / 散户 / 专业聚落 / 城的点位与户数」，100 m 一格）、`PLAN-ISLAND.md`（地形、水系、气候）。
@@ -96,55 +96,87 @@
 
 ### 6.1 风格文件长什么样
 
-`config/town/styles/base.toml` 写全部键的默认值与注释；内置风格在 `config/town/styles/<id>.toml`，只写与 base 不同的键。
-加载次序：base ← 风格 ← `--set style.键=值`（自定义风格的 `extends` 链见 6.7，往后放）。下面是江南水乡的节选：
+`config/town/styles/base.toml` 写全部键的默认值与注释；内置风格在 `config/town/styles/<id>.toml`，只写与 base 不同的键；通用功能目录在 `config/town/functions.toml`，
+风格在 `[functions.<id>]` 里改名、开关、改数与谓词。加载次序：base ← 风格 ← `--set style.键=值`（自定义风格的 `extends` 链见 6.7，往后放）。
+`skyisle town style show 华北集村` 打出解析后的整张表；每次营建把它写成产物 `style.resolved.toml`（能原样再读回来）。
+
+> 拍板前这里是一段设想的江南水乡节选（`street.width_m = { "街" = …, "弄" = … }`、`orient.rules = [...]`、`compound.templates = { "天井屋" = 0.85 }`、`functions.shrine = "土地庙"`）；
+> 第二步落地时键名定成了下面这样（以 base.toml 为准），江南的文件在第三步写。
+
+下面是华北集村（`huabei.toml`）的节选：
 
 ```toml
 [meta]
-id = "jiangnan"
-name = "江南水乡"
-region = "太湖流域"
-extends = "base"
-sources = ["TOWN-SOURCES §2"]           # 数的出处；「估」的在注释里标
+id = "huabei"
+name = "华北集村"
+region = "华北平原（冀鲁豫）"
+sources = ["TOWN-SOURCES §1：Smith 1899 [1]、合院规制 [3]、坑塘 [4]†、场院 [5]†、寨墙 [6]†、街宽 [7]†；其余为估"]
 
-[site]                                # 村心在上游点位 300 m 内按兴趣图挑
-weights = { water = 3.0, flat = 1.5, flood = -2.0, farmland = -1.0, sun = 0.5 }
+[site.weights]                        # 村心在上游点位 300 m 内按兴趣图挑
+flat = 1.5
+water = 0.8
+dry = 1.2                             # 高燥
+edge = -1.0
+
+[ground]
+max_slope_deg = 12.0                  # 更陡的格不建
+max_cut_m = 1.2                       # 一栋房台基的挖填上限
+max_terrace_m = 3.0                   # 一块宅基的高差上限（院子做成台地）
 
 [village]
-operators = { waterfront = 0.7, street = 0.3 }   # 形态算子的权重
+operators = { fishbone = 0.6, organic = 0.4 }   # 形态算子的权重：鱼骨街村 / 团块生长
 households_per_compound = [1, 1]
-gross_m2_per_household = 250          # 连路带院的毛用地，定窗口大小与密度（估）
-
-[waterfront]
-mode = "前街后河"                      # 前街后河 | 前河后街 | 两街夹河
-river_width_m = [8, 20]               # 市河（估）
-bridge_spacing_m = [80, 200]          # 估，按周庄的桥密度
-steps_per_households = 3              # 几户一个河埠头（估）
+kin_p = 0.65                          # 分家的新户落在父户旁边的概率
 
 [street]
-width_m = { "街" = [2.0, 2.5], "弄" = [0.8, 2.0] }   # 廊棚街；街弄 / 水弄 / 陪弄
-bay_m = [3, 4]                        # 每间面阔
-bays = { 3 = 0.7, 5 = 0.3 }           # 开间取奇数
-depth_per_jin_m = [5, 13]             # 一进的进深
-jin = { 1 = 0.5, 2 = 0.35, 3 = 0.15 } # 几进（估）
-setback_m = 0
-contiguous = true                     # 连排，山墙相贴
+main_width_m = [5.0, 8.0]             # 各级路宽：trunk 出村大路 / main 主街 / street 街 / lane 巷 / path 田间道
+lane_width_m = [2.0, 4.0]             # 胡同 2–4 m（估）
+plot_gap_m = [0.0, 0.8]               # 院墙多相贴
 
-[orient]                              # 朝向规则链（6.3）
-rules = [ { kind = "street", weight = 3 }, { kind = "water", weight = 2 }, { kind = "sun", weight = 1, tol_deg = 45 } ]
+[fishbone]
+street_spacing_m = [50.0, 62.0]       # 一个街坊前后两排合院
 
-[compound]
-templates = { "天井屋" = 0.85, "前店后宅" = 0.15 }   # 市户一律前店后宅
+[[orient.rule]]                       # 朝向规则链（6.3）：每条一张表
+kind = "sun"
+weight = 3.0
+tol_deg = 15.0
+[[orient.rule]]
+kind = "align_street"                 # 院落顺街成排（模 90°）
+weight = 1.0
+tol_deg = 4.0
 
-[functions]                           # 通用功能 → 本风格的建筑
-shrine = "土地庙"
-temple = "寺"
-market = "街市"
+[gate]                                # 门开在哪：前沿开左角（巽位）、后沿开右角（乾位）、侧边开前头
+front = "left"
+back = "right"
+side = "front"
+
+[compound.templates.siheyuan]         # 宅院模板（6.5）：地块尺寸 + 一栋栋房（[[compound.templates.<id>.b]]）
+name = "四合院"
+weight = 0.25
+plot_w_m = [15.0, 20.0]
+plot_d_m = [24.0, 30.0]
+wall = true
+gate_house = true
+[[compound.templates.siheyuan.b]]
+role = "main"
+name = "正房"
+side = "back"
+bays = [3, 5]
+odd = true
+depth_m = [6.0, 7.5]
+# ……耳房（attach = "left" / "right"，贴着正房两头）、东西厢房、倒座
+
+[functions.temple]                    # 通用功能 → 本风格的建筑
+name = "关帝庙"
+enabled = true
+[functions.pond]
+name = "坑塘"
+enabled = true
 
 [targets]                             # 生成后自检的目标区间（TP-style，软项；估，待标定）
-lambda = [2.0, 99]                    # 带状
-along_linear_share = [0.7, 1.0]
-orient_street_share = [0.7, 1.0]
+lambda = [1.0, 1.6]
+orient_sun_share = [0.9, 1.0]
+coverage = [0.22, 0.45]
 ```
 
 ### 6.2 形态算子
@@ -437,7 +469,7 @@ skyisle town check <产物目录>
 | 步 | 内容 | 做完能看到什么 |
 |---|---|---|
 | 1 ✅ | 基础件 + 场地地形（岛群窗口细化、十种合成地形、外部高程图）+ 命令骨架 + 只画地面的 plan.png | seed 42 #2051 村037（主岛、69 户、挨着溪涧）的窗口：溪、岸、崖、田与 100 m 版同位，地面自然；十种合成地形各一张 |
-| 2 | 第一个风格端到端：**华北集村**——场地分析、路网、鱼骨街村 + 团块生长、院落模板、朝向链、功能（井、庙、场院、坑塘）、TP 硬项与指标、plan.svg | 合成平原与 #2051 村037 各一张华北村；户数对、无重叠、院子朝阳（#2051 在南半球，朝北） |
+| 2 ✅ | 第一个风格端到端：**华北集村**——场地分析、路网、鱼骨街村 + 团块生长、院落模板、朝向链、功能（井、庙、场院、坑塘）、TP 硬项与指标、plan.svg | 合成平原与 #2051 村037 各一张华北村；户数对、无重叠、院子朝阳（#2051 在南半球，朝北） |
 | 3 | 其余村级算子与风格：散居、围合、街村、林地排村、滨水、等高线、梳式、围绿 → 江南、徽州、林盘、岭南、窑洞、土楼、北欧、中欧、英格兰、地中海、日本；画廊 | 同一块河谷地 × 十几种风格的画廊；各风格 TP-style 过 |
 | 4 | 集镇与城：市街 / 市场、沿街切条（前店后宅 / burgage）、网格与中轴、坊、城墙与门、宫 / 衙 / 市 / 仓城、跨岛之郭 → 江南市镇、欧洲中世纪市镇、规划城 | 一个镇（#2051 邑治 = 村001，232 农户 + 65 市户）、一座县城、一座都（seed 42 的都在 #1592、#6638，含郭跨索桥） |
 | 5 | 工具：`style list / show`、调试台 `/town.html`（图层、悬停读建筑、换风格重生成、参数覆盖）、岛群调试台里「营建此聚落」 | 在浏览器里换风格、看每栋房子 |

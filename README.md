@@ -104,15 +104,24 @@ python -m skyisle_gen.cli island floats --run out/seed42 --jobs 28          # �
 
 给一块地形、一个规模、一种风格，营建出一个建筑群（设计稿 `docs/PLAN-TOWN.md`，各风格的数与出处 `docs/TOWN-SOURCES.md`）。
 独立工具，只读岛群生成器的产物（地形地貌、水系、聚落点位、气候），不回写，管线与岛群生成器都不 import 它。风格由用户指定。
-**已做第一步：场地地形**——把 100 m 的岛群地形细化到 1–2 m（河按中心线与河宽重刻、岸线与田的边界去方格），或者用十种合成地形 / 外部高程图，
-出 `site.npz`（细化后的地面）、`plan.json`（元数据与统计）、`plan.png`（地面图：地表、田、水、漫水、崖缘退让带、晕渲、等高线）。风格、路网、建筑从第二步起。
+**已做两步**：
+- **场地地形**：把 100 m 的岛群地形细化到 1–2 m（河按中心线与河宽重刻、岸线与田的边界去方格），或者用十种合成地形 / 外部高程图。
+- **华北集村端到端**（第一个风格）：村心、朝向（朝阳 = 朝赤道，南半球院子朝北）、鱼骨街村 / 团块生长两种形态、四合院 / 三合院 / 一字院的宅院成形（门开巽位、门楼、耳房、台地）、
+  出村大路与桥、关帝庙、土地庙与村口大树、坑塘与龙王庙、场院、井、泊场；TP 硬项与形态指标自检。能营建宅院、小庄、村；集镇与城、其余风格在后面几步。
+
+不给 `--style` 只出地面；给了就营建。产物：`site.npz`（细化后的地面 + 占用图）、`plan.json`（方案：路、桥、宅院、每栋房、设施、户、指标、校验）、
+`plan.png`（整个窗口）、`plan-detail.png`（建成区局部）、`plan.svg`（矢量，悬停看每栋房）、`style.resolved.toml`（这次用的完整风格表）。
 
 ```bash
-python -m skyisle_gen.cli town site 2051 --run out/seed42 --site 村037      # 岛群里一个聚落所在的一块地 → out/seed42/islands/2051/town/村037-地面/
-python -m skyisle_gen.cli town site 1592 --run out/seed42 --site 城         # 都城（聚落名还可以是 散户NNN / 邑治 / 镇NN / 矿村NN …）
-python -m skyisle_gen.cli town synth --terrain 河谷 [--households 60] [--seed 1] [--lat -30]   # 合成地形 → out/town/synth/
+python -m skyisle_gen.cli town site 2051 --run out/seed42 --site 村037 --style 华北集村   # 岛群里一个村 → out/seed42/islands/2051/town/村037-华北集村/
+python -m skyisle_gen.cli town site 1592 --run out/seed42 --site 城         # 只出地面（聚落名还可以是 散户NNN / 邑治 / 镇NN / 矿村NN …）
+python -m skyisle_gen.cli town synth --terrain 河谷 --style 华北集村 [--operator fishbone|organic] [--scale 村|小庄|宅院] [--households 60] [--seed 1] [--lat -30]
 python -m skyisle_gen.cli town synth --heightmap h.png --res 1 [--water w.png] [--height-scale 0.01]
+python -m skyisle_gen.cli town style list                     # 内置风格；style show 华北集村 打出解析后的整张表
 ```
+
+风格文件在 `config/town/styles/`（`base.toml` 是全部键的默认与注释，风格只写不同的键），通用功能目录在 `config/town/functions.toml`；
+`--set style.键=值` 临时改风格（如 `--set style.ground.max_slope_deg=8`）。硬项没过也照写产物、在命令行里列出来。
 
 窗口大小按规模与户数定（村约 0.9 km 见方、都约 3 km；`--half` 可改）；窗口只决定裁多大，同一个地方换窗口、换风格地面逐格不变。
 「朝阳」按所在半球：#2051 在南纬 31.7°，朝阳 = 朝北。工具参数在 `config/town/town.toml`（`--set town.键=值`）。
@@ -266,7 +275,7 @@ A/B/C/D 应基本吻合（D 只取紧贴 D 两缘、在文明核心纬度的节�
 
 ```
 config/           default.toml · slots.toml · production_templates.toml · (traits.toml)
-                  town/（聚落营建器：town.toml 工具参数；styles/ 风格，第二步起）
+                  town/（聚落营建器：town.toml 工具参数；functions.toml 通用功能目录；styles/ 风格：base + 华北集村）
 core/             C++ 核心库（CMake；build.py 一键构建；include/skyisle/（island/ 第三层、planet/ 行星层 ①–⑨、town/ 聚落营建器）、src/、python/ 绑定、tests/ 自检、
                   tools/ 探 numpy 的 ziggurat 表、third_party/pocketfft 与 np.fft 同一份的 FFT）
 skyisle_gen/
@@ -279,7 +288,7 @@ skyisle_gen/
   check.py        八条验收 + 气候 + 铁律自检 + 骨架/历法校准
   ninegrid.py     九格表草稿生成（docs/08）
   engine.py       生成器后端开关（[engine] backend）与行星层的 C++ 桥（各步 C++ 对象的缓存、从 npz 读回）
-  town/           聚落营建器前端（独立工具，PLAN-TOWN）：配置、裁窗口、产物、出图、命令；算法在 core/.../town/
+  town/           聚落营建器前端（独立工具，PLAN-TOWN）：配置、裁窗口、风格加载、营建请求、产物、出图、命令；算法在 core/.../town/
   probe.py  viz.py  weights.py  noise.py  sphere.py  rng.py  config.py  pipeline.py
 tests/            公式单测 + 确定性/缓存链集成测试 + C++ 后端对照（test_core_engine / test_core_p6b / test_core_p6c / test_core_p6d；
                   conftest.py：扩展没编时不依赖 C++ 的测试自动用 python 后端）
