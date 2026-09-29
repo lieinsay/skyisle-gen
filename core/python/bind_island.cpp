@@ -88,6 +88,24 @@ NodeInputs inp_from(const nb::dict& d) {
         x.state_pop = dget(cap, "state_pop");
         x.reformer = nb::cast<bool>(cap["reformer"]);
     }
+    // P7：⑥ 的邻边与本群是不是枢纽（market.node_routes / _core.node_routes 的形；没有 ⑥ 给 None）
+    if (d.contains("routes") && !d["routes"].is_none()) {
+        nb::dict r = nb::cast<nb::dict>(d["routes"]);
+        x.hub = nb::cast<bool>(r["hub"]);
+        for (nb::handle h : nb::cast<nb::list>(r["edges"])) {
+            nb::dict e = nb::cast<nb::dict>(h);
+            RouteEdge q;
+            q.node = nb::cast<int64_t>(e["node"]);
+            q.bearing = dget(e, "bearing");
+            q.days = dget(e, "days");
+            q.cost_out = dget(e, "cost_out");
+            q.cost_in = dget(e, "cost_in");
+            q.flow_out = dget(e, "flow_out");
+            q.flow_in = dget(e, "flow_in");
+            q.hub = nb::cast<bool>(e["hub"]);
+            x.routes.push_back(q);
+        }
+    }
     return x;
 }
 

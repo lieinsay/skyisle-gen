@@ -17,6 +17,16 @@ constexpr uint64_t ISLAND_STREAM = 21;   // 与十步管线的流号 1–10 错�
 enum AgeKind { YOUNG = 0, MID = 1, OLD = 2 };
 const char* age_name(AgeKind k);          // "young" / "mid" / "old"
 
+// 行星层 ⑥ 的一条邻边（本群 ↔ 邻群；market.node_routes / planet::apply_routes，P7 的中转站读它）
+struct RouteEdge {
+    int64_t node = 0;                     // 邻群
+    double bearing = 0;                   // 方位（弧度，0 = 北、顺时针；sphere.initial_bearing）
+    double days = 0;                      // ③ 的离开几天
+    double cost_out = 0, cost_in = 0;     // ⑥ 的有向成本（天）：本群 → 邻群 / 邻群 → 本群
+    double flow_out = 0, flow_in = 0;     // ⑥ 的有向流量（routes.npz 存 float32，这里也是 float32 的值）
+    bool hub = false;                     // 邻群是不是 ⑥ 的枢纽
+};
+
 // 本群的行星层标量（_node_inputs）
 struct NodeInputs {
     int64_t node = 0;
@@ -34,6 +44,9 @@ struct NodeInputs {
     bool is_capital = false, reformer = false;
     int64_t state = -1;
     double state_pop = 0;
+    // P7：⑥ 的邻边（按 ③ 的边号升序）与本群是不是 ⑥ 的枢纽（岛群级的中转岛）；没有 ⑥ 时空着（只挑群内的烽火台）
+    bool hub = false;
+    std::vector<RouteEdge> routes;
 };
 
 // 历法（climate.calendar）
@@ -302,6 +315,7 @@ struct Group {
     bool has_settle = false;
     Json settle;
     Grid<uint8_t> settle_raster;     // 1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落 / 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用
+                                     // 15 塘 / 16 闸（P6）/ 17 大泊场（镇 / 邑治）/ 18 中转站（P7）
     GridI settle_fields;             // 田块号（0 = 无）
     Grid<uint8_t> cultivated, fallow_years;   // P5：已垦（在种，0 / 1 田 / 2 梯田）、撂荒了几年（0 = 不是撂荒地）
     GridI polder_id;                 // P6：圩号（0 = 不是圩田；圩田也算已垦）

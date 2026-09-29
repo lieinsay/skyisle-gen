@@ -167,6 +167,9 @@ std::vector<double> population(const Config& cfg, const Islands& isl, const Clim
 Polity stage9(const Config& cfg, const Islands& isl, const Climate& c, const Barriers& b, const Routes& r, const Centers& ce);
 // 第三层的 NodeInputs 补上 ⑨：本群人口（float32 的值）、是不是某邦的都（邦人口 = float32 成对求和）、是不是变法之国
 void apply_polity(const Polity& pol, int64_t node, const Config& cfg, island::NodeInputs& inp);
+// 第三层的 NodeInputs 补上 ⑥（P7 的中转站）：本群的邻边（按 ③ 的边号升序：邻群、方位、离开几天、有向成本与流量（按 float32 存盘的值）、邻群是不是枢纽）
+// 与本群是不是 ⑥ 的枢纽。与 skyisle_gen/island/market.node_routes（从 npz 读）同值
+void apply_routes(const Islands& isl, const Routes& r, int64_t node, island::NodeInputs& inp);
 
 // ---------------------------------------------------------------- ①–⑨ 一次跑完（游戏新建世界：planet::run 之后接着算）
 struct Society {

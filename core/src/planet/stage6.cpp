@@ -220,4 +220,26 @@ Routes stage6(const Config& cfg, uint64_t seed, const Winds& wd, const Islands& 
     return out;
 }
 
+void apply_routes(const Islands& isl, const Routes& r, int64_t node, island::NodeInputs& inp) {
+    const int64_t E = static_cast<int64_t>(isl.src.size());
+    inp.hub = std::find(r.hubs.begin(), r.hubs.end(), node) != r.hubs.end();
+    inp.routes.clear();
+    for (int64_t e = 0; e < E; ++e) {
+        const int64_t a = isl.src[e], b = isl.dst[e];
+        if (a != node && b != node) continue;
+        const int64_t m = a == node ? b : a;
+        const int64_t o = a == node ? e : e + E, i = a == node ? e + E : e;
+        island::RouteEdge q;
+        q.node = m;
+        q.bearing = initial_bearing(isl.lat[node], isl.lon[node], isl.lat[m], isl.lon[m]);
+        q.days = isl.dist_days[e];
+        q.cost_out = r.cost[o];
+        q.cost_in = r.cost[i];
+        q.flow_out = f32(r.flow[o]);          // routes.npz 的 flow 存 float32
+        q.flow_in = f32(r.flow[i]);
+        q.hub = std::find(r.hubs.begin(), r.hubs.end(), m) != r.hubs.end();
+        inp.routes.push_back(q);
+    }
+}
+
 }  // namespace skyisle::planet

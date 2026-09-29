@@ -383,6 +383,29 @@ void bind_civ(nb::module_& m) {
         return d;
     });
 
+    // ---------------------------------------------------------------- 第三层：NodeInputs 补上 ⑥（P7 的中转站：邻边、有向成本与流量、枢纽）
+    m.def("node_routes", [](const Islands& I, const Routes& R, int64_t node) {
+        island::NodeInputs x;
+        apply_routes(I, R, node, x);
+        nb::list edges;
+        for (const island::RouteEdge& e : x.routes) {
+            nb::dict q;
+            q["node"] = e.node;
+            q["bearing"] = e.bearing;
+            q["days"] = e.days;
+            q["cost_out"] = e.cost_out;
+            q["cost_in"] = e.cost_in;
+            q["flow_out"] = e.flow_out;
+            q["flow_in"] = e.flow_in;
+            q["hub"] = e.hub;
+            edges.append(q);
+        }
+        nb::dict d;
+        d["hub"] = x.hub;
+        d["edges"] = edges;
+        return d;
+    });
+
     // ---------------------------------------------------------------- 公共件（pytest 同输入对照）
     m.def("graph_dijkstra", [](int64_t n, nb::handle src, nb::handle dst, ArrD1 w, nb::handle sources, nb::handle max_dist) {
         const CSR g = make_csr(n, anyvec<int64_t>(src), anyvec<int64_t>(dst));

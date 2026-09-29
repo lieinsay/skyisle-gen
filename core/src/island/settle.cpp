@@ -1,5 +1,6 @@
 // 聚落（settle.py 的 build_settlements / build_water / build_homes_city）与层级（tiers.py 的 special_settlements /
-// market_towns / landings / clear_forest / village_workings），P5 的已垦 / 废村 / 住法 / 有人用的岛 / 荒地归谁（farmland.py）。
+// landings / clear_forest / village_workings），P5 的已垦 / 废村 / 住法 / 有人用的岛 / 荒地归谁（farmland.py），
+// P7 的大泊场、中转站、镇、航船、邑治（market.cpp）。
 // 运算次序、排序的稳定性、round 的位数照抄 Python 版。
 #include "skyisle/island/settle.hpp"
 
@@ -11,6 +12,7 @@
 #include <set>
 
 #include "skyisle/island/farmland.hpp"
+#include "skyisle/island/market.hpp"
 #include "skyisle/island/resources.hpp"
 #include "skyisle/island/waterworks.hpp"
 
@@ -50,6 +52,9 @@ struct Village {                     // 村与散户
     int64_t households_market = 0;
     int market_town = 0;
     bool has_market_town = false;
+    int market_mode = 0;             // P7：0 走路 / 1 航船去赶集
+    double market_km = 0;
+    int boat_line = 0;               // 搭哪条航船（0 = 走路）
     int64_t households_workers = 0, households_seasonal = 0;   // P5：住在这个村的工棚 / 季节住的专业聚落户（0 = 没有这个键）
     bool has_workers = false, has_seasonal = false;
     int landing = 0;
@@ -538,14 +543,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             }
         }
     }
-    int seat = -1;
-    for (size_t k = 0; k < villages.size(); ++k)
-        if (villages[k].island == 0) {
-            seat = static_cast<int>(k);
-            break;
-        }
-    if (seat < 0 && !villages.empty()) seat = 0;
-    if (seat >= 0) villages[seat].seat = true;
+    int seat = -1;                       // 邑治（P7：从镇里挑，航船汇得最多、靠大泊场；market.cpp 的 build_towns 给）
     // 废村（P5，place_ruins）：撂荒田 reach 格内同岛、能建村、没被占的格里按村址评分 + 近田取最高（平局按行列序）；没有就落在头一块田上
     std::vector<Ruin> ruins;
     for (const RuinTract& rt : FL.ruins) {
@@ -851,92 +849,55 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     }
     int64_t rest = nonfarm_hh;
     for (const Special& s : specials) rest -= s.households;
-    // 集镇（market_towns）：按服务半径内户数贪心挑村升镇，镇距 ≥ town_spacing_km，邑治先入；非农户余量按服务户数分
-    std::vector<Json> towns_json;
-    if (!villages.empty()) {
-        const size_t nv = villages.size();
-        std::vector<double> D(nv * nv);
-        for (size_t a = 0; a < nv; ++a)
-            for (size_t b = 0; b < nv; ++b) {
-                const double dx = villages[a].kx - villages[b].kx, dy = villages[a].ky - villages[b].ky;
-                D[a * nv + b] = std::sqrt(dx * dx + dy * dy);
-            }
-        const double rad = sc("market_radius_km");
-        std::vector<double> cen(nv, 0.0);
-        for (size_t a = 0; a < nv; ++a) {
-            double s = 0;
-            for (size_t b = 0; b < nv; ++b) s += D[a * nv + b] <= rad ? static_cast<double>(villages[b].households) : 0.0;
-            cen[a] = s;
+    // ---------- 大泊场、中转站、镇与航船、邑治（market.cpp，P7）----------
+    Mask lflat, pad;
+    harbor_pad(g, c, lflat, pad);                        // 泊场先于镇：能停很多船、能堆货的大块缓坡平地
+    const std::vector<std::vector<int32_t>> cells_isl = island_cells(g);
+    const GridI hcnt = harbor_count(pad, g, cells_isl, static_cast<int>(std::nearbyint(c.get("market.harbor_window_km") / res_km)));
+    std::vector<Harbor> harbors = harbor_sites(g, c, pad, hcnt);
+    std::vector<Relay> relays;
+    if (!villages.empty()) {                             // 中转站：群内的瞭望烽火与关卡、群间的过夜 / 候风 / 避风 / 换船（户从非农户里出）
+        Mask occ(H, W, 0);
+        std::vector<uint8_t> farm(n_isl, 0), busy(n_isl, 0);
+        for (const Village& v : villages) {
+            occ(v.ci, v.cj) = 1;
+            farm[v.island] = busy[v.island] = 1;
         }
-        const int idx_seat = seat >= 0 ? seat : static_cast<int>(std::max_element(cen.begin(), cen.end()) - cen.begin());
-        std::vector<int> chosen{idx_seat};
-        std::vector<int> ord(nv);
-        std::iota(ord.begin(), ord.end(), 0);
-        std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return -cen[a] < -cen[b]; });
-        const double min_srv = sc("town_min_served_hh"), spacing = sc("town_spacing_km");
-        for (int t : ord) {
-            if (std::find(chosen.begin(), chosen.end(), t) != chosen.end() || cen[t] < min_srv) continue;
-            double dm = INF;
-            for (int ch : chosen) dm = std::min(dm, D[static_cast<size_t>(t) * nv + ch]);
-            if (dm >= spacing) chosen.push_back(t);
+        for (const Village& v : hamlets) {
+            occ(v.ci, v.cj) = 1;
+            farm[v.island] = busy[v.island] = 1;
         }
-        std::vector<int> near(nv);
-        for (size_t a = 0; a < nv; ++a) {
-            size_t bq = 0;
-            for (size_t q = 1; q < chosen.size(); ++q)
-                if (D[a * nv + chosen[q]] < D[a * nv + chosen[bq]]) bq = q;
-            near[a] = chosen[bq];
+        for (const Special& s : specials) {
+            occ(s.ci, s.cj) = 1;
+            busy[s.island] = 1;
         }
-        std::vector<double> served(chosen.size(), 0.0);
-        for (size_t q = 0; q < chosen.size(); ++q)
-            for (size_t a = 0; a < nv; ++a)
-                if (near[a] == chosen[q]) served[q] += static_cast<double>(villages[a].households);
-        const double ssum = py_sum(served);
-        std::vector<double> raw(chosen.size());
-        std::vector<int64_t> base(chosen.size());
-        int64_t sb = 0;
-        for (size_t q = 0; q < chosen.size(); ++q) {
-            raw[q] = static_cast<double>(rest) * served[q] / std::max(1e-9, ssum);
-            base[q] = static_cast<int64_t>(std::floor(raw[q]));
-            sb += base[q];
+        for (const Ruin& r : ruins) {
+            occ(r.ci, r.cj) = 1;
+            busy[r.island] = 1;
         }
-        std::vector<size_t> ro(chosen.size());
-        std::iota(ro.begin(), ro.end(), 0);
-        std::stable_sort(ro.begin(), ro.end(), [&](size_t a, size_t b) { return -(raw[a] - base[a]) < -(raw[b] - base[b]); });
-        for (int64_t q = 0; q < std::max<int64_t>(0, rest - sb) && q < static_cast<int64_t>(ro.size()); ++q) base[ro[q]] += 1;
-        for (size_t n = 0; n < chosen.size(); ++n) {
-            Village& v = villages[chosen[n]];
-            v.town = static_cast<int>(n) + 1;
+        Mask freem(H, W, 0);
+        for (size_t k = 0; k < N; ++k) freem.v[k] = (lflat.v[k] && !arable.v[k] && !fallow.v[k] && !occ.v[k]) ? 1 : 0;
+        relays = build_relays(g, c, farm, busy, lflat, freem, hcnt, expo, cells_isl, rest);
+        for (const Relay& r : relays) rest -= r.households;
+    }
+    std::vector<MarketVillage> mvs;
+    for (const Village& v : villages) mvs.push_back({v.id, v.island, v.ci, v.cj, v.kx, v.ky, v.households});
+    TownsResult TR = build_towns(mvs, harbors, c, rest, g.wind_u, g.wind_v);   // 镇（本岛走路 + 跨岛只算航船）、航船线、邑治
+    for (size_t a = 0; a < villages.size(); ++a) {
+        Village& v = villages[a];
+        v.market_town = TR.market_town[a];
+        v.has_market_town = true;
+        v.market_mode = TR.mode[a];
+        v.market_km = TR.market_km[a];
+        v.boat_line = TR.boat_line[a];
+        if (TR.town[a]) {
+            v.town = TR.town[a];
             v.has_market = true;
-            v.households_market = base[n];
-            int sv = 0;
-            double mx = -INF;
-            for (size_t a = 0; a < nv; ++a)
-                if (near[a] == chosen[n]) {
-                    ++sv;
-                    mx = std::max(mx, D[a * nv + chosen[n]]);
-                }
-            Json t = Json::obj();
-            t.set("id", static_cast<int64_t>(n) + 1);
-            t.set("name", chosen[n] == idx_seat ? std::string("seat") : "town:" + std::to_string(n + 1));
-            t.set("village", v.id);
-            t.set("island", v.island);
-            t.set("cell", cell_json(v.ci, v.cj));
-            t.set("km", Json::pair(v.kx, v.ky));
-            t.set("households_farm", v.households);
-            t.set("households_market", base[n]);
-            t.set("households", v.households + base[n]);
-            t.set("served_villages", sv);
-            t.set("served_households", static_cast<int64_t>(served[n]));
-            t.set("max_served_km", pyround(mx, 2));
-            t.set("seat", chosen[n] == idx_seat);
-            towns_json.push_back(t);
-        }
-        for (size_t a = 0; a < nv; ++a) {
-            villages[a].market_town = villages[near[a]].town;
-            villages[a].has_market_town = true;
+            v.households_market = TR.households_market[a];
         }
     }
+    seat = TR.seat;
+    if (seat >= 0) villages[seat].seat = true;
     if (villages.empty() && rest > 0) {
         if (!hamlets.empty()) {
             size_t b = 0;
@@ -954,7 +915,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         Special* s;
     };
     std::vector<LandTarget> lst;
-    for (Village& v : villages) lst.push_back({v.seat ? "main" : (v.town ? "town" : "village"), v.name(), v.island, v.ci, v.cj, &v, nullptr});
+    for (Village& v : villages) lst.push_back({"village", v.name(), v.island, v.ci, v.cj, &v, nullptr});
     for (Special& s : specials) lst.push_back({"special:" + s.kind, s.name(), s.island, s.ci, s.cj, nullptr, &s});
     std::vector<Json> lands;
     std::vector<std::array<int, 3>> land_cells;   // [岛, 行, 列]
@@ -1018,6 +979,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             L.set("flat", flat_ok);
             L.set("dist_km", pyround(py_hypot(static_cast<double>(bi - i), static_cast<double>(bj - j)) * res_km, 2));
             L.set("main", t.kind == "main");
+            L.set("ships", landing_ships(lflat, g, bi, bj, c));
             lands.push_back(L);
             land_cells.push_back({k, bi, bj});
             if (t.kind == "main" && main_dock < 0) main_dock = id - 1;
@@ -1030,6 +992,67 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 t.s->has_landing = true;
             }
         }
+        // 镇 / 邑治的大泊场（邑治的是主泊场 = 仓场）、中转站的泊场（market.add_landings）；没有大泊场的镇用它那个村的船台
+        for (Town& t : TR.towns) {
+            if (t.harbor) {
+                const Harbor& h = harbors[t.harbor - 1];
+                const int id = static_cast<int>(lands.size()) + 1;
+                Json L = Json::obj();
+                L.set("id", id);
+                L.set("kind", t.seat ? "main" : "town");
+                L.set("of", t.seat ? std::string("seat") : "town:" + std::to_string(t.id));
+                L.set("island", t.island);
+                L.set("cell", cell_json(h.ci, h.cj));
+                L.set("km", Json::pair(h.kx, h.ky));
+                L.set("slope_deg", pyround(static_cast<double>(static_cast<float>(g.slope(h.ci, h.cj))), 1));
+                L.set("flat", true);
+                L.set("dist_km", t.harbor_dist_km);
+                L.set("main", t.seat);
+                L.set("ships", h.ships);
+                L.set("harbor", h.id);
+                lands.push_back(L);
+                t.landing = id;
+            } else {
+                int lid = 0;
+                for (const Village& v : villages)
+                    if (v.id == t.village) lid = v.landing;
+                t.landing = lid;
+                if (t.seat) {
+                    lands[lid - 1].set("kind", "main");
+                    lands[lid - 1].set("main", true);
+                }
+            }
+        }
+        for (Relay& r : relays) {
+            const int id = static_cast<int>(lands.size()) + 1;
+            Json L = Json::obj();
+            L.set("id", id);
+            L.set("kind", "relay");
+            L.set("of", "relay:" + std::to_string(r.id));
+            L.set("island", r.island);
+            L.set("cell", cell_json(r.ci, r.cj));
+            L.set("km", Json::pair(r.kx, r.ky));
+            L.set("slope_deg", pyround(static_cast<double>(static_cast<float>(g.slope(r.ci, r.cj))), 1));
+            L.set("flat", true);
+            L.set("dist_km", 0.0);
+            L.set("main", false);
+            L.set("ships", r.ships);
+            lands.push_back(L);
+            r.landing = id;
+        }
+        main_dock = -1;
+        for (size_t q = 0; q < lands.size(); ++q) {
+            const Json& L = lands[q];
+            const int k = static_cast<int>(L.at("island").as_int());
+            if (L.at("main").as_bool() && main_dock < 0) main_dock = static_cast<int>(q);
+            if (!docks_of.count(k)) docks_of[k] = static_cast<int>(q);
+        }
+    }
+    std::array<int, 3> main_cell{0, 0, 0};             // 主泊场（仓场）的 [岛, 行, 列]
+    if (main_dock >= 0) {
+        const Json& L = lands[main_dock];
+        main_cell = {static_cast<int>(L.at("island").as_int()), static_cast<int>(L.at("cell").items()[0].as_int()),
+                     static_cast<int>(L.at("cell").items()[1].as_int())};
     }
     // 栅格：1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用
     Grid<uint8_t> sr(H, W, 0);
@@ -1210,7 +1233,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         works = build_waterworks(g, c, wf, fields_raster, wv, sr, FL.polders);
     }
 
-    // ---------- 没人常住的岛有人用（P5，island_uses）：放牧 / 夏牧、烽火台、庙、墓岛；各岛的住法 ----------
+    // ---------- 没人常住的岛有人用（P5，island_uses）：放牧 / 夏牧、庙、墓岛（烽火台 P7 起归中转站）；各岛的住法 ----------
     std::vector<Json> uses_json;
     struct UseRec {
         std::string kind;
@@ -1228,6 +1251,10 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             else used[s.island] = 1;
         }
         for (const Ruin& r : ruins) used[r.island] = 1;
+        for (const Relay& r : relays) {
+            if (r.households > 0) resident[r.island] = 1;
+            else used[r.island] = 1;
+        }
         Rng ru = part_rng(inp, "settle:uses");
         const double r_shrine = ru.random(), r_tomb = ru.random();
         if (!villages.empty()) {
@@ -1336,43 +1363,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 u.set("dist_km", pyround(z.d, 2));
                 if (shieling) seasonal[z.k] = 1;
             }
-            // 烽火台：群边高处——离主岛最远的几座，彼此方位差 ≥ beacon_sep_deg
             const double c0x = g.islands[0].cx_j, c0y = g.islands[0].cy_j;
-            const double sep = sc("beacon_sep_deg") * (PI / 180.0);
-            struct Far {
-                double negd;
-                int k;
-                double a;
-            };
-            std::vector<Far> far;
-            for (int k = 1; k < n_isl; ++k) {
-                if (blocked(k)) continue;
-                const double dx = g.islands[k].cx_j - c0x, dy = g.islands[k].cy_j - c0y;
-                far.push_back({-py_hypot(dx, dy), k, std::atan2(dy, dx)});
-            }
-            std::stable_sort(far.begin(), far.end(), [](const Far& a, const Far& b) {
-                if (a.negd != b.negd) return a.negd < b.negd;
-                return a.k < b.k;
-            });
-            std::vector<double> angs;
-            for (const Far& f : far) {
-                if (static_cast<int64_t>(angs.size()) >= static_cast<int64_t>(sc("beacon_max"))) break;
-                bool ok = true;
-                for (double b : angs) {
-                    double dd = std::fabs(f.a - b);
-                    if (dd > PI) dd = 2.0 * PI - dd;
-                    if (dd < sep) {
-                        ok = false;
-                        break;
-                    }
-                }
-                if (!ok) continue;
-                angs.push_back(f.a);
-                Json note = Json::arr();
-                note.push("beacon");
-                note.push(-f.negd);
-                add("beacon", f.k, highest_cell(f.k), "rotation", seat_id, std::move(note));
-            }
             // 庙 / 墓岛：邑治附近没人住的岛（各按概率有没有）
             const double sx = seat >= 0 ? villages[seat].kx : c0x, sy = seat >= 0 ? villages[seat].ky : c0y;
             auto nearest_free = [&](double max_km2, int& kb) {
@@ -1415,6 +1406,13 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             status[k] = resident[k] ? "resident" : (seasonal[k] ? "seasonal" : (used[k] ? "used" : "empty"));
     }
     for (const Json& u : uses_json) sr(static_cast<int>(u.at("cell").items()[0].as_int()), static_cast<int>(u.at("cell").items()[1].as_int())) = 14;
+    // P7（market.mark_raster）：17 = 镇 / 邑治的大泊场、18 = 中转站（站址；有烽火的再加瞭望处），只写空格
+    for (const Town& t : TR.towns)
+        if (t.harbor && sr(harbors[t.harbor - 1].ci, harbors[t.harbor - 1].cj) == 0) sr(harbors[t.harbor - 1].ci, harbors[t.harbor - 1].cj) = 17;
+    for (const Relay& r : relays) {
+        if (sr(r.ci, r.cj) == 0) sr(r.ci, r.cj) = 18;
+        if (!r.funcs.empty() && r.funcs[0] == "beacon" && sr(r.li, r.lj) == 0) sr(r.li, r.lj) = 18;
+    }
 
     // ---------- 第 3 步：前哨、主家候选、都与城（build_homes_city） ----------
     std::vector<Json> outposts, homes;
@@ -1457,7 +1455,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 ops.push_back({id, k, r->ci, r->cj, r->kx, r->ky, pyround(fk->second, 3)});
             }
         }
-        const std::array<int, 3>* md = main_dock >= 0 ? &land_cells[main_dock] : nullptr;
+        const std::array<int, 3>* md = main_dock >= 0 ? &main_cell : nullptr;
         auto info = [&](int i, int j, const char* kind, Json note, bool np_ = true) {   // np_：格来自 np.where（numpy 整数）
             const int k = g.island_id(i, j);
             const IslandRec& isl = g.islands[k];
@@ -1673,6 +1671,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         for (const Village& v : hamlets) add_seed(v.ci, v.cj, v.households, false);
         for (const Special& s : specials)
             if (s.occupancy != "workcamp") add_seed(s.ci, s.cj, s.households, false);   // P5：工棚不开垦
+        for (const Relay& r : relays)
+            if (r.households > 0) add_seed(r.ci, r.cj, r.households, false);            // P7：有常住户的中转站
         int64_t n_land = 0, nf0 = 0;
         bool any_seed = false;
         for (size_t k = 0; k < N; ++k) {
@@ -1912,8 +1912,9 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             if (s.occupancy != "resident" && s.home_village >= 0 && !user.count(s.island)) user[s.island] = s.home_village;
         for (const UseRec& u : use_recs)
             if ((u.kind == "graze" || u.kind == "shieling") && !user.count(u.island)) user[u.island] = u.village;
-        std::set<int> ruin_isl, farm_isl;
+        std::set<int> ruin_isl, farm_isl, relay_isl;
         for (const Ruin& r : ruins) ruin_isl.insert(r.island);
+        for (const Relay& r : relays) relay_isl.insert(r.island);
         for (const Village& v : villages) farm_isl.insert(v.island);
         for (const Village& v : hamlets) farm_isl.insert(v.island);
         for (int k = 0; k < n_isl; ++k) {
@@ -1923,6 +1924,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             else if (status[k] != "empty" && !ruin_isl.count(k) && user.count(k)) {
                 owner = "magnate";
                 vid = user[k];
+            } else if (relay_isl.count(k)) {
+                owner = "office";
             }
             Json t = Json::obj();
             t.set("island", k);
@@ -1953,7 +1956,12 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         if (r.seat) j.set("seat", true);
         if (r.town) j.set("town", r.town);
         if (r.has_market) j.set("households_market", r.households_market);
-        if (r.has_market_town) j.set("market_town", r.market_town);
+        if (r.has_market_town) {
+            j.set("market_town", r.market_town);
+            j.set("market_mode", r.market_mode ? "boat" : "walk");
+            j.set("market_km", r.market_km);
+            if (r.boat_line) j.set("boat_line", r.boat_line);
+        }
         if (r.has_landing) j.set("landing", r.landing);
         if (r.has_water) {
             Json w = Json::obj();
@@ -1994,7 +2002,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     }
     S.set("fields", fj);
     Json vj = Json::arr(), hj = Json::arr(), sj = Json::arr();
-    int64_t hh_v = 0, hh_h = 0, hh_m = 0, hh_s = 0;
+    int64_t hh_v = 0, hh_h = 0, hh_m = 0, hh_s = 0, hh_r = 0;
+    for (const Relay& r : relays) hh_r += r.households;
     std::vector<double> vh;
     for (const Village& v : villages) {
         vj.push(village_json(v));
@@ -2035,12 +2044,128 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     S.set("households_in_hamlets", hh_h);
     S.set("households_in_towns_market", hh_m);
     S.set("households_in_specials", hh_s);
+    S.set("households_in_relays", hh_r);
     S.set("seat", seat >= 0 ? Json(villages[seat].id) : Json());
     S.set("seat_households", seat >= 0 ? villages[seat].households : 0);
     S.set("village_hh_median", villages.empty() ? 0 : static_cast<int64_t>(np_median(vh)));
     Json tj = Json::arr();
-    for (Json& t : towns_json) tj.push(std::move(t));
+    for (const Town& t : TR.towns) {
+        Json j = Json::obj();
+        j.set("id", t.id);
+        j.set("name", t.seat ? std::string("seat") : "town:" + std::to_string(t.id));
+        j.set("village", t.village);
+        j.set("island", t.island);
+        j.set("cell", cell_json(t.ci, t.cj));
+        j.set("km", Json::pair(t.kx, t.ky));
+        j.set("households_farm", t.households_farm);
+        j.set("households_market", t.households_market);
+        j.set("households", t.households_farm + t.households_market);
+        j.set("served_villages", t.served_villages);
+        j.set("served_households", t.served);
+        j.set("served_walk_households", t.served_walk);
+        j.set("served_boat_households", t.served_boat);
+        j.set("served_other_islands_households", t.served_other);
+        j.set("max_served_km", t.max_served_km);
+        j.set("n_lines", static_cast<int64_t>(t.lines.size()));
+        j.set("lines", Json::arr_of(t.lines));
+        j.set("score", t.score);
+        j.set("seat_score", t.seat_score);
+        j.set("seat", t.seat);
+        j.set("harbor", t.harbor ? Json(t.harbor) : Json());
+        j.set("harbor_ships", t.harbor_ships);
+        j.set("harbor_dist_km", t.harbor ? Json(t.harbor_dist_km) : Json());
+        if (t.harbor) {
+            const Harbor& h = harbors[t.harbor - 1];
+            Json st = Json::obj();
+            st.set("from_km", Json::pair(t.kx, t.ky));
+            st.set("to_km", Json::pair(h.kx, h.ky));
+            st.set("length_km", t.street_len_km);
+            st.set("bearing_deg", t.street_bearing_deg);
+            j.set("street", st);
+        } else {
+            j.set("street", Json());
+        }
+        j.set("landing", t.landing);
+        tj.push(std::move(j));
+    }
     S.set("towns", tj);
+    Json lj = Json::arr();
+    for (const BoatLine& ln : TR.lines) {
+        Json j = Json::obj();
+        j.set("id", ln.id);
+        j.set("name", "line:" + std::to_string(ln.id));
+        j.set("town", ln.town);
+        j.set("stops", Json::arr_of(ln.stops));
+        j.set("islands", Json::arr_of(ln.islands));
+        j.set("households", ln.households);
+        Json pts = Json::arr();
+        for (const auto& p : ln.pts) pts.push(Json::pair(p[0], p[1]));
+        j.set("pts_km", pts);
+        j.set("length_km", ln.length_km);
+        j.set("cost_km", ln.cost_km);
+        j.set("hours", ln.hours);
+        j.set("interval_days", ln.interval_days);
+        lj.push(std::move(j));
+    }
+    S.set("boat_lines", lj);
+    Json hj2 = Json::arr();
+    for (const Harbor& h : harbors) {
+        Json j = Json::obj();
+        j.set("id", h.id);
+        j.set("island", h.island);
+        j.set("cell", cell_json(h.ci, h.cj));
+        j.set("km", Json::pair(h.kx, h.ky));
+        j.set("area_km2", h.area_km2);
+        j.set("ships", h.ships);
+        j.set("elev_m", h.elev_m);
+        j.set("town", h.town ? Json(h.town) : Json());
+        hj2.push(std::move(j));
+    }
+    S.set("harbors", hj2);
+    Json rj2 = Json::arr();
+    for (const Relay& r : relays) {
+        Json j = Json::obj();
+        j.set("id", r.id);
+        j.set("island", r.island);
+        j.set("cell", cell_json(r.ci, r.cj));
+        j.set("km", Json::pair(r.kx, r.ky));
+        j.set("elev_m", r.elev_m);
+        j.set("functions", Json::arr_of(r.funcs));
+        bool inner = false, outer = false;
+        for (const std::string& f : r.funcs) {
+            if (f == "beacon" || f == "gate") inner = true;
+            else outer = true;
+        }
+        j.set("scope", inner && outer ? "both" : (inner ? "inner" : "outer"));
+        j.set("lookout_cell", cell_json(r.li, r.lj));
+        j.set("lookout_km", Json::pair(r.lkx, r.lky));
+        j.set("lookout_m", r.lookout_m);
+        j.set("households", r.households);
+        Json ro = Json::obj();
+        for (const auto& kv : r.roles) ro.set(kv.first, kv.second);
+        j.set("roles", ro);
+        j.set("occupancy", r.households > 0 ? "resident" : "rotation");
+        j.set("ships", r.ships);
+        j.set("flow", r.flow);
+        Json es = Json::arr();
+        for (const RouteEdge& e : r.edges) {
+            Json x = Json::obj();
+            x.set("node", e.node);
+            x.set("bearing_deg", pyround(pymod(e.bearing * (180.0 / PI), 360.0), 1));
+            x.set("days", pyround(e.days, 3));
+            x.set("flow_in", pyround(e.flow_in, 1));
+            x.set("flow_out", pyround(e.flow_out, 1));
+            x.set("cost_in", pyround(e.cost_in, 3));
+            x.set("cost_out", pyround(e.cost_out, 3));
+            x.set("hub", e.hub);
+            es.push(std::move(x));
+        }
+        j.set("routes", es);
+        j.set("name", "relay:" + std::to_string(r.id));
+        j.set("landing", r.landing);
+        rj2.push(std::move(j));
+    }
+    S.set("relays", rj2);
     S.set("specials", sj);
     auto arr_of_json = [](std::vector<Json>& v) {
         Json a = Json::arr();
