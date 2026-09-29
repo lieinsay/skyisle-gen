@@ -917,12 +917,10 @@ canal_grad_m_per_km = 0.5     # 渠水面的比降（m/km；1/2000，灌渠常�
 canal_cut_m = 3.0             # 渠可挖穿高出渠水面这么多的地（再高就过不去）
 canal_reach_km = 6.0          # 从渠首按「工」走出去最远（工 = 步长 × (1 + canal_slope_cost × 坡²)，按格算、折成 km）
 canal_slope_cost = 100.0      # 横穿坡地费工：坡 0.1（5.7°）一步的工翻倍 → 渠顺等高线走
-canal_head_sep_km = 3.0       # 渠首之间至少隔这么远
 canal_try_sep_km = 1.0        # 试过（走过一遍）的候选这么近的不再试
-canal_min_cmd_km2 = 0.5       # 一处渠首新灌的田（按整块田的面积）够这么多才修
-canal_cmd_frac = 0.5          # 一块田有这么多成的格在渠水面以下、走得到，才算这处渠首的灌区
-canal_lateral_km = 0.8        # 渠通到每块田的入口，再按此间距的格点（以渠首为原点）铺进田里：渠网从渠首散开成扇（支渠 / 斗渠的间距）
-canal_base_km = 0.5           # 修渠划不划算：按入口的工从近到远，一块田要从已经挖好的渠上新接出去的渠 ≤ canal_base_km + canal_km_per_km2 × 田的面积（km²）才修
+canal_min_cmd_km2 = 0.5       # 一处渠首灌得到的田够这么多才修（P6b 起按格算：管它的村的田里渠水面以下、走得到的格；旧键 canal_cmd_frac「一块田五成的格灌得到就整块算」作废）
+canal_lateral_km = 0.8        # 渠通到田的入口，再按此间距的格点（以渠首为原点）铺进灌得到的田里：渠网从渠首散开成扇（支渠 / 斗渠的间距）
+canal_base_km = 0.5           # 修渠划不划算：渠首到田的入口新挖的渠 ≤ canal_base_km + canal_km_per_km2 × 灌得到的田（km²）才修
 canal_km_per_km2 = 3.0        # （每 km² 田约 18 户，每户摊 170 m 新渠）；远处零碎的小块田不值得专门挖一条渠，靠雨和塘
 canal_q_per_km2 = 0.1         # 渠宽：每 km² 田要 0.1 m³/s（约 1 L/s/ha），宽 = 5·Q^0.5 m（与河的水力几何同式、不夸张），至少 canal_width_min_m
 canal_width_min_m = 1.5
@@ -941,6 +939,11 @@ polder_block_min_km2 = 0.1    # 一格里的湿地够这么多才围成一圩，
 polder_pond_frac = 0.05       # 圩塘水面 = 圩的此比例（圩里留塘：水排到崖边就掉下去了，旱季要留水）
 polder_paddy_mm = 800.0       # 圩塘那格的局地年降水 ≥ 此值记作水田（paddy），否则是排干的泽田种旱作（800 mm 上下是旱地与水田的分界）
 polder_drain_max_cells = 30   # 排水渠：出水口顺流而下接到河 / 溪涧 / 湖，至多这么多格
+# P6b（Zhouzhu PLAN-LAND L30 / L31，DESIGN-NOTES 四点三十九）：有水利就有人维护——每处渠首、渠、塘、闸、圩都有管它的村（village），在那个村走得到的范围内
+manage_walk_km = 2.0          # 管水利的村走得到的范围（直线，走路半小时上下：天天去看水、开闸、修堤）；渠首、渠的每一点、塘、闸、圩的每一格离管它的村都不超过此值
+polder_village_blocks = 3     # 圩田按 n × n 圩一组成一块田（网格同纵浦横塘，锚在出水口；3 × 3 = 1.8 km 见方、五六十户）：一组离现有的村都走不到（有一格超过 manage_walk_km）
+                              # 就在圩里的高处落一个圩村，户从这组圩田来；走得到的归最近的那个村（村的田多一块圩田）
+village_head_sep_km = 1.5     # 渠首之间至少隔这么远（一村一堰：一处渠首只灌管它的那个村的田，旁边的村隔一两公里各筑各的堰；旧键 canal_head_sep_km = 3 km 是一处渠首灌几个村时的间距，作废）
 
 [island.market]               # 泊场、中转站、镇、航船、邑治（P7，Zhouzhu PLAN-LAND L24–L26；DESIGN-NOTES 四点三十八；market.py）
 # 船寻常，但能控制的浮石船造起来有门槛，一般人家没有：本岛走路赶集，跨岛搭定班的航船。泊场先于镇：大块缓坡平地把镇吸过去
@@ -965,6 +968,7 @@ harbor_bonus = 0.3            # 挑镇时挨着大泊场的加分：× (1 + 此�
 harbor_ref_ships = 150.0
 town_spacing_km = 10.0        # 镇距下限（直线，不论岛）
 town_min_served_hh = 150      # 还没被服务的户（走路 + 航船）不到这么多就不再挑镇
+town_min_village_hh = 8       # 镇只从这么多户以上的村里挑（老村核心；P6b 起排干的零碎湿地上有几户人家的小圩村，不当镇；与 [island.settle] village_min_hh 同）
 line_max_stops = 6            # 一条航船线至多停这么多个村（从最远的村出发，挨个接人，开到镇上的泊场）
 line_max_km = 60.0            # 一趟的船程（按风折过）至多这么长；按方位扫一圈分线，超了就另起一条
 line_daily_hh = 400           # 一条线沿途的户 ≥ 此值每日一班，否则 line_interval_days 天一班（逢集）
