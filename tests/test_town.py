@@ -365,6 +365,20 @@ def test_operator_on_fitting_ground(style, op, terrain):
         assert "moat" in kinds, "環濠集落有濠"
 
 
+@pytest.mark.parametrize("style,terrain", [("huizhou", "山顶"), ("med_hill", "岛缘崖台"), ("huabei", "河谷")])
+def test_more_households_spread_out(style, terrain):
+    """户少就摊开、户多就往外长（用户定的规矩：合理比凑密度要紧）：每户都住下，村子的外包随户数长，覆盖率由风格的排法定、不随户数挤。
+    山城在岛缘崖台 30 户那一例曾是教堂的地块擦进主街（公共建筑挑地没按几何查路）。"""
+    cov, ext = [], []
+    for hh in (30, 120):
+        _, P = _style_plan(style, terrain, hh=hh)
+        assert not hard_failures(P), [c["id"] + "：" + c["msg"] for c in hard_failures(P)]
+        cov.append(P["metrics"]["coverage"])
+        ext.append(P["metrics"]["extent_long_m"])
+    assert ext[1] > 1.4 * ext[0], f"120 户的村没往外长：{ext}"
+    assert abs(cov[1] - cov[0]) < 0.06, f"覆盖率随户数变了：{cov}"
+
+
 def test_operator_fit_rules():
     """挑算子只在这块地能用的里挑：滨水要河、等高线要坡、地坑院 / 散居村 / 環濠集落 / 绿地村要平地。"""
     _, P = _style_plan("yaodong", "平原")
