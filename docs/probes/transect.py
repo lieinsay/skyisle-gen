@@ -13,6 +13,9 @@
   7. 镇、邑治、航船、中转站（P7，settlements.json 的 towns / harbors / boat_lines / relays）：镇几个、各离大泊场多远（同岛最近的一处）、几条航船线汇到镇、
      有别的岛上的人来赶集却没有航船的镇（P7 之前没有航船：赶集按直线跨岛，这一列就是靠别的岛上的人撑起来的镇）；邑治在哪（哪座岛、农户、离大泊场多远、汇了几条线）；
      航船几条 / 多长 / 连几个村；中转站几处（按功能）、住几户。P7 之前的产物没有大泊场：用 market.py 同一套算法在它的地形与田上现算（地形、田没变，算出来的与 P7 之后的相同）。
+  8. 水利离村多远（P6b，Zhouzhu PLAN-LAND L30）：渠首、谷口的渠段、圩田的渠段、圩、塘、闸各离最近的村、离管它的村（village，P6b 起才有）多远，
+     没有管它的村的、废弃的水利（abandoned）几处，村 / 圩村 / 挂着圩田的村、已垦 = 额度、人口 = ⑨；
+  9. 原始地貌与人工地貌（P6b，L31）：原始湿地 / 现状湿地 / 圩田，没人常住的岛上的湿地与田，人工改造（landuse）各类的面积与开垦的田原来是什么。
 P5 之前的产物（没有 cultivable / uses / ruins，专业聚落都算常住）也能量：宜垦记「—」，已垦按旧的 arable。
 
 用法（仓库根下）：
@@ -188,6 +191,8 @@ def group(d: Path, node: int, run: Path | None) -> dict:
     if S.get("uses") is not None:
         out["uses"] = Counter(u["kind"] for u in S["uses"])
     out["market"] = market(J, S, Z, res_km)
+    out["manage"] = works_manage(S, Z, res_km)
+    out["nature"] = nature(J, S, Z, cell_km2)
     WK = S.get("waterworks")
     if WK is not None:
         ws = WK["summary"]
@@ -198,6 +203,132 @@ def group(d: Path, node: int, run: Path | None) -> dict:
                         "main_canal_km": round(main_km, 1), "paddy_share": round(sum(p["paddy"] for p in WK["polders"]) / max(1, len(WK["polders"])), 3),
                         "heads_main_island": sum(1 for h in WK["heads"] if h["island"] == 0),
                         "canal_km_per_100km2": round(100.0 * ws["canal_km"] / max(1e-9, out["land_km2"]), 2)}
+    return out
+
+
+WORKS_KINDS = ("渠首", "谷口的渠", "圩田的渠", "圩", "塘", "闸")
+
+
+def _stats(a: list[float], walk: float) -> dict | None:
+    if not a:
+        return None
+    x = np.asarray(a, dtype=np.float64)
+    return {"n": int(x.size), "median": round(float(np.median(x)), 2), "p90": round(float(np.quantile(x, 0.9)), 2), "max": round(float(x.max()), 2),
+            "over": round(float((x > walk + 1e-9).mean()), 3)}
+
+
+def works_manage(S: dict, Z, res_km: float, walk_km: float = 2.0) -> dict | None:
+    """P6b（L30）：水利离村多远——每处（渠首、谷口的渠段、圩田的渠段、圩、塘、闸）离最近的村、离管它的村（P6b 起记 village；之前没有）。
+    点按格心（渠的 pts 已是格心 / 格边坐标，村 = 格 + 0.5）；渠段取离村最远的那个点；圩取圩的格心的均值（另记最远那格离管它的村）。
+    废弃的（abandoned，没人管了）另数，不进离村的数。"""
+    WK = S.get("waterworks")
+    if WK is None or not S["villages"]:
+        return None
+    vc = np.array([[v["cell"][0] + 0.5, v["cell"][1] + 0.5] for v in S["villages"]], dtype=np.float64)
+    vpos = {v["id"]: np.array([v["cell"][0] + 0.5, v["cell"][1] + 0.5]) for v in S["villages"]}
+
+    def near(P):                                  # 每个点离最近的村（km）
+        d2 = ((P[:, None, :] - vc[None, :, :]) ** 2).sum(-1)
+        return np.sqrt(d2.min(axis=1)) * res_km
+
+    def mgr(P, vid):
+        if vid is None or vid not in vpos:
+            return None
+        return np.sqrt(((P - vpos[vid][None, :]) ** 2).sum(-1)) * res_km
+    items = {k: [] for k in WORKS_KINDS}
+    aband = Counter()
+    pid = Z["polder_id"] if "polder_id" in Z.files else None
+
+    def add(kind, P, vid, far=None):
+        dn = float(near(P).max())
+        dm = mgr(P, vid)
+        items[kind].append((dn, None if dm is None else float(dm.max()), far))
+    for x in WK["heads"]:
+        if x.get("abandoned"):
+            aband["渠首"] += 1
+            continue
+        add("渠首", np.array([[x["cell"][0] + 0.5, x["cell"][1] + 0.5]]), x.get("village"))
+    for c in WK["canals"]:
+        if c.get("abandoned"):
+            aband["渠段"] += 1
+            aband["渠 km"] += c["length_km"]
+            continue
+        add("谷口的渠" if c["kind"] in ("干渠", "支渠") else "圩田的渠", np.asarray(c["pts"], dtype=np.float64), c.get("village"))
+    if pid is not None and WK["polders"]:
+        flat = pid.ravel()
+        idx = np.flatnonzero(flat > 0)
+        o = idx[np.argsort(flat[idx], kind="stable")]
+        b = np.searchsorted(flat[o], np.arange(1, len(WK["polders"]) + 2))
+        W = pid.shape[1]
+        for p in WK["polders"]:
+            if p.get("abandoned"):
+                aband["圩"] += 1
+                continue
+            cells = o[b[p["id"] - 1]:b[p["id"]]]
+            P = np.stack([cells // W + 0.5, cells % W + 0.5], axis=1).astype(np.float64)
+            far = mgr(P, p.get("village"))
+            add("圩", P.mean(axis=0, keepdims=True), p.get("village"), None if far is None else float(far.max()))
+    for x in WK["ponds"]:
+        if x.get("abandoned"):
+            aband["塘"] += 1
+            continue
+        add("塘", np.array([[x["cell"][0] + 0.5, x["cell"][1] + 0.5]]), x.get("village"))
+    for x in WK["sluices"]:
+        if x.get("abandoned"):
+            aband["闸"] += 1
+            continue
+        add("闸", np.array([[x["cell"][0] + 0.5, x["cell"][1] + 0.5]]), x.get("village"))
+    out = {"walk_km": walk_km, "near": {}, "mgr": {}, "unmanaged": {}, "abandoned": dict(aband)}
+    for k, L in items.items():
+        out["near"][k] = _stats([t[0] for t in L], walk_km)
+        dm = [t[1] for t in L if t[1] is not None]
+        out["mgr"][k] = _stats(dm, walk_km) if dm else None
+        out["unmanaged"][k] = sum(1 for t in L if t[1] is None)
+    fars = [t[2] for t in items["圩"] if t[2] is not None]
+    out["polder_far_max_km"] = round(max(fars), 2) if fars else None
+    out["n_polder_villages"] = sum(1 for v in S["villages"] if v.get("polder"))
+    out["n_villages_with_polder"] = sum(1 for v in S["villages"] if v.get("polder_fields"))
+    return out
+
+
+LC_NAMES = ["虚空", "崖缘", "裸岩", "高山草甸", "林地", "灌丛", "草坡", "可耕地", "梯田", "湿地", "河道", "湖"]
+
+
+def nature(J: dict, S: dict, Z, cell_km2: float) -> dict:
+    """P6b（L31）：原始地貌与人工地貌——原始湿地 / 现状湿地 / 圩田；没人常住的岛上的湿地与田；人工改造各类的面积。
+    P6b 之前的产物没有 landcover_natural：原始湿地按「现状湿地 + 圩田」（P6 的圩田是聚落层动湿地的唯一一处）。"""
+    iid = Z["island_id"]
+    land = iid >= 0
+    lc = Z["landcover"]
+    pol = (Z["polder_id"] > 0) if "polder_id" in Z.files else np.zeros_like(land)
+    has_nat = "landcover_natural" in Z.files
+    nat = Z["landcover_natural"] if has_nat else None
+    wet_now = (lc == LC_WET) & land
+    wet_nat = ((nat == LC_WET) & land) if has_nat else (wet_now | pol)
+    n = len(J["islands"])
+    status = {t["island"]: t["status"] for t in S.get("land_tenure", [])}
+    farm = {v["island"] for v in S["villages"]} | {h["island"] for h in S["hamlets"]}
+    nobody = np.zeros(n, dtype=bool)                  # 没人常住的岛（荒岛、有人用、季节住）
+    for k in range(n):
+        nobody[k] = status.get(k, "常住" if k in farm else "荒岛") != "常住"
+    nb = land & nobody[np.where(land, iid, 0)]
+    cult = Z["cultivated"] > 0 if "cultivated" in Z.files else np.zeros_like(land)
+    km2 = lambda m: round(float(m.sum()) * cell_km2, 2)
+    wet_isl = np.unique(iid[wet_nat])
+    area = {i["id"]: i["area_km2"] for i in J["islands"]}
+    out = {"has_natural": has_nat, "wet_natural_km2": km2(wet_nat), "wet_now_km2": km2(wet_now), "polder_km2": km2(pol),
+           "wet_islands": int(wet_isl.size), "wet_island_min_km2": round(min(area[int(k)] for k in wet_isl), 1) if wet_isl.size else None,
+           "nobody_islands": int(nobody.sum()), "nobody_land_km2": km2(nb), "nobody_wet_natural_km2": km2(wet_nat & nb),
+           "nobody_wet_now_km2": km2(wet_now & nb), "nobody_cultivated_km2": km2(cult & nb),
+           "nobody_wet_changed_km2": km2(wet_nat & nb & ~wet_now)}
+    if has_nat:
+        out["changed_km2"] = km2(land & (lc != nat))
+        LU = J.get("landcover", {}).get("landuse") or {}
+        out["landuse_km2"] = LU.get("km2")
+        out["landuse_from_km2"] = LU.get("from_km2")
+        lu = Z["landuse"] if "landuse" in Z.files else None
+        if lu is not None:
+            out["unexplained_km2"] = km2(land & (lc != nat) & (lu == 0))
     return out
 
 
@@ -354,6 +485,67 @@ def print_market(G: list[dict]) -> None:
               f"{m['n_lines']} / {m['line_km']:g}（{m['line_km_median']}、{m['line_km_max']}）/ {m['line_villages']} 村 {m['line_households']} 户 | {fn} / {m['relay_households']} |")
 
 
+def _cell(s) -> str:
+    if not s:
+        return "—"
+    return f"{s['median']} / {s['p90']} / {s['max']}（{s['over']:.0%}，{s['n']}）"
+
+
+def print_manage(G: list[dict]) -> None:
+    print("\n## 水利离村多远（P6b，L30；km：中位 / P90 / 最大（超过 2 km 的几成，处数）；渠段取离村最远的点，圩取格心均值）\n")
+    for key, title in (("near", "离最近的村"), ("mgr", "离管它的村（P6b 起记 village）")):
+        print(f"**{title}**\n")
+        print("| 群 | " + " | ".join(WORKS_KINDS) + " |")
+        print("|---|" + "---|" * len(WORKS_KINDS))
+        for g in G:
+            m = g.get("manage")
+            if not m:
+                continue
+            print(f"| #{g['node']} | " + " | ".join(_cell(m[key].get(k)) for k in WORKS_KINDS) + " |")
+        print()
+    print("| 群 | 没有管它的村（按类） | 圩最远那格离管它的村 km | 废弃的水利（没人管了） | 村 / 其中圩村 / 挂着圩田的村 | 散户 | 已垦 km² / 额度 | 人口 ⑨ / Σ户×5 |")
+    print("|---|---|---|---|---|---|---|---|")
+    for g in G:
+        m = g.get("manage")
+        if not m:
+            continue
+        un = "、".join(f"{k} {v}" for k, v in m["unmanaged"].items() if v) or "0"
+        ab = "、".join(f"{k} {v:g}" if isinstance(v, float) else f"{k} {v}" for k, v in m["abandoned"].items()) or "0"
+        fl = g.get("farmland") or {}
+        print(f"| #{g['node']} | {un} | {m['polder_far_max_km']} | {ab} | {g.get('n_villages')} / {m['n_polder_villages']} / {m['n_villages_with_polder']} | "
+              f"{g.get('n_hamlets')} | {g['cultivated_km2']:.1f} / {fl.get('quota_km2', '—')} | {g.get('pop_polity', 0):.0f} / {g.get('pop_settle', 0):.0f} |")
+
+
+def print_nature(G: list[dict]) -> None:
+    print("\n## 原始地貌与人工地貌（P6b，L31；km²）\n")
+    print("| 群 | 原始湿地 | 现状湿地 | 圩田 | 有原始湿地的岛：座数 / 最小的岛 km² | 没人常住的岛：座数 / 陆地 | 其上原始湿地 / 现状湿地 / 已垦 | 地表变了的 | 其中说不清的 |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for g in G:
+        x = g.get("nature")
+        if not x:
+            continue
+        print(f"| #{g['node']} | {x['wet_natural_km2']:.1f}{'' if x['has_natural'] else '（推）'} | {x['wet_now_km2']:.1f} | {x['polder_km2']:.1f} | "
+              f"{x['wet_islands']} / {x['wet_island_min_km2']} | "
+              f"{x['nobody_islands']} / {x['nobody_land_km2']:.0f} | {x['nobody_wet_natural_km2']:.1f} / {x['nobody_wet_now_km2']:.1f} / {x['nobody_cultivated_km2']:.1f} | "
+              f"{x.get('changed_km2', '—')} | {x.get('unexplained_km2', '—')} |")
+    rows = [g for g in G if (g.get("nature") or {}).get("landuse_km2")]
+    if rows:
+        names = [k for k in rows[0]["nature"]["landuse_km2"]]
+        print("\n人工改造（terrain.npz 的 landuse）：\n")
+        print("| 群 | " + " | ".join(names) + " | 开垦的田（旱田 + 梯田 + 渠灌田）原为 |")
+        print("|---|" + "---|" * (len(names) + 1))
+        for g in rows:
+            lu = g["nature"]["landuse_km2"]
+            fr = g["nature"].get("landuse_from_km2") or {}
+            src = Counter()
+            for k in ("开垦的旱田", "梯田", "渠灌田"):
+                for kk, v in (fr.get(k) or {}).items():
+                    src[kk] += v
+            tot = sum(src.values()) or 1.0
+            print(f"| #{g['node']} | " + " | ".join(f"{lu[k]:.1f}" for k in names) + " | "
+                  + "、".join(f"{k} {v / tot:.0%}" for k, v in sorted(src.items(), key=lambda kv: -kv[1]) if v / tot >= 0.005) + " |")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("root", help="岛群目录的上级（里面是 <节点>/island.json …），如 out/seed42/islands")
@@ -367,6 +559,8 @@ def main(argv=None):
     print_tables(G)
     print_works(G)
     print_market(G)
+    print_manage(G)
+    print_nature(G)
     if a.json:
         Path(a.json).write_text(json.dumps(G, ensure_ascii=False, indent=1), encoding="utf-8")
     return 0
