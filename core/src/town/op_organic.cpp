@@ -129,6 +129,13 @@ void organic_fill(Work& w, size_t first_group) {
                     if (st.templates[k].shape == "yard" && st.templates[k].plot_w.lo * st.templates[k].plot_d.lo < a)
                         a = st.templates[k].plot_w.lo * st.templates[k].plot_d.lo, small = k;
         }
+        int small_any = -1;   // 风格里最小的院子（不管算子）：地形优先的最后一招
+        {
+            double a = INF;
+            for (int k : st.house_templates())
+                if (st.templates[k].shape == "yard" && st.templates[k].plot_w.lo * st.templates[k].plot_d.lo < a)
+                    a = st.templates[k].plot_w.lo * st.templates[k].plot_d.lo, small_any = k;
+        }
         // 退一步时的朝向：进深顺等高线（下坡方向 ± 90°，挑离朝阳近的）；平地就朝阳
         auto contour_facing = [&](V2 p) {
             const OrientCtx c = orient_ctx(w, p);
@@ -264,24 +271,30 @@ void organic_fill(Work& w, size_t first_group) {
         }
         // 随机试不出来：沿所有路点两侧挨个试最小的宅院（进深顺等高线），取离村心近、兴趣高的一块——坡上、山顶的村就顺着出村的路往下长；
         // 路边都排满了就从村边往外长一条新街（村子长大时街也跟着长），再试
-        for (int grow = 0; !placed && small >= 0 && grow < 8; ++grow) {
-            if (grow > 0) {
-                if (!grow_street(w, r)) continue;
-                ri.sync(w);
-            }
-            const TemplateSpec& T = st.templates[small];
-            double bs = -INF;
-            Slot best{};
-            for (const auto& rp : ri.pts)
-                for (double sg : {1.0, -1.0}) {
-                    Slot sl = slot_along(w, rp.p, rp.t, V2{-rp.t.y, rp.t.x} * sg, rp.hw, small, T.plot_w.lo, T.plot_d.lo, st.setback.lo,
-                                         contour_facing(rp.p));
-                    if (!fits(w, sl)) continue;
-                    const double sc = -len(sl.box.c - w.center) / R + st.g_interest * sl.interest;
-                    if (sc > bs) bs = sc, best = sl;
+        auto along_all = [&](int tmpl) {
+            for (int grow = 0; !placed && tmpl >= 0 && grow < 8; ++grow) {
+                if (grow > 0) {
+                    if (!grow_street(w, r)) continue;
+                    ri.sync(w);
                 }
-            if (std::isfinite(bs)) commit_compound(w, best, "house", "dwelling", "", w.hh_groups[g]), placed = true;
-        }
+                const TemplateSpec& T = st.templates[tmpl];
+                double bs = -INF;
+                Slot best{};
+                for (const auto& rp : ri.pts)
+                    for (double sg : {1.0, -1.0}) {
+                        Slot sl = slot_along(w, rp.p, rp.t, V2{-rp.t.y, rp.t.x} * sg, rp.hw, tmpl, T.plot_w.lo, T.plot_d.lo, st.setback.lo,
+                                             contour_facing(rp.p));
+                        if (!fits(w, sl)) continue;
+                        const double sc = -len(sl.box.c - w.center) / R + st.g_interest * sl.interest;
+                        if (sc > bs) bs = sc, best = sl;
+                    }
+                if (std::isfinite(bs)) commit_compound(w, best, "house", "dwelling", "", w.hh_groups[g]), placed = true;
+            }
+        };
+        along_all(small);
+        // 地形优先：这个算子的宅地在这块地上放不下（绿地村 60–100 m 进深的 toft & croft 摆不进海边、谷底的窄条），风格让路——
+        // 换风格里最小的院子（小农舍）再试；照算子的宅地住得下的走不到这里，产物不变
+        if (!placed && small_any >= 0 && small_any != small) along_all(small_any);
         if (!placed) break;
     }
 }
