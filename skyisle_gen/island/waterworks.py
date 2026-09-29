@@ -170,6 +170,8 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
     qk = float(wc["canal_q_per_km2"])
     wmin = float(wc["canal_width_min_m"])
     s_lat = max(1, int(round(float(wc["canal_lateral_km"]) / res_km)))
+    b0 = float(wc["canal_base_km"])
+    bk = float(wc["canal_km_per_km2"])
     cmd = [False] * (nf + 1)
     cmd_np = np.zeros(nf + 1, dtype=bool)
     heads, head_cells, tried, canals = [], [], [], []
@@ -203,7 +205,7 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
         s0 = (ci - r0) * ww + (cj - c0)
         cost[s0] = 0.0
         heap = [(0.0, c)]
-        cnt, entry, rc = {}, {}, []
+        cnt, entry, ecost, rc = {}, {}, {}, []
         while heap:
             d, q = heapq.heappop(heap)
             qi, qj = divmod(q, W)
@@ -223,6 +225,7 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
                     else:
                         cnt[F] = 1
                         entry[F] = q
+                        ecost[F] = d
             for sdi, sdj, L in STEPS:
                 a, b = qi + sdi, qj + sdj
                 if a < r0 or a >= r1 or b < c0 or b >= c1:
@@ -241,7 +244,38 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
                     ln[lp] = nl
                     par[lp] = q
                     heapq.heappush(heap, (nd, a * W + b))
-        newly = [F for F in sorted(cnt) if cnt[F] >= frac * f_cells[F]]
+        cand_f = [F for F in sorted(cnt) if cnt[F] >= frac * f_cells[F]]
+        # 渠通到每块田的入口，再按 canal_lateral_km 的格点铺进田里（格点以渠首为原点）：渠网从渠首散开成扇
+        lat = {F: [] for F in cand_f}
+        for q, F in rc:
+            if F in lat and q != entry[F]:
+                qi, qj = divmod(q, W)
+                if (qi - ci) % s_lat == 0 and (qj - cj) % s_lat == 0:
+                    lat[F].append(q)
+        # 修渠划不划算：按入口的工从近到远，一块田要从已经挖好的渠上新接出去的渠 ≤ canal_base_km + canal_km_per_km2 × 田的面积 才修
+        intree = {c}
+        newly = []
+        for F in sorted(cand_f, key=lambda x: (ecost[x], x)):
+            q = entry[F]
+            n1 = n2 = 0
+            while q not in intree:
+                qi, qj = divmod(q, W)
+                p = par[(qi - r0) * ww + (qj - c0)]
+                if p // W != qi and p % W != qj:
+                    n2 += 1
+                else:
+                    n1 += 1
+                q = p
+            if (n1 + n2 * SQRT2) * res_km > b0 + bk * (f_cells[F] * cell_km2):
+                continue
+            newly.append(F)
+            for t in [entry[F]] + sorted(lat[F]):
+                q = t
+                while q not in intree:
+                    intree.add(q)
+                    qi, qj = divmod(q, W)
+                    q = par[(qi - r0) * ww + (qj - c0)]
+        newly.sort()
         tot = 0
         for F in newly:
             tot += f_cells[F]
@@ -249,13 +283,6 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
             continue
         hid = len(heads) + 1
         head_cells.append((ci, cj))
-        # 渠通到每块田的入口，再按 canal_lateral_km 的格点铺进田里（格点以渠首为原点）：渠网从渠首散开成扇
-        lat = {F: [] for F in newly}
-        for q, F in rc:
-            if F in lat and q != entry[F]:
-                qi, qj = divmod(q, W)
-                if (qi - ci) % s_lat == 0 and (qj - cj) % s_lat == 0:
-                    lat[F].append(q)
         served, children = {}, {}
         for F in newly:
             cmd[F] = True
