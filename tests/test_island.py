@@ -181,6 +181,9 @@ def test_island_deterministic_and_consistent(small_ctx):
         farm_isl = {v["island"] for v in S["villages"]} | {h["island"] for h in S["hamlets"]}
         for k in farm_isl:
             assert float(((z["island_id"] == k) & (ct > 0)).sum()) * ck >= F["settle_min_hh"] * S["land_per_household_km2"] - 1e-6 or F["forced_km2"] > 0
+        # 大岛保底（用户 09-29 定）：主岛以外 ≥ island_floor_km2 且保底的岛都有村，保底的地连成一块
+        for k in F["floor_islands"]:
+            assert k != 0 and J1["islands"][k]["area_km2"] >= 30.0 and any(v["island"] == k for v in S["villages"])
         vids = {v["id"] for v in S["villages"]}
         for x in S["specials"]:
             assert x["occupancy"] in ("常住", "工棚", "季节住")

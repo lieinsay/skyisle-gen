@@ -204,8 +204,9 @@ def test_generate_p5_farmland_identical(small_ctx, tmp_path):
             assert ga["settle"] == gb["settle"]
             S = gb["settle"]
             seen |= {u["kind"] for u in S["uses"]} | {x["occupancy"] for x in S["specials"]} | ({"废村"} if S["ruins"] else set())
+            seen |= {"保底"} if S["farmland"]["floor_islands"] else set()
     isl.island_config(small_ctx, base)                      # --set 会留在 ctx 上：改回默认
-    assert {"烽火台", "庙", "墓岛", "废村", "工棚"} <= seen and seen & {"放牧", "夏牧"}, seen
+    assert {"烽火台", "庙", "墓岛", "废村", "工棚", "保底"} <= seen and seen & {"放牧", "夏牧"}, seen
 
 
 def test_generate_cpp_thread_independent(small_ctx, tmp_path):
