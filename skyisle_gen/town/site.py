@@ -84,7 +84,9 @@ def _winter_wind(C: dict) -> dict:
 
 
 def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
-    """上游锚点，换成窗口平面坐标（m）：本聚落的泊场（在前）与出村大路的去向（同岛的邻村、集镇 / 治所、主泊场；P5 起没有索桥，也就没有桥头）。"""
+    """上游锚点，换成窗口平面坐标（m）：本聚落的泊场（在前）与出村大路的去向（同岛的邻村、集镇 / 治所、主泊场；P5 起没有索桥，也就没有桥头）。
+    P7：镇与城（邑治）另给营建器第四步「集镇与城」要读的——harbor（镇挨着的大泊场：位置、能停几条船、平地多大）与 street（老村核心 → 大泊场，
+    镇 = 老村核心 + 朝泊场长出来的一条街），大泊场排在 landings 的最前面；村照旧只有 landings / exits。"""
     def local(km):
         return [round(float(km[0]) * 1000.0 - frame_x, 2), round(float(km[1]) * 1000.0 - frame_y, 2)]
 
@@ -96,6 +98,18 @@ def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
     for L in S.get("landings", []):
         if lid is not None and L["id"] == lid:
             landings.insert(0, local(L["km"]))
+    extra = {}
+    t = rec.get("town") if isinstance(rec, dict) else None
+    if t is None and isinstance(rec, dict) and "city" in rec:
+        t = next((x for x in S.get("towns", []) if x.get("seat")), None)
+    if t is not None and t.get("harbor") is not None and S.get("harbors"):
+        h = S["harbors"][int(t["harbor"]) - 1]
+        landings.insert(0, local(h["km"]))
+        extra["harbor"] = {"xy": local(h["km"]), "ships": int(h["ships"]), "area_km2": float(h["area_km2"]), "id": int(h["id"])}
+        st = t.get("street") or {}
+        if st:
+            extra["street"] = {"from": local(st["from_km"]), "to": local(st["to_km"]), "length_m": round(float(st["length_km"]) * 1000.0, 1),
+                               "bearing_deg": float(st["bearing_deg"])}
     exits = []
     me = np.array([frame_x, frame_y]) / 1000.0
 
@@ -117,7 +131,7 @@ def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
     for L in S.get("landings", []):
         if L.get("main") and L.get("island") == isl:
             add(L["km"], 2.0, "主泊场", 8.0)
-    return {"landings": landings, "exits": exits}
+    return {"landings": landings, "exits": exits, **extra}
 
 
 def _fields(T) -> np.ndarray:

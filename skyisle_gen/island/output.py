@@ -165,7 +165,7 @@ def _hillshade_rgb(h: np.ndarray, res_m: float, vmin: float, vmax: float, cmap_n
 
 
 def _lens_panel(ax, g: dict):
-    """总览主图：晕渲 + 岛号 + 短渡 + 水系 + 已垦的田。"""
+    """总览主图：晕渲 + 岛号 + 短渡 + 水系 + 已垦的田 + 聚落（P7：航船线、大泊场、中转站、邑治）。"""
     J = g["json"]
     r = J["raster"]
     res_m = r["res_m"]
@@ -194,10 +194,24 @@ def _lens_panel(ax, g: dict):
         vs = [6 + 0.25 * r["households"] for r in S["villages"]]
         ax.scatter(vx, vy, s=vs, c="white", edgecolors="black", linewidths=0.5, zorder=5)
         ax.scatter([r["km"][0] for r in S["hamlets"]], [r["km"][1] for r in S["hamlets"]], s=5, c="#ffc8c8", edgecolors="black", linewidths=0.3, zorder=5)
+        for ln in S.get("boat_lines", []):                  # P7：航船线（从最远的村开到镇上的泊场）
+            P = np.array(ln["pts_km"], dtype=float)
+            ax.plot(P[:, 0], P[:, 1], color="#40e0ff", lw=0.6, alpha=0.8, zorder=4)
+        HB = S.get("harbors", [])
+        if HB:
+            ax.scatter([h["km"][0] for h in HB], [h["km"][1] for h in HB], s=7, marker="s", c=["#40e0ff" if h.get("town") else "#6a8aa0" for h in HB],
+                       linewidths=0, zorder=5)
         T = S.get("towns", [])
         if T:
             ax.scatter([t["km"][0] for t in T], [t["km"][1] for t in T], s=[30 + 0.4 * t["households"] for t in T], facecolors="none",
                        edgecolors="#ff9628", linewidths=1.6, zorder=6)
+            seat = [t for t in T if t.get("seat")]
+            if seat:
+                ax.scatter([seat[0]["km"][0]], [seat[0]["km"][1]], s=90, marker="*", c="#ffe040", edgecolors="black", linewidths=0.5, zorder=7)
+        RL = S.get("relays", [])
+        if RL:
+            ax.scatter([r["km"][0] for r in RL], [r["km"][1] for r in RL], s=34, marker="^", c=["#ff4040" if r["households"] > 0 else "#ffa0a0" for r in RL],
+                       edgecolors="black", linewidths=0.4, zorder=7)
         X = S.get("specials", [])
         if X:
             ax.scatter([x["km"][0] for x in X], [x["km"][1] for x in X], s=18, marker="D", c="#c85adc", edgecolors="black", linewidths=0.4, zorder=6)
@@ -344,12 +358,14 @@ def write_preview_main(out: Path, g: dict) -> Path:
 
 
 SETTLE_PALETTE = [(0, 0, 0), (230, 200, 90), (210, 170, 60), (255, 255, 255), (255, 200, 200), (60, 200, 255), (0, 0, 0), (80, 120, 255), (120, 200, 255),
-                  (255, 150, 40), (200, 90, 220), (170, 110, 90), (120, 90, 80), (150, 120, 200), (90, 200, 160), (40, 150, 230), (20, 40, 90)]
-# 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用（放牧、烽火台、庙、墓岛）/ 15 塘 / 16 闸（P6）；6 原是桥头（P5 起没有索桥），空着
+                  (255, 150, 40), (200, 90, 220), (170, 110, 90), (120, 90, 80), (150, 120, 200), (90, 200, 160), (40, 150, 230), (20, 40, 90),
+                  (64, 224, 255), (255, 64, 64)]
+# 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用（放牧、庙、墓岛）/ 15 塘 / 16 闸（P6）/ 17 大泊场（镇 / 邑治）/ 18 中转站（P7）；
+# 6 原是桥头（P5 起没有索桥），空着
 
 
 def write_settlements(out: Path, g: dict) -> None:
     """settlements.json + settlements.png（8 位索引：1 田块 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落 /
-    11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用 / 15 塘 / 16 闸）。渠、圩堤是线，在 settlements.json 的 waterworks 里。"""
+    11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用 / 15 塘 / 16 闸 / 17 大泊场 / 18 中转站）。渠、圩堤、航船线是线，在 settlements.json 的 waterworks / boat_lines 里。"""
     write_png8(out / "settlements.png", g["settle_raster"], SETTLE_PALETTE)
     (out / "settlements.json").write_text(json.dumps(g["settle"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")

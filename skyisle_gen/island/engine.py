@@ -169,9 +169,28 @@ def _polity_part(ctx):
     return o
 
 
+def _routes_part(ctx):
+    """⑥ 的 C++ 对象（Routes）或 None（扩展太旧 / 这个 run 没有 ⑥）。按 run 与 ⑥ 的 key 缓存。"""
+    if not hasattr(core(), "node_routes"):
+        return None
+    from .. import engine as E
+    key = ("routes",) + _run_key(ctx) + (E._stage_key(ctx, 6),)
+    o = _PLANET_OBJ.get(key, False)
+    if o is False:
+        try:
+            o = E.part(ctx, 6)
+        except (KeyError, FileNotFoundError, ValueError, TypeError):
+            o = None
+        for k in [k for k in _PLANET_OBJ if k[0] == "routes"]:
+            del _PLANET_OBJ[k]
+        _PLANET_OBJ[key] = o
+    return o
+
+
 def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
     """本群的 NodeInputs（dict）：P6c 起由 C++ 从 ③④ 的产物对象直接给（_core.node_inputs，与 _node_inputs 同值）；
-    退回路径按 Python 的 inp 拼。full：再加 ⑨ 的人口与邦都（P6d 起由 C++ 从 ⑨ 的对象给：_core.node_polity，与 polity.npz 的读法同值）。"""
+    退回路径按 Python 的 inp 拼。full：再加 ⑨ 的人口与邦都（P6d 起由 C++ 从 ⑨ 的对象给：_core.node_polity，与 polity.npz 的读法同值）
+    与 ⑥ 的邻边（P7 的中转站：_core.node_routes，与 market.node_routes 从 npz 读的同值；没有 ⑥ 给 None）。"""
     parts = _parts(ctx)
     if parts is not None:
         _P, I, C, pc = parts
@@ -188,6 +207,12 @@ def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
             d["pop"] = _polity_pop(ctx, node)
             d["people_per_arable_km2"] = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
             d["capital"] = _polity_role(ctx, node)
+        r6 = _routes_part(ctx) if parts is not None else None
+        if r6 is not None:
+            d["routes"] = core().node_routes(parts[1], r6, int(node))
+        else:
+            from .market import node_routes
+            d["routes"] = node_routes(ctx, node)
     return d
 
 
@@ -452,7 +477,7 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
     if steps >= 4:
         set_weather(g, _weather_from(R["weather"]), [dict(p) for p in R["weather"]["params"]], year, log=log)
     if steps >= 5:
-        S = decode.settlements(R["settle"], g.get("climate"))
+        S = decode.settlements(R["settle"], g.get("climate"), c.get("market"))
         g["settle_pop"] = float(R["settle_pop"])
         g["settle_raster"] = R["settle_raster"]
         g["settle_fields"] = R["settle_fields"]
@@ -464,6 +489,9 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
             J["landcover"]["note_clearing"] = "林地在村 / 镇 / 专业聚落半径内已开垦：内圈草坡（牧场草场）、外圈灌丛（薪炭林）"
         log(f"  聚落（C++）：人口 {S['population']:.0f} → {S['households']} 户；田块 {S['n_fields']}，村 {S['n_villages']}，散户 {S['n_hamlets']}，"
             f"镇 {len(S['towns'])}，专业聚落 {len(S['specials'])}，泊场 {len(S['landings'])}")
+        MS = S["market"]
+        log(f"  镇与航船（C++）：大泊场 {MS['n_harbors']}（{MS['harbor_ships']} 条船），镇 {MS['n_towns']}（挨大泊场 {MS['towns_with_harbor']}），邑治在岛 {MS['seat_island']}；"
+            f"航船 {MS['n_lines']} 线 {MS['line_km']:.0f} km、送 {MS['boat_villages']} 村；中转站 {MS['n_relays']}（常住 {MS['relay_households']} 户）")
         if "waterworks" in S:
             ws = S["waterworks"]["summary"]
             log(f"  水利（C++）：渠首 {ws['n_heads']}（季节性 {ws['n_heads_seasonal']}），渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2']:.0f} km²；"

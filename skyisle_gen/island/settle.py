@@ -255,33 +255,49 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     hf = {r["field"]: -r["id"] for r in hamlets}
     for f in fields:
         f["village"] = vf.get(f["id"], hf.get(f["id"]))
-    seat = next((r for r in villages if r["island"] == 0), villages[0] if villages else None)
-    if seat:
-        seat["seat"] = True
     # 废村（P5）：撂荒田旁的村址（没人住，不设泊场）
     ruins = FL["ruins"]
     place_ruins(g, sc, ruins, ok_site, score_base, taken, km)
-    # ---------- 聚落层级（tiers.py）：专业聚落 → 集镇（非农户余量）→ 泊场 ----------
-    from .tiers import clear_forest, landings, market_towns, special_settlements, village_workings
+    # ---------- 聚落层级（tiers.py）：专业聚落 → 大泊场、中转站、镇与航船、邑治（market.py，P7）→ 泊场 ----------
+    from . import market as MK
+    from .tiers import clear_forest, landings, special_settlements, village_workings
     specials = special_settlements(g, sc, villages, nonfarm_hh, ok_site, km, res_km)
     special_occupancy(specials, villages, hamlets)          # P5：光秃小岛上的是工棚、烧炭营季节住，人算在最近的村
     rest = nonfarm_hh - sum(x["households"] for x in specials)
-    towns = market_towns(villages, seat, rest, sc, res_km)
+    mc = c["market"]
+    cells_isl = MK.island_cells(island_id, n_isl)
+    lflat, pad = MK.harbor_pad(g, mc)                       # 泊场先于镇：能停很多船、能堆货的大块缓坡平地
+    hcnt = MK.harbor_count(pad, island_id, cells_isl, int(round(float(mc["harbor_window_km"]) / res_km)))
+    harbors = MK.harbor_sites(g, mc, pad, hcnt, km, res_km)
+    relays = []
+    if villages:                                            # 中转站：群内的瞭望烽火与关卡、群间的过夜 / 候风 / 避风 / 换船（户从非农户里出）
+        occ = np.zeros((H, W), dtype=bool)
+        for x in villages + hamlets + specials + ruins:
+            occ[x["cell"][0], x["cell"][1]] = True
+        free = lflat & ~arable & ~fallow & ~occ
+        relays = MK.build_relays(g, mc, sc, MK.node_routes(ctx, node), villages, hamlets, specials, ruins, lflat, free, hcnt, expo, cells_isl,
+                                 km, res_km, rest, float(g["inp"]["storm"]))
+        rest -= sum(x["households"] for x in relays)
+    MT = MK.build_towns(villages, harbors, mc, rest, (u, v))     # 镇（本岛走路 + 跨岛只算航船）、航船线、邑治（航船汇得最多、靠大泊场）
+    towns, boat_lines = MT["towns"], MT["lines"]
+    seat = villages[MT["seat"]] if MT["seat"] is not None else None
     if not villages and rest > 0:            # 没有村（极小的群）：非农户并进最大的散户
         tgt = max(hamlets, key=lambda r: r["households"]) if hamlets else None
         if tgt is not None:
             tgt["households"] += rest
         rest = 0
-    lst = [("主泊场（仓场）" if v.get("seat") else ("镇泊场" if v.get("town") else "村泊场"), v) for v in villages] + [(f"{x['kind']}泊场", x) for x in specials]
-    lands = landings(g, sc, lst, km, res_km)
+    lst = [("村泊场", v) for v in villages] + [(f"{x['kind']}泊场", x) for x in specials]
+    lands = landings(g, sc, mc, lst, lflat, km, res_km)
     for (kind, s_), L in zip(lst, lands):
         s_["landing"] = L["id"]
+    n_base = len(lands)                      # 村与专业聚落的船台（栅格码 5）；后面接的大泊场与中转站的泊场在水利之后才写进栅格（17 / 18）
+    MK.add_landings(g, lands, towns, harbors, relays, villages, km)      # 镇 / 邑治的大泊场（主泊场 = 仓场）、中转站的泊场
     # 栅格：1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用（放牧、烽火台、庙、墓岛）
     sraster = np.zeros((H, W), dtype=np.uint8)
     sraster[fields_raster > 0] = 1
     sraster[(fields_raster > 0) & (g["cultivated"] == 2)] = 2
     sraster[fallow] = 11
-    for L in lands:
+    for L in lands[:n_base]:
         sraster[L["cell"][0], L["cell"][1]] = 5
     for r in villages:
         sraster[r["cell"][0], r["cell"][1]] = 9 if r.get("town") else 3
@@ -298,32 +314,35 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     from .waterworks import build_waterworks
     works = build_waterworks(g, c["works"], fields, fields_raster, villages, sraster, FL["polders"], km)
     # ---------- 第 3 步：没人住的岛有人用（P5）、主家候选、前哨、都与城 ----------
-    uses, status = island_uses(g, sc, _rng(ctx, node, "settle:uses"), villages, hamlets, specials, ruins, seat, km)
-    for u in uses:
-        sraster[u["cell"][0], u["cell"][1]] = 14
+    uses, status = island_uses(g, sc, _rng(ctx, node, "settle:uses"), villages, hamlets, specials, ruins, seat, km, relays)
+    for u_ in uses:
+        sraster[u_["cell"][0], u_["cell"][1]] = 14
+    MK.mark_raster(sraster, towns, harbors, relays)          # P7：17 大泊场（镇 / 邑治）、18 中转站（站址与烽火台的瞭望处），只写空格
     step3 = build_homes_city(ctx, node, g, sc, villages, hamlets, fields, water_out, ok_site, score_base, dist_water, km, res_km)
-    clearing = clear_forest(g, sc, villages, hamlets, specials, res_km)
+    clearing = clear_forest(g, sc, villages, hamlets, specials + [x for x in relays if x["households"] > 0], res_km)
     workings = village_workings(g, sc, villages, specials, km, res_km)      # 开垦之后：村的采石场 / 土坑 / 采砂场、窑村的土坑、淘金点
     if g.get("resources"):
         from .resources import sync_resources
         sync_resources(g)
-    tenure = land_tenure(g, status, villages, hamlets, specials, uses, ruins)
+    tenure = land_tenure(g, status, villages, hamlets, specials, uses, ruins, relays)
     g["settle_raster"] = sraster
     g["settle_fields"] = fields_raster
     hh_v = sum(r["households"] for r in villages)
     hh_h = sum(r["households"] for r in hamlets)
     hh_m = sum(r.get("households_market", 0) for r in villages)
     hh_s = sum(x["households"] for x in specials)
+    hh_r = sum(x["households"] for x in relays)
     S = {"population": round(pop, 0), "population_source": pop_src, "household_size": float(sc["household_size"]), "households": hh_total,
          "households_by_island": hh_isl.tolist(), "land_per_household_km2": round(land_per_hh, 4),
          "nonfarm_share": float(sc["nonfarm_share"]), "nonfarm_households": nonfarm_hh,
          "n_fields": len(fields), "n_villages": len(villages), "n_hamlets": len(hamlets), "households_in_villages": hh_v, "households_in_hamlets": hh_h,
-         "households_in_towns_market": hh_m, "households_in_specials": hh_s,
+         "households_in_towns_market": hh_m, "households_in_specials": hh_s, "households_in_relays": hh_r,
          "seat": seat["id"] if seat else None, "seat_households": seat["households"] if seat else 0,
          "village_hh_median": int(np.median([r["households"] for r in villages])) if villages else 0,
          "fields": fields, "villages": villages, "hamlets": hamlets, "towns": towns, "specials": specials, **water_out, **step3,
          "clearing": clearing, "workings": workings,
          "farmland": FL["summary"], "ruins": ruins, "uses": uses, "land_tenure": tenure, "waterworks": works,
+         "harbors": harbors, "boat_lines": boat_lines, "relays": relays, "market": MK.market_summary(harbors, towns, boat_lines, relays, villages, mc),
          "raster_codes": dict(RASTER_CODES), "note": SETTLE_NOTE}
     set_settlements(g, S)
     log(f"  聚落：人口 {pop:.0f}（{pop_src}）→ {hh_total} 户；宜垦 {FL['summary']['cultivable_km2']:.0f} km²，已垦 {FL['summary']['cultivated_km2']:.0f}，"
@@ -331,12 +350,16 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         f"留下 {FL['summary']['n_tracts_kept']}）；田块 {len(fields)}，村 {len(villages)}（邑治 {S['seat_households']} 户，中位 {S['village_hh_median']}），散户 {len(hamlets)}；"
         f"镇 {len(towns)}（非农 {hh_m} 户），专业聚落 {len(specials)}（{hh_s} 户：{'、'.join(sorted({x['kind'] for x in specials}))}；"
         f"工棚 {sum(x['occupancy'] == '工棚' for x in specials)}、季节住 {sum(x['occupancy'] == '季节住' for x in specials)}）；"
-        f"村农户 {hh_v} + 散户 {hh_h} + 镇 {hh_m} + 专业 {hh_s} = {hh_v + hh_h + hh_m + hh_s}；泊场 {len(lands)}，蓄水池 {len(S['cisterns'])}，取水点 {len(S['intakes'])}，"
+        f"村农户 {hh_v} + 散户 {hh_h} + 镇 {hh_m} + 专业 {hh_s} + 中转站 {hh_r} = {hh_v + hh_h + hh_m + hh_s + hh_r}；泊场 {len(lands)}，蓄水池 {len(S['cisterns'])}，取水点 {len(S['intakes'])}，"
         f"林地 {clearing['forest_share_before']:.0%} → {clearing['forest_share_after']:.0%}，"
         + "".join(f"{k} {v['n']}（{v['villages_share']:.0%} 村），" if "villages_share" in v else f"{k} {v['n']}，" for k, v in workings.items()) +
         f"村 1 km 内有水源 {S['water_ok_share']:.0%}；岛 常住 {status.count('常住')} / 季节住 {status.count('季节住')} / 有人用 {status.count('有人用')} / 荒岛 {status.count('荒岛')}"
         f"（{'、'.join(u['kind'] for u in uses) or '—'}）；前哨 {len(S['outposts'])}，主家候选 {[h['kind'] for h in S['home_candidates']]}"
         + (f"；{S['city']['role']} {S['city']['households']} 户（城 {S['city']['inner_households']} + 郭 {S['city']['guo_households']}，{S['city']['n_guo_islands']} 岛）" if S.get("city") else ""))
+    MS = S["market"]
+    log(f"  镇与航船（P7）：大泊场 {MS['n_harbors']}（{MS['harbor_km2']:.0f} km²、{MS['harbor_ships']} 条船）；镇 {MS['n_towns']}（挨大泊场 {MS['towns_with_harbor']}），"
+        f"邑治在岛 {MS['seat_island']}；航船 {MS['n_lines']} 线 {MS['line_km']:.0f} km、送 {MS['boat_villages']} 村 {MS['boat_households']} 户（走路 {MS['walk_villages']} 村）；"
+        f"中转站 {MS['n_relays']}（{'、'.join(f'{k} {v}' for k, v in MS['relay_functions'].items()) or '—'}，常住 {MS['relay_households']} 户）")
     ws = works["summary"]
     log(f"  水利：渠首 {ws['n_heads']}（季节性 {ws['n_heads_seasonal']}），渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2']:.0f} km²（已垦的 {ws['commanded_share']:.0%}）；"
         f"塘 {ws['n_ponds']}（{'、'.join(f'{k} {v}' for k, v in ws['ponds'].items() if v) or '—'}），闸 {ws['n_sluices']}；"
@@ -345,10 +368,12 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
 
 
 RASTER_CODES = {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "泊场", "7": "蓄水池", "8": "取水点", "9": "镇", "10": "专业聚落",
-                "11": "撂荒田", "12": "废村", "13": "工棚 / 季节住", "14": "有人用（放牧 / 夏牧 / 烽火台 / 庙 / 墓岛）", "15": "塘", "16": "闸"}
+                "11": "撂荒田", "12": "废村", "13": "工棚 / 季节住", "14": "有人用（放牧 / 夏牧 / 庙 / 墓岛）", "15": "塘", "16": "闸",
+                "17": "大泊场（镇 / 邑治）", "18": "中转站（站址 / 烽火台的瞭望处）"}
 SETTLE_NOTE = ("第三层，人口只读 ⑨；村 / 镇 / 专业聚落只有位置与户数（原则乙）。名字是 村NNN / 镇NN 占位。"
-               "飞船随处可停：没有码头，每个聚落旁一块泊场；岛与岛之间没有索桥，全靠船。households = 村农户 + 散户 + 镇的非农户 + 专业聚落户"
-               "（工棚、季节住的专业聚落的户也在里面，人住在 home_village 那个村）。"
+               "飞船随处可停：没有码头，每个村 / 专业聚落旁一块泊场（船台），镇 / 邑治另挨着一处大泊场（harbors）；岛与岛之间没有索桥，全靠船——"
+               "但能控制的浮石船造起来有门槛，一般人本岛走路赶集、跨岛搭航船（boat_lines）。households = 村农户 + 散户 + 镇的非农户 + 专业聚落户 + 中转站户"
+               "（工棚、季节住的专业聚落的户也在里面，人住在 home_village 那个村；中转站的户住在中转站）。"
                "已垦 = 此刻有人种的田（terrain.npz 的 cultivated）；宜垦 = 地本身能种（cultivable）；撂荒 = fallow_years > 0。"
                "land_tenure：荒地有主、领照开垦（地在册，不等于都种着）——有村的岛归就近的村，没人住但有人用的归用它的村的大户，其余官荒归邑。")
 
@@ -360,6 +385,7 @@ def set_settlements(g: dict, S: dict) -> None:
     J["settlements"] = {k: S[k] for k in ("population", "households", "n_fields", "n_villages", "n_hamlets", "seat_households", "village_hh_median", "nonfarm_households")}
     J["settlements"].update({"n_towns": len(S["towns"]), "n_specials": len(S["specials"]), "specials": sorted({x["kind"] for x in S["specials"]}),
                              "n_landings": len(S["landings"]), "n_cisterns": len(S["cisterns"]), "n_intakes": len(S["intakes"]),
+                             "n_harbors": len(S.get("harbors", [])), "n_boat_lines": len(S.get("boat_lines", [])), "n_relays": len(S.get("relays", [])),
                              "forest_share_after_clearing": S["clearing"]["forest_share_after"],
                              "workings": {k: {kk: vv for kk, vv in v.items() if kk in ("n", "villages_share")} for k, v in S["workings"].items()},
                              "n_outposts": len(S["outposts"]), "home_candidates": [h["kind"] for h in S["home_candidates"]],

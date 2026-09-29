@@ -19,9 +19,9 @@
   撂荒地的地表按年头：≤ fallow_grass_years 年草坡，≤ fallow_shrub_years 年灌丛（原本是林 / 灌丛的），再久回到原本的地表（小树林）。
 - **没人住 ≠ 没人用**：光秃小岛（没有村和散户）上的浮石采石村、矿村、窑村改成「工棚」（白天来、晚上走，人算在最近的村）；
   烧炭营是季节住；矿镇、盐井村、温泉地照旧常住。没人常住的岛里按合理挑少数：放牧岛（只放牲口）/ 夏牧（夏天的牧棚，季节住）、
-  群边高处的烽火台（轮班守）、邑治附近的庙、墓岛。
+  邑治附近的庙、墓岛。群边高处的烽火台 P7 起归中转站（market.py：瞭望烽火与关卡、过夜 / 候风 / 避风 / 换船一起挑，统一、不重复）。
 - **荒地归谁**（L29，用户定：荒地有主、领照开垦）：每岛记一个主——有农户（村或散户）的岛：未垦的宜垦地归就近的村（村里的大户 / 族产）；
-  没人住但有人用的岛（工棚、季节住、放牧……）：归用它的那个村的大户；别的荒岛、废村的地：官荒，归邑（绝户田入官）。
+  没人住但有人用的岛（工棚、季节住、放牧……）：归用它的那个村的大户；只有中转站（驿、关、烽）的岛：官用；别的荒岛、废村的地：官荒，归邑（绝户田入官）。
 
 纯函数、只用确定的次序（稳定排序、按格号 / 岛号 / 片号破平局），C++ 的 core/src/island/farmland.cpp 逐位同式。
 """
@@ -41,7 +41,7 @@ SPECIAL_OCC_ZH = {"resident": "常住", "workcamp": "工棚", "seasonal": "季�
 USE_ZH = {"graze": "放牧", "shieling": "夏牧", "beacon": "烽火台", "shrine": "庙", "tomb": "墓岛"}
 USE_OCC_ZH = {"livestock": "只放牲口", "seasonal": "季节住", "rotation": "轮班", "incense": "香火", "none": "无人"}
 STATUS_ZH = {"resident": "常住", "seasonal": "季节住", "used": "有人用", "empty": "荒岛"}
-OWNER_ZH = {"village": "村", "magnate": "大户", "crown": "官荒"}
+OWNER_ZH = {"village": "村", "magnate": "大户", "office": "官用", "crown": "官荒"}
 
 
 def ruin_note(years: int, hh: int, km2: float) -> str:
@@ -375,8 +375,9 @@ def _island_cells(island_id: np.ndarray, n: int) -> list[np.ndarray]:
 
 
 def island_uses(g: dict, sc: dict, rng, villages: list[dict], hamlets: list[dict], specials: list[dict], ruins: list[dict],
-                seat: dict | None, km) -> tuple[list[dict], list[str]]:
-    """没人常住的岛里挑少数有人用的：放牧 / 夏牧、烽火台、庙、墓岛。返回 (uses, 每岛的状态 常住 / 季节住 / 有人用 / 荒岛)。"""
+                seat: dict | None, km, relays: list[dict] | None = None) -> tuple[list[dict], list[str]]:
+    """没人常住的岛里挑少数有人用的：放牧 / 夏牧、庙、墓岛。返回 (uses, 每岛的状态 常住 / 季节住 / 有人用 / 荒岛)。
+    P7：烽火台归中转站（relays，market.py）——有常住户的中转站那座岛算常住，轮班的（烽火台）算有人用，都不再挑作放牧 / 庙 / 墓岛。"""
     J = g["json"]
     I = J["islands"]
     n = len(I)
@@ -398,6 +399,11 @@ def island_uses(g: dict, sc: dict, rng, villages: list[dict], hamlets: list[dict
             used[s["island"]] = True
     for r in ruins:
         used[r["island"]] = True
+    for x in relays or []:
+        if x["households"] > 0:
+            resident[x["island"]] = True
+        else:
+            used[x["island"]] = True
     r_shrine, r_tomb = float(rng.random()), float(rng.random())
     uses = []
     if not villages:
@@ -460,33 +466,8 @@ def island_uses(g: dict, sc: dict, rng, villages: list[dict], hamlets: list[dict
             {"pasture_km2": round(pk, 3), "dist_km": round(d, 2)})
         if shieling:
             seasonal[k] = True
-    # 烽火台：群边高处——离主岛最远的几座，彼此方位差 ≥ beacon_sep_deg
-    c0 = I[0]["center_km"]
-    sep = math.radians(float(sc["beacon_sep_deg"]))
-    far = []
-    for k in range(1, n):
-        if used[k] or resident[k] or seasonal[k] or not cells[k].size:
-            continue
-        dx, dy = float(I[k]["center_km"][0]) - float(c0[0]), float(I[k]["center_km"][1]) - float(c0[1])
-        far.append((-math.hypot(dx, dy), k, math.atan2(dy, dx)))
-    far.sort(key=lambda x: (x[0], x[1]))
-    angs = []
-    for negd, k, a in far:
-        if len(angs) >= int(sc["beacon_max"]):
-            break
-        ok = True
-        for b in angs:
-            dd = abs(a - b)
-            if dd > math.pi:
-                dd = 2.0 * math.pi - dd
-            if dd < sep:
-                ok = False
-                break
-        if not ok:
-            continue
-        angs.append(a)
-        add("烽火台", k, highest_cell(k), "轮班", seat["id"] if seat else None, use_note("beacon", -negd))
     # 庙 / 墓岛：邑治附近没人住的岛（各按概率有没有）
+    c0 = I[0]["center_km"]
     sx, sy = (float(seat["km"][0]), float(seat["km"][1])) if seat else (float(c0[0]), float(c0[1]))
 
     def nearest_free(max_km2=None):
@@ -519,9 +500,10 @@ def _status(resident, seasonal, used) -> list[str]:
 
 
 def land_tenure(g: dict, status: list[str], villages: list[dict], hamlets: list[dict], specials: list[dict], uses: list[dict],
-                ruins: list[dict]) -> list[dict]:
+                ruins: list[dict], relays: list[dict] | None = None) -> list[dict]:
     """荒地归谁（L29：地在册，不等于都种着）：每岛一条——有农户（村或散户）的岛：未垦的宜垦地归就近的村（大户 / 族产）；
-    没有农户但有人用的岛（工棚、季节住、放牧 / 夏牧）：归用它的那个村（大户，领照开垦 / 租）；废村、只有常住专业聚落的岛与别的荒岛：官荒，归邑。"""
+    没有农户但有人用的岛（工棚、季节住、放牧 / 夏牧）：归用它的那个村（大户，领照开垦 / 租）；只有中转站的岛（P7：驿、关、烽由官府设）：官用；
+    废村、只有常住专业聚落的岛与别的荒岛：官荒，归邑。"""
     island_id = g["island_id"]
     n = len(g["json"]["islands"])
     res_km = float(g["res_km"])
@@ -539,12 +521,15 @@ def land_tenure(g: dict, status: list[str], villages: list[dict], hamlets: list[
             user.setdefault(u["island"], u["village"])
     ruin_isl = {r["island"] for r in ruins}
     farm_isl = {v["island"] for v in villages} | {h["island"] for h in hamlets}
+    relay_isl = {x["island"] for x in relays or []}
     out = []
     for k in range(n):
         if k in farm_isl:
             owner, vid = "村", None
         elif status[k] != "荒岛" and k not in ruin_isl and k in user:
             owner, vid = "大户", user[k]
+        elif k in relay_isl:
+            owner, vid = "官用", None
         else:
             owner, vid = "官荒", None
         out.append({"island": k, "status": status[k], "owner": owner, "village": vid,

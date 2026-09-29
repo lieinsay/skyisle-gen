@@ -160,12 +160,23 @@ def _name(code):
         return f"{SPECIAL_ZH[sk]}{int(sid):02d}"
     if kind == "ruin":
         return f"废村{int(rest):02d}"
+    if kind == "seat":
+        return "邑治"
+    if kind == "town":
+        return f"镇{int(rest):02d}"
+    if kind == "relay":
+        return f"中转站{int(rest):02d}"
+    if kind == "line":
+        return f"航船{int(rest):02d}"
     raise ValueError(code)
 
 
 def _village(v: dict) -> dict:
+    from .market import MODE_ZH
     v = dict(v)
     v["name"] = _name(v["name"])
+    if "market_mode" in v:
+        v["market_mode"] = MODE_ZH[v["market_mode"]]
     if "water" in v:
         v["water"] = {"source": WATER_ZH[v["water"]["source"]], "dist_km": v["water"]["dist_km"]}
     return v
@@ -195,6 +206,8 @@ def _landing_kind(code: str) -> str:
         return "镇泊场"
     if code == "village":
         return "村泊场"
+    if code == "relay":
+        return "中转站泊场"
     return f"{SPECIAL_ZH[code.split(':', 1)[1]]}泊场"
 
 
@@ -214,7 +227,8 @@ def waterworks(Wj: dict) -> dict:
     return W
 
 
-def settlements(Sj: dict, climate_zh: dict | None) -> dict:
+def settlements(Sj: dict, climate_zh: dict | None, mc: dict | None = None) -> dict:
+    from . import market as MK
     from .farmland import OWNER_ZH, SPECIAL_OCC_ZH, STATUS_ZH, USE_OCC_ZH, USE_ZH, ruin_note, use_note
     from .settle import CITY_NOTE, RASTER_CODES, SETTLE_NOTE
     S = dict(Sj)
@@ -224,9 +238,24 @@ def settlements(Sj: dict, climate_zh: dict | None) -> dict:
     towns = []
     for t in Sj["towns"]:
         t = dict(t)
-        t["name"] = "邑治" if t["name"] == "seat" else f"镇{int(t['name'].split(':')[1]):02d}"
+        t["name"] = _name(t["name"])
         towns.append(t)
     S["towns"] = towns
+    # P7：航船线、大泊场、中转站（代码 → 中文，说明两个后端共用 market.relay_note）
+    S["boat_lines"] = [dict(x, name=_name(x["name"])) for x in Sj.get("boat_lines", [])]
+    S["harbors"] = [dict(x) for x in Sj.get("harbors", [])]
+    relays = []
+    for x in Sj.get("relays", []):
+        x = dict(x)
+        codes = list(x["functions"])
+        x["functions"] = [MK.FUNC_ZH[f] for f in codes]
+        x["scope"] = MK.SCOPE_ZH[x["scope"]]
+        x["roles"] = {MK.ROLE_ZH[k]: v for k, v in x["roles"].items()}
+        x["occupancy"] = MK.RELAY_OCC_ZH[x["occupancy"]]
+        x["name"] = _name(x["name"])
+        x["note"] = MK.relay_note(codes, x["island"] == 0)
+        relays.append(x)
+    S["relays"] = relays
     specials = []
     for x in Sj["specials"]:
         x = dict(x)
@@ -280,4 +309,6 @@ def settlements(Sj: dict, climate_zh: dict | None) -> dict:
         S["waterworks"] = waterworks(Sj["waterworks"])
     S["raster_codes"] = dict(RASTER_CODES)
     S["note"] = SETTLE_NOTE
+    if mc is not None:
+        S["market"] = MK.market_summary(S["harbors"], S["towns"], S["boat_lines"], S["relays"], S["villages"], mc)
     return S

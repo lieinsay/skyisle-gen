@@ -1,9 +1,10 @@
-"""聚落层级与交通（DESIGN-NOTES 四点十八）：专业聚落、集镇、飞船泊场、村周开垦。settle.py 调用。
+"""聚落层级与交通（DESIGN-NOTES 四点十八）：专业聚落、飞船泊场（村的船台）、村周开垦、村的采场。settle.py 调用。
+镇、邑治、航船、大泊场、中转站在 market.py（P7，四点三十八）。
 
-世界设定：飞船取代了车船，能在任意平地停靠——没有码头，交通不绑岸线，集镇的服务范围按直线跨岛算。
+世界设定：飞船取代了车船，能在任意平地停靠——没有码头，交通不绑岸线；但能控制的浮石船造起来有门槛，一般人家没有（P7）：本岛走路，跨岛搭航船。
 人口口径：总户数只读 ⑨；其中 nonfarm_share 是非农户（前工业社会约一到两成），先给资源造出的专业聚落（矿镇、浮石采石村、窑村、
-烧炭营、温泉地、盐井村；封顶非农户的 special_cap_frac），余下按服务户数分给集镇（中心地：半径内户数最多的村升镇，镇距 ≥ town_spacing_km，邑治必为镇）。
-农户照旧按田块分到村。Σ 村农户 + 散户 + 镇的非农户 + 专业聚落户 = 总户数（SET-pop）。
+烧炭营、温泉地、盐井村；封顶非农户的 special_cap_frac），再给中转站（market.py），余下按服务户数分给镇（市户）。
+农户照旧按田块分到村。Σ 村农户 + 散户 + 镇的非农户 + 专业聚落户 + 中转站户 = 总户数（SET-pop）。
 
 纯函数：输入数组与记录，返回新记录；开垦直接改 g["landcover"] / g["patch_id"]，开采（village_workings）往 g["resources"]["workings"] 里加采场，
 两者之后 settle 调 resources.sync_resources 重数片的面积、主导栅格与地表占比。
@@ -128,44 +129,10 @@ def special_settlements(g, sc, villages, nonfarm_hh: int, ok_site, km, res_km) -
     return out
 
 
-def market_towns(villages, seat, extra_hh: int, sc, res_km) -> list[dict]:
-    """中心地：按 market_radius_km 内（直线跨岛）的户数贪心挑村升为镇，镇距 ≥ town_spacing_km，邑治先入；
-    每个村归最近的镇；extra_hh（非农户余量）按各镇服务户数分（最大余数法）。改写 villages 的 town / market_town / households_market。"""
-    if not villages:
-        return []
-    P = np.array([v["km"] for v in villages], dtype=float)
-    hh = np.array([v["households"] for v in villages], dtype=float)
-    D = np.sqrt(((P[:, None, :] - P[None, :, :]) ** 2).sum(-1))
-    cen = (np.where(D <= float(sc["market_radius_km"]), 1.0, 0.0) * hh[None, :]).sum(1)
-    idx_seat = villages.index(seat) if seat in villages else int(np.argmax(cen))
-    chosen = [idx_seat]
-    for t in np.argsort(-cen, kind="stable").tolist():
-        if t in chosen or cen[t] < float(sc["town_min_served_hh"]):
-            continue
-        if D[t, chosen].min() >= float(sc["town_spacing_km"]):
-            chosen.append(int(t))
-    near = np.array(chosen)[np.argmin(D[:, chosen], axis=1)]
-    towns = []
-    served = {c: float(hh[near == c].sum()) for c in chosen}
-    raw = [extra_hh * served[c] / max(1e-9, sum(served.values())) for c in chosen]
-    base = [int(math.floor(x)) for x in raw]
-    for t in sorted(range(len(chosen)), key=lambda t: -(raw[t] - base[t]))[: max(0, extra_hh - sum(base))]:
-        base[t] += 1
-    for n, (c, add) in enumerate(zip(chosen, base)):
-        v = villages[c]
-        v["town"] = n + 1
-        v["households_market"] = int(add)
-        towns.append({"id": n + 1, "name": "邑治" if c == idx_seat else f"镇{n + 1:02d}", "village": v["id"], "island": v["island"],
-                      "cell": v["cell"], "km": v["km"], "households_farm": v["households"], "households_market": int(add),
-                      "households": v["households"] + int(add), "served_villages": int((near == c).sum()), "served_households": int(served[c]),
-                      "max_served_km": round(float(D[near == c, c].max()), 2), "seat": c == idx_seat})
-    for i, v in enumerate(villages):
-        v["market_town"] = int(villages[int(near[i])]["town"])
-    return towns
-
-
-def landings(g, sc, settlements: list[tuple[str, dict]], km, res_km) -> list[dict]:
-    """每个村 / 镇 / 专业聚落旁一块泊场：reach 格内同岛、坡 ≤ landing_slope_max_deg、非水非崖的格，非田非林优先、近者优先。"""
+def landings(g, sc, mc, settlements: list[tuple[str, dict]], lflat, km, res_km) -> list[dict]:
+    """每个村 / 专业聚落旁一块泊场（船台）：reach 格内同岛、坡 ≤ landing_slope_max_deg、非水非崖的格，非田非林优先、近者优先。
+    P7：记能停几条船（market.landing_ships：3 × 3 里能落船的格按面积折，封顶 landing_ships_max）；镇与邑治的大泊场、中转站的泊场由 market.add_landings 接在后面。"""
+    from .market import landing_ships
     island_id = g["island_id"]
     H, W = island_id.shape
     slope = g["slope_deg"]
@@ -195,7 +162,8 @@ def landings(g, sc, settlements: list[tuple[str, dict]], km, res_km) -> list[dic
             cell, flat_ok = [int(ii[t] + r0), int(jj[t] + c0)], False
         out.append({"id": len(out) + 1, "kind": kind, "of": s.get("name"), "island": k, "cell": cell, "km": km(*cell),
                     "slope_deg": round(float(slope[cell[0], cell[1]]), 1), "flat": flat_ok,
-                    "dist_km": round(math.hypot(cell[0] - i, cell[1] - j) * res_km, 2), "main": kind == "主泊场（仓场）"})
+                    "dist_km": round(math.hypot(cell[0] - i, cell[1] - j) * res_km, 2), "main": kind == "主泊场（仓场）",
+                    "ships": landing_ships(lflat, island_id, cell[0], cell[1], res_km * res_km, mc)})
     return out
 
 
