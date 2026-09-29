@@ -848,14 +848,12 @@ site_weights = { field = 1.0, water = 0.8, slope = 0.5, lee = 0.3, shore = 0.0 }
 cistern_basin_min_frac = 0.05 # 无河之群：主岛集水区 ≥ 岛面积此比例的盆地才落蓄水池
 cistern_catch_coef = 0.3      # 蓄水池容量 = 盆地 km² × 年降水 mm × 系数（千 m³，只是数字）
 village_water_km = 1.0        # SET-water：村在此距离内有水源（河 / 湖 / 溪涧 / 取水点 / 蓄水池）
-# 飞船取代车船、可在任意平地停靠：没有码头，每个村 / 镇 / 专业聚落旁一块泊场（DESIGN-NOTES 四点十八）
+# 飞船取代车船、可在任意平地停靠：没有码头，每个村 / 专业聚落旁一块泊场（船台，DESIGN-NOTES 四点十八）；镇与邑治的大泊场、中转站的泊场见 [island.market]（P7）
 landing_reach_cells = 6       # 泊场离聚落 ≤ 此格数；坡 ≤ landing_slope_max_deg、非水非崖，非田非林优先
 landing_slope_max_deg = 4.0
-# 聚落层级（中心地）：总户数的 nonfarm_share 是非农户，先给专业聚落（矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地 / 盐井村，封顶 special_cap_frac），余下按服务户数分给集镇
+# 聚落层级：总户数的 nonfarm_share 是非农户，先给专业聚落（矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地 / 盐井村，封顶 special_cap_frac），
+# 再给中转站（[island.market] relay_*），余下按服务户数分给镇（市户）。镇怎么挑见 [island.market]（P7 起旧键 market_radius_km / town_spacing_km / town_min_served_hh 作废）
 nonfarm_share = 0.10          # 前工业社会非农人口约 10–20%；从同一份 ⑨ 人口里出，不加人
-market_radius_km = 6.0        # 集镇服务半径（直线，跨岛——飞船）；按半径内户数贪心挑村升为镇，邑治必为镇
-town_spacing_km = 10.0        # 镇距下限（当天往返的赶集距离 10–15 km）
-town_min_served_hh = 150      # 半径内不足此户数的村不升镇（孤悬小岛只归最近的镇）
 special_cap_frac = 0.4        # 专业聚落最多占非农户的比例（超了等比缩）
 special_min_hh = 3            # 缩完不足此户数的专业聚落不设
 ore_hh_per_km2 = 25.0         # 矿镇 / 矿村：矿化带面积 × 此值 × 品位（上 1.5 / 中 1 / 下 0.5）；≥ mine_town_hh 叫矿镇
@@ -907,8 +905,7 @@ graze_min_km2 = 0.5           # 放牧岛：没人常住的岛上草坡 / 高山
 graze_reach_km = 10.0
 graze_max = 4
 shieling_min_km2 = 3.0        # 放牧岛里草坡 + 高山草甸 ≥ 此面积的是夏牧（夏天赶上来、搭牧棚住一季）
-beacon_max = 2                # 烽火台：群边高处——离主岛最远的几座没人住的岛（彼此方位差 ≥ beacon_sep_deg），轮班守
-beacon_sep_deg = 90.0
+# 烽火台 P7 起归中转站：[island.market] beacon_max / beacon_sep_deg（旧键 [island.settle] beacon_max / beacon_sep_deg 作废）
 shrine_p = 0.5                # 庙：以此概率在邑治附近一座没人住的岛上有一座（逢年过节有人上岛）
 tomb_p = 0.35                 # 墓岛：以此概率在邑治附近一座 ≤ tomb_max_km2 的没人住的小岛上
 tomb_max_km2 = 5.0
@@ -944,3 +941,54 @@ polder_block_min_km2 = 0.1    # 一格里的湿地够这么多才围成一圩，
 polder_pond_frac = 0.05       # 圩塘水面 = 圩的此比例（圩里留塘：水排到崖边就掉下去了，旱季要留水）
 polder_paddy_mm = 800.0       # 圩塘那格的局地年降水 ≥ 此值记作水田（paddy），否则是排干的泽田种旱作（800 mm 上下是旱地与水田的分界）
 polder_drain_max_cells = 30   # 排水渠：出水口顺流而下接到河 / 溪涧 / 湖，至多这么多格
+
+[island.market]               # 泊场、中转站、镇、航船、邑治（P7，Zhouzhu PLAN-LAND L24–L26；DESIGN-NOTES 四点三十八；market.py）
+# 船寻常，但能控制的浮石船造起来有门槛，一般人家没有：本岛走路赶集，跨岛搭定班的航船。泊场先于镇：大块缓坡平地把镇吸过去
+harbor_slope_max_deg = 4.0    # 大泊场：坡 ≤ 此值、非崖非水、不是溪涧 / 湿地 / 漫滩、没在种也没撂荒的格（林子算：镇会砍开）……
+harbor_open_cells = 1         # ……开运算（先蚀再胀这么多圈）去掉一两格宽的条子
+harbor_window_km = 0.5        # 每格数它 (2 × 此值) 见方窗里同岛的这种格 = 这处能用的平地
+harbor_min_km2 = 0.5          # 够这么大的才算大泊场；按（面积降序、格号）挑，彼此隔 harbor_sep_km
+harbor_sep_km = 5.0
+harbor_use_frac = 0.5         # 能停多少船 = 平地 × 此比例（另一半是路、货栈、修船的场子）/ ship_m2
+ship_m2 = 2000.0              # 一条船连装卸、堆货要的地（m²）：船长二三十米、宽七八米，外加一圈场子
+landing_ships_max = 10        # 村的船台 / 中转站的泊场按 3 × 3 格里能落船的平地折船数，村的船台封顶这么多条（几户有船的人家加村里的公船）
+walk_km = 6.0                 # 挑镇时本岛「走路赶集」的范围（中心地：村距 2–5 km、赶集当天往返 10–15 km）
+walk_max_km = 10.0            # 村归镇时本岛最近的镇在这么远以内就走路去；再远就搭航船
+boat_reach_km = 40.0          # 挑镇时航船够得着的船程（km，按风折过：顺风短、逆风长；30 km/h 约一个多钟头）
+boat_weight = 1.0             # 挑镇时航船够得着的户按这个权重算（走路够得着的算 1）
+tailwind_factor = 0.7         # 航船的船程：顺风 × 此值、逆风 × headwind_factor，按 cos(风去的方向 − 航向) 插（与 ⑥ 的 dir_factor 同形，比 ⑥ 的 0.6 / 2.0 轻：群内短渡）
+headwind_factor = 1.5
+wind_ref_ms = 5.0             # 风的稳定度 = min(1, 年均风速 / 此值)：年均风弱（各季风向不一）时风的影响跟着小
+boat_kmh = 30.0               # 航船的速度（只用来报一趟几个钟头）
+town_harbor_km = 2.0          # 镇挨着的大泊场：同岛、离村这么远以内，船多的先（镇 = 老村核心 + 朝泊场长出来的一条街）
+harbor_bonus = 0.3            # 挑镇时挨着大泊场的加分：× (1 + 此值 × min(1, 船数 / harbor_ref_ships))
+harbor_ref_ships = 150.0
+town_spacing_km = 10.0        # 镇距下限（直线，不论岛）
+town_min_served_hh = 150      # 还没被服务的户（走路 + 航船）不到这么多就不再挑镇
+line_max_stops = 6            # 一条航船线至多停这么多个村（从最远的村出发，挨个接人，开到镇上的泊场）
+line_max_km = 60.0            # 一趟的船程（按风折过）至多这么长；按方位扫一圈分线，超了就另起一条
+line_daily_hh = 400           # 一条线沿途的户 ≥ 此值每日一班，否则 line_interval_days 天一班（逢集）
+line_interval_days = 3
+seat_boat_weight = 2.0        # 邑治：(服务户 + 此值 × 航船送来的户) × (1 + seat_harbor_weight × min(1, 泊场的船 / harbor_ref_ships)) 最大的镇
+seat_harbor_weight = 1.0      # （航船汇得最多、靠大泊场；不按最大田块、不按好守）：挨着满船数的大泊场的镇翻一倍
+# 中转站（relays）：群内是群边高处的瞭望烽火、进出本群的关卡；群与群之间是航线上的过夜、候风、避风、换船（⑥ 的邻边、流量、有向成本，枢纽群才换船）
+relay_flow_min = 100.0        # ⑥ 的一条邻边来回流量 ≥ 此值才算一个口子（全行星有流量的边中位约 56）
+relay_max_gates = 4           # 至多这么多个口子；方位差 < relay_gate_sep_deg 的并成一个
+relay_gate_sep_deg = 60.0
+relay_sector_deg = 60.0       # 口子落在方位（从主岛看）在 ±此值以内、朝外最远的一座岛上（有能落船的平地、能存雨水；看得远的加分），没有就落在主岛朝外的崖边平地
+relay_relief_ref_m = 300.0    # 看得远：岛的起伏（峰 − 岸缘）到这么高，朝外的得分翻一倍
+relay_lee_km = 2.0            # 站址：朝外最远的能落船的格，背风的加分折成这么多 km
+relay_overnight_days = 0.4    # 进来的一程（⑥ 的成本，天）≥ 此值：过夜
+relay_headwind_ratio = 1.5    # 出去的一程成本 ≥ 此值 × 离开几天（逆风、风暴）：候风
+relay_storm_min = 0.15        # 群的风暴指数（④）≥ 此值：避风
+relay_flow_ref = 1000.0       # 客栈、修船、仓夫按 √(流量 / 此值) 缩放（夹 0.5–2）
+relay_hh_gate = 4.0           # 户：关卡的守关、过夜的驿卒与客栈、候风的客栈、避风的修船、换船的仓夫与修船
+relay_hh_post = 2.0
+relay_hh_inn = 4.0
+relay_hh_wait = 3.0
+relay_hh_shelter = 3.0
+relay_hh_repair = 4.0
+relay_hh_porter = 12.0
+relay_cap_frac = 0.25         # 中转站的户合起来至多占（专业聚落之后剩下的）非农户这么多（超了等比缩）；缩到 0 户的轮班守
+beacon_max = 2                # 烽火台（统一 P5 的）：群边高处——离主岛远、看得远、有能落船的平地的没人住的岛，彼此方位差 ≥ beacon_sep_deg；轮班守
+beacon_sep_deg = 90.0
