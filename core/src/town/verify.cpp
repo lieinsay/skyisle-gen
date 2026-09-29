@@ -73,6 +73,20 @@ bool lines_cross(const std::vector<V2>& A, const std::vector<V2>& B) {
     return false;
 }
 
+// 以 g 为心、长轴朝 ang 的 L × S 矩形里能盖房的地占几成（2 m 取一个样；虚空不算进分母）
+double room_in_rect(const Work& w, V2 g, double ang, double L, double S) {
+    const V2 u = bearing_vec(ang), v = bearing_right(ang);
+    int n = 0, k = 0;
+    for (double a = -0.5 * L; a <= 0.5 * L; a += 2.0)
+        for (double b = -0.5 * S; b <= 0.5 * S; b += 2.0) {
+            int i, j;
+            if (!w.s.cell_of(g + u * a + v * b, i, j) || w.s.sky(i, j)) continue;
+            ++n;
+            k += w.f.buildable(i, j) ? 1 : 0;
+        }
+    return n ? static_cast<double>(k) / n : 0.0;
+}
+
 std::string fmt(double x, int prec = 2) {
     std::ostringstream o;
     o.setf(std::ios::fixed);
@@ -387,15 +401,24 @@ void verify(Work& w) {
         double tol = 15.0 * PI / 180.0;
         for (const OrientRule& r : st.rules)
             if (r.kind == "sun") tol = r.tol;
-        int ok = 0, n = 0;
+        int ok = 0, okt = 0, n = 0;
         double dev = 0.0;
         for (const Compound& c : P.compounds) {
             if (c.kind != "house") continue;
             const double d = angle_diff(c.plot.facing, w.f.sun_bearing);
-            ok += d <= tol + 1e-6, ++n, dev += d;
+            const bool sun_ok = d <= tol + 1e-6;
+            ok += sun_ok, ++n, dev += d;
+            // 地形优先：坡 ≥ 4° 处朝下坡、或进深顺等高线（朝下坡 ± 90°）的，是顺着地形摆的，也合理
+            bool terrain_ok = false;
+            int ci, cj;
+            if (!sun_ok && s.cell_of(c.plot.c, ci, cj) && w.f.slope_deg(ci, cj) >= 4.0f && std::isfinite(w.f.downslope(ci, cj)))
+                for (double off : {0.0, 0.5 * PI, -0.5 * PI})
+                    terrain_ok = terrain_ok || angle_diff(c.plot.facing, wrap_pi(w.f.downslope(ci, cj) + off)) <= tol + 1e-6;
+            okt += sun_ok || terrain_ok;
         }
         if (n) {
             M["orient_sun_share"] = static_cast<double>(ok) / n;
+            M["orient_terrain_share"] = static_cast<double>(okt) / n;
             M["orient_dev_mean_deg"] = dev / n * 180.0 / PI;
         }
     }
@@ -534,13 +557,42 @@ void verify(Work& w) {
         if (it != st.op_targets.end())
             for (auto& [k, rg] : it->second) targets[k] = rg;
     }
+    // 优先次序（用户定）：地形 > 合理 > 风格。地形逼出来的偏离不算风格没做到，单列「地形所致」
+    std::string excused;
     for (auto& [k, rg] : targets) {
         auto it = M.find(k);
         if (it == M.end() || !std::isfinite(it->second)) continue;
         ++nt;
-        if (it->second < rg.lo - 1e-9 || it->second > rg.hi + 1e-9) miss += (miss.empty() ? "" : "；") + k + " = " + fmt(it->second) + " 不在 [" + fmt(rg.lo) + ", " + fmt(rg.hi) + "]";
+        const double v = it->second;
+        if (v >= rg.lo - 1e-9 && v <= rg.hi + 1e-9) continue;
+        // λ 不在区间里是不是地形逼的：村心（宅院的重心）上摆一块同样大小（外包长 × 宽）、长宽比到区间那一头的块（太长了摆 λ = 上限的，太团了摆 λ = 下限的），
+        // 12 个方向里最顺的那个也有一成半以上盖不了房——这块地容不下风格要的样子（河谷、海边窄条只能成带；山顶、圆丘拉不成带）
+        if (k == "lambda" && M.count("extent_long_m") && !ctrs.empty()) {
+            V2 g{0.0, 0.0};
+            for (const V2& c : ctrs) g = g + c;
+            g = g * (1.0 / static_cast<double>(ctrs.size()));
+            const double lam = v > rg.hi ? std::max(1.0, rg.hi) : rg.lo;
+            const double A = M["extent_long_m"] * M["extent_short_m"], L = std::sqrt(A * lam), S = std::sqrt(A / lam);
+            double best = 0.0;
+            for (int a = 0; a < 12; ++a) best = std::max(best, room_in_rect(w, g, a * PI / 12.0, L, S));
+            M["lambda_room_share"] = best;
+            if (best < 0.85) {
+                excused += (excused.empty() ? "" : "、") + std::string("λ ") + fmt(v) + "（村心摆一块 λ " + fmt(lam, 1) + " 的，最顺的方向上能盖房的地也只占 " +
+                           std::to_string(std::lround(100.0 * best)) + "%）";
+                continue;
+            }
+        }
+        if (k == "orient_sun_share" && v < rg.lo && M.count("orient_terrain_share") && M["orient_terrain_share"] >= rg.lo - 1e-9) {
+            excused += (excused.empty() ? "" : "、") + std::string("朝阳 ") + fmt(v) + "（坡上顺等高线的算上是 " + fmt(M["orient_terrain_share"]) + "）";
+            continue;
+        }
+        miss += (miss.empty() ? "" : "；") + k + " = " + fmt(v) + " 不在 [" + fmt(rg.lo) + ", " + fmt(rg.hi) + "]";
     }
-    if (nt) check(w, "TP-style", false, miss.empty(), miss.empty() ? "形态指标都在风格的目标区间里（" + std::to_string(nt) + " 项）" : miss);
+    if (nt) {
+        std::string msg = miss.empty() ? "形态指标都在风格的目标区间里（" + std::to_string(nt) + " 项）" : miss;
+        if (!excused.empty()) msg += "；地形所致、不算：" + excused;
+        check(w, "TP-style", false, miss.empty(), msg);
+    }
 }
 
 }  // namespace skyisle::town
