@@ -467,6 +467,13 @@ TownsResult build_towns(const std::vector<MarketVillage>& villages, std::vector<
         boat_ok[q] = (!walk_ok[q] && C[q] <= reach) ? 1 : 0;
     }
     std::vector<uint8_t> walk_srv(V, 0), boat_srv(V, 0), blocked(V, 0);
+    {                                               // P6b：几户人家的小圩村不当镇（镇从老村核心长出来）；全都小于门槛时照旧都能挑
+        const int64_t tmin = static_cast<int64_t>(mc("town_min_village_hh"));
+        bool all_small = true;
+        for (int a = 0; a < V; ++a) all_small = all_small && hh[a] < tmin;
+        if (!all_small)
+            for (int a = 0; a < V; ++a) blocked[a] = hh[a] < tmin ? 1 : 0;
+    }
     std::vector<int> chosen;
     std::vector<double> scores;
     const double spacing = mc("town_spacing_km"), min_srv = mc("town_min_served_hh"), bw = mc("boat_weight");

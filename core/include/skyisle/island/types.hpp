@@ -315,10 +315,11 @@ struct Group {
     bool has_settle = false;
     Json settle;
     Grid<uint8_t> settle_raster;     // 1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落 / 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用
-                                     // 15 塘 / 16 闸（P6）/ 17 大泊场（镇 / 邑治）/ 18 中转站（P7）
+                                     // 15 塘 / 16 闸（P6）/ 17 大泊场（镇 / 邑治）/ 18 中转站（P7）/ 19 废塘、废渠首闸（P6b）
     GridI settle_fields;             // 田块号（0 = 无）
     Grid<uint8_t> cultivated, fallow_years;   // P5：已垦（在种，0 / 1 田 / 2 梯田）、撂荒了几年（0 = 不是撂荒地）
     GridI polder_id;                 // P6：圩号（0 = 不是圩田；圩田也算已垦）
+    Grid<uint8_t> landcover_natural, landuse;   // P6b：没有人以前的地表（码同 landcover）、人工改造（0 没动过 … 7 采场，waterworks.hpp）
     double settle_pop = 0;
     double sec_settle = 0;
 };

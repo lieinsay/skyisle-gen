@@ -516,6 +516,8 @@ void bind_island(nb::module_& m) {
             d["settle_cultivated"] = grid_np(Grid<uint8_t>(g.cultivated));
             d["settle_fallow"] = grid_np(Grid<uint8_t>(g.fallow_years));
             d["settle_polder"] = grid_np(GridI(g.polder_id));
+            d["settle_landcover_natural"] = grid_np(Grid<uint8_t>(g.landcover_natural));   // P6b：没有人以前的地表、人工改造
+            d["settle_landuse"] = grid_np(Grid<uint8_t>(g.landuse));
             d["settle_pop"] = g.settle_pop;
         }
         d["seconds"] = nb::make_tuple(g.sec_total, g.sec_hydro, g.sec_resources, g.sec_climate, g.sec_settle);

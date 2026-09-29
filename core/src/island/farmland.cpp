@@ -231,7 +231,7 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     {
         std::vector<uint8_t> take1(N, 0);
         for (int32_t k : ps.take) take1[k] = 1;
-        out.polders = polder_plan(g, c, wet, take1, n_quota - n_g);
+        out.polders = polder_plan(g, c, wet, take1, n_quota - n_g, pit);
     }
     const std::vector<int32_t>& pcells = out.polders.cells;
     const int64_t n_p = static_cast<int64_t>(pcells.size());

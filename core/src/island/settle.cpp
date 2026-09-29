@@ -36,6 +36,7 @@ struct Field {
     bool has_hh = false;
     int village = 0;                 // >0 村号，<0 −散户号，0 = None
     bool has_village_key = false;
+    bool polder = false;             // P6b：圩田的田块（polder_village_blocks² 圩一组）
 };
 
 struct Village {                     // 村与散户
@@ -63,6 +64,8 @@ struct Village {                     // 村与散户
     double water_dist = 0;
     bool has_water = false;
     std::vector<int> workings;
+    std::vector<int> polder_fields;  // P6b：挂在这个村上的圩田（田号，按挂上的先后：户多的组先）
+    bool polder = false;             // P6b：圩村（落在圩田上）
     std::string name() const { return (hamlet ? "hamlet:" : "village:") + std::to_string(id); }
 };
 
@@ -101,6 +104,12 @@ struct Want {
 };
 
 Json cell_json(int i, int j) { return Json::ipair(i, j); }
+
+int floordiv(int a, int b) {
+    int q = a / b;
+    if ((a % b != 0) && ((a < 0) != (b < 0))) --q;
+    return q;
+}
 
 }  // namespace
 
@@ -269,6 +278,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         }
 
     // ---------- 田块：已垦 8 邻域连通块（不跨岛）；大块按 80 户（邑治 300）k-means 切分 ----------
+    // P6b：连通块与 k-means 照旧按全部已垦（含圩田）切（随机数的用法不变），切好以后圩田的格拿出来，另按 polder_village_blocks² 圩一组成田（下面）
     GridI lab;
     const int n_lab = label_by_island(arable, g.island_id, 8, lab);
     GridI fields_raster(H, W, 0);
@@ -305,7 +315,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             for (int m = 0; m < k; ++m) {
                 std::vector<int32_t> sel;
                 for (size_t q = 0; q < cells.size(); ++q)
-                    if (parts[q] == m) sel.push_back(static_cast<int32_t>(q));
+                    if (parts[q] == m && g.polder_id.v[cells[q]] == 0) sel.push_back(static_cast<int32_t>(q));
                 if (sel.empty()) continue;
                 ++fid;
                 int64_t si = 0, sj = 0, terr = 0;
@@ -330,6 +340,44 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 f.ckx = kmx_np(mj, true);      // km(ii[sel].mean(), jj[sel].mean())：numpy 标量
                 f.cky = kmy_np(mi, true);
                 f.water_dist_km = pyround(static_cast<double>(dmin) * res_km, 2);
+                fields.push_back(f);
+            }
+        }
+        // 圩田（P6b，L30）：每片圩田按 m × m 圩一组成一块田（网格同纵浦横塘、锚在出水口；格子号向下取整），组按（行号、列号）排
+        const int m_pol = std::max(1, static_cast<int>(c.get("works.polder_village_blocks")));
+        for (const PolderPatch& PP : FL.polders.patches) {
+            std::map<std::pair<int, int>, std::vector<int32_t>> groups;
+            for (const PolderBlock& B : PP.blocks) {
+                auto& v = groups[{floordiv(B.bi, m_pol), floordiv(B.bj, m_pol)}];
+                v.insert(v.end(), B.cells.begin(), B.cells.end());
+            }
+            for (auto& kv : groups) {
+                std::vector<int32_t>& cl = kv.second;
+                std::sort(cl.begin(), cl.end());
+                ++fid;
+                int64_t si = 0, sj = 0, terr = 0;
+                int32_t dmin = INT32_MAX;
+                for (int32_t q : cl) {
+                    fields_raster.v[q] = fid;
+                    si += q / W;
+                    sj += q % W;
+                    terr += g.cultivated.v[q] == 2 ? 1 : 0;
+                    dmin = std::min(dmin, dist_water.v[q]);
+                }
+                const double n = static_cast<double>(cl.size());
+                const double mi = static_cast<double>(si) / n, mj = static_cast<double>(sj) / n;
+                Field f;
+                f.id = fid;
+                f.island = PP.island;
+                f.cells = static_cast<int>(cl.size());
+                f.area_km2 = pyround(n * cell_km2, 3);
+                f.terrace_frac = pyround(static_cast<double>(terr) / n, 3);
+                f.cci = static_cast<int>(std::nearbyint(mi));
+                f.ccj = static_cast<int>(std::nearbyint(mj));
+                f.ckx = kmx_np(mj, true);
+                f.cky = kmy_np(mi, true);
+                f.water_dist_km = pyround(static_cast<double>(dmin) * res_km, 2);
+                f.polder = true;
                 fields.push_back(f);
             }
         }
@@ -390,7 +438,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         for (size_t fi : ford) {
             Field& f = fields[fi];
             const int64_t hh = f.households;
-            if (hh <= 0) continue;
+            if (hh <= 0 || f.polder) continue;           // 圩田的田块在下面另挑管它的村
             const auto& cells = cells_of[f.id];
             int imin = H, imax = -1, jmin = W, jmax = -1;
             for (int32_t q : cells) {
@@ -520,6 +568,113 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 hamlets.push_back(r);
             }
         }
+        // P6b（L30，settle.polder_villages）：圩田的田块挑管它、种它的村——同岛的村（按落村的先后）里离这组圩田每一格都走得到的，取最远那格最近的；
+        // 一个都够不着就在这组圩田上落一个圩村（村址：够得着每一格的格里最高的，平局最远那格近的、格号小的）
+        const double tw = c.get("works.manage_walk_km") / res_km;
+        const double R4 = 4.0 * tw * tw;              // 整格走得到：村的格心到格的最远那个角，2 倍坐标的整数平方
+        std::vector<Field*> pfs;                     // 按户数从多到少、平局田号小的先：大组先落圩村，零碎的边角组就近挂上去
+        for (Field& f : fields)
+            if (f.polder) pfs.push_back(&f);
+        std::stable_sort(pfs.begin(), pfs.end(), [](const Field* a, const Field* b) { return a->households > b->households; });
+        std::vector<std::array<int, 4>> box(pfs.size());
+        for (size_t t = 0; t < pfs.size(); ++t) {
+            std::array<int, 4> b{H, -1, W, -1};
+            for (int32_t q : cells_of[pfs[t]->id]) {
+                b[0] = std::min(b[0], q / W);
+                b[1] = std::max(b[1], q / W);
+                b[2] = std::min(b[2], q % W);
+                b[3] = std::max(b[3], q % W);
+            }
+            box[t] = b;
+        }
+        for (size_t pos = 0; pos < pfs.size(); ++pos) {
+            Field& f = *pfs[pos];
+            const auto& cells = cells_of[f.id];
+            const int64_t hh = f.households;
+            int best = -1;
+            int64_t bd = 0;
+            for (size_t idx = 0; idx < villages.size(); ++idx) {
+                const Village& v = villages[idx];
+                if (v.island != f.island) continue;
+                int64_t d2 = 0;
+                for (int32_t q : cells) {
+                    const int64_t di = 2 * std::abs(q / W - v.ci) + 1, dj = 2 * std::abs(q % W - v.cj) + 1;
+                    d2 = std::max(d2, di * di + dj * dj);
+                }
+                if ((static_cast<double>(d2) <= R4 || hh <= 0) && (best < 0 || d2 < bd)) {
+                    best = static_cast<int>(idx);
+                    bd = d2;
+                }
+            }
+            if (best >= 0) {
+                villages[best].households += hh;
+                villages[best].polder_fields.push_back(f.id);
+                continue;
+            }
+            if (hh <= 0) continue;
+            // 还能整组够得着的没着落的圩田组（后面的组，同岛、有户）的户数
+            std::vector<int64_t> cover(cells.size(), 0);
+            const auto& b0 = box[pos];
+            for (size_t t = pos + 1; t < pfs.size(); ++t) {
+                const Field& x = *pfs[t];
+                if (x.island != f.island || x.households <= 0) continue;
+                const auto& bx = box[t];
+                const int64_t gi_ = std::max({0, bx[0] - b0[1], b0[0] - bx[1]}), gj_ = std::max({0, bx[2] - b0[3], b0[2] - bx[3]});
+                if (static_cast<double>((2 * gi_ + 1) * (2 * gi_ + 1) + (2 * gj_ + 1) * (2 * gj_ + 1)) > R4) continue;   // 只省算，不改结果
+                const auto& xc = cells_of[x.id];
+                for (size_t a = 0; a < cells.size(); ++a) {
+                    int64_t dm = 0;
+                    for (int32_t q2 : xc) {
+                        const int64_t di = 2 * std::abs(cells[a] / W - q2 / W) + 1, dj = 2 * std::abs(cells[a] % W - q2 % W) + 1;
+                        dm = std::max(dm, di * di + dj * dj);
+                    }
+                    if (static_cast<double>(dm) <= R4) cover[a] += x.households;
+                }
+            }
+            int32_t pick = -1;
+            int64_t p_d2 = 0, p_cv = 0;
+            double p_h = 0;
+            bool any_ok = false;
+            for (size_t a = 0; a < cells.size(); ++a) {
+                const int32_t q = cells[a];
+                int64_t dm = 0;
+                for (int32_t q2 : cells) {
+                    const int64_t di = 2 * std::abs(q / W - q2 / W) + 1, dj = 2 * std::abs(q % W - q2 % W) + 1;
+                    dm = std::max(dm, di * di + dj * dj);
+                }
+                const bool ok = static_cast<double>(dm) <= R4;
+                const double hq = g.height.v[q];
+                const int64_t cv = cover[a];
+                bool better;
+                if (pick < 0) better = true;
+                else if (ok != any_ok) better = ok;
+                else if (ok) better = cv > p_cv || (cv == p_cv && (hq > p_h || (hq == p_h && (dm < p_d2 || (dm == p_d2 && q < pick)))));
+                else better = dm < p_d2 || (dm == p_d2 && q < pick);
+                if (better) {
+                    pick = q;
+                    p_d2 = dm;
+                    p_h = hq;
+                    p_cv = cv;
+                    any_ok = ok;
+                }
+            }
+            const int pi = pick / W, pj = pick % W;
+            Village r;
+            r.island = f.island;
+            r.ci = pi;
+            r.cj = pj;
+            r.kx = kmx(pj);
+            r.ky = kmy(pi);
+            r.households = hh;
+            r.field = f.id;
+            r.elev_m = pyround(g.height(pi, pj), 0);
+            r.water_dist_km = pyround(static_cast<double>(dist_water(pi, pj)) * res_km, 2);
+            r.shore_dist_km = pyround(static_cast<double>(dist_shore(pi, pj)) * res_km, 2);
+            r.on_arable = arable(pi, pj) != 0;
+            r.polder = true;
+            taken(pi, pj) = 1;
+            villages.push_back(r);
+        }
     }
     std::stable_sort(villages.begin(), villages.end(), [](const Village& a, const Village& b) {
         if (a.households != b.households) return a.households > b.households;
@@ -531,7 +686,10 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     for (size_t k = 0; k < hamlets.size(); ++k) hamlets[k].id = static_cast<int>(k) + 1;
     {
         std::map<int, int> vf, hf;
-        for (const Village& r : villages) vf[r.field] = r.id;
+        for (const Village& r : villages) {
+            vf[r.field] = r.id;
+            for (int pf : r.polder_fields) vf[pf] = r.id;           // P6b：挂在村上的圩田
+        }
         for (const Village& r : hamlets) hf[r.field] = -r.id;
         for (Field& f : fields) {
             f.has_village_key = true;
@@ -1224,13 +1382,22 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
 
     // ---------- 水利（P6，waterworks.cpp）：谷口的渠、村塘 / 山塘、圩田的纵浦横塘与圩塘、闸 ----------
     Json works;
+    std::vector<int32_t> cmd_cells;          // 谷口的渠灌得到的格（landuse 的渠灌田）
     {
         std::vector<WorksField> wf;
         wf.reserve(fields.size());
         for (const Field& f : fields) wf.push_back({static_cast<int64_t>(f.cells), f.area_km2});
         std::vector<WorksVillage> wv;
-        for (const Village& v : villages) wv.push_back({v.id, v.ci, v.cj, v.field, v.households + (v.has_market ? v.households_market : 0)});
-        works = build_waterworks(g, c, wf, fields_raster, wv, sr, FL.polders);
+        for (const Village& v : villages)
+            wv.push_back({v.id, v.island, v.ci, v.cj, v.field, v.households + (v.has_market ? v.households_market : 0), v.polder_fields, v.polder});
+        std::vector<WorksRuin> wr;                   // P6b：废村与它的撂荒田（按废村号）
+        for (const Ruin& r : ruins) {
+            WorksRuin x{r.id, r.island, r.ci, r.cj, r.years, r.households_before, r.fallow_km2, {}};
+            for (const RuinTract& rt : FL.ruins)
+                if (rt.tract == r.tract) x.cells = rt.cells;
+            wr.push_back(std::move(x));
+        }
+        works = build_waterworks(g, c, wf, fields_raster, wv, sr, FL.polders, wr, cmd_cells);
     }
 
     // ---------- 没人常住的岛有人用（P5，island_uses）：放牧 / 夏牧、庙、墓岛（烽火台 P7 起归中转站）；各岛的住法 ----------
@@ -1938,6 +2105,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             tenure.push(std::move(t));
         }
     }
+    landuse_layers(g, cmd_cells);            // P6b：原始地表与人工改造
 
     // ---------- 汇总 ----------
     auto village_json = [&](const Village& r) {
@@ -1974,6 +2142,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         if (r.has_workers) j.set("households_workers", r.households_workers);
         if (r.has_seasonal) j.set("households_seasonal", r.households_seasonal);
         if (!r.workings.empty()) j.set("workings", Json::arr_of(r.workings));
+        if (r.polder) j.set("polder", true);
+        if (!r.polder_fields.empty()) j.set("polder_fields", Json::arr_of(r.polder_fields));
         return j;
     };
     Json S = Json::obj();
@@ -1998,6 +2168,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         j.set("water_dist_km", f.water_dist_km);
         if (f.has_hh) j.set("households", f.households);
         j.set("village", f.village == 0 ? Json() : Json(f.village));
+        if (f.polder) j.set("polder", true);
         fj.push(j);
     }
     S.set("fields", fj);
