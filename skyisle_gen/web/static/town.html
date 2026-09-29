@@ -175,8 +175,11 @@ const METRIC_ZH = {
   center_shift_m: '村心离锚点（m）', cut_m3: '挖方（m³）', fill_m3: '填方（m³）', footprint_m2: '占地（m²）', terraced_compounds: '做台地的院',
   dug_in_compounds: '挖进坡的院', junction_t: 'T 路口', junction_x: '十字路口', t_x_ratio: 'T / X 路口比', green_area_m2: '公地面积（m²）',
   buildings_per_compound_median: '每院栋数中位', detached_min_m: '院外单栋离主院最近（m）', lane_spacing_m: '巷距（m）',
+  buildable_share_near: '村心一带能盖房的地', terrain_relax_level: '地形优先：放宽了几档', max_slope_deg_used: '实用的坡上限（°）',
+  max_cut_m_used: '实用的挖填上限（m）', max_terrace_m_used: '实用的台地上限（m）', lambda_room_share: 'λ 到目标那头时能盖房的地',
+  orient_terrain_share: '朝阳或顺坡的占比',
 };
-const PCT = new Set(['coverage', 'orient_sun_share', 'face_street_share', 'water_front_share']);
+const PCT = new Set(['coverage', 'orient_sun_share', 'face_street_share', 'water_front_share', 'buildable_share_near', 'lambda_room_share', 'orient_terrain_share']);
 
 // ---------------------------------------------------------------- 状态
 let STY = null, D = null, G = null, groundImg = null, occCanvas = null, pinned = null;
