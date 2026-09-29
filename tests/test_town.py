@@ -109,7 +109,9 @@ def group(tmp_path_factory):
     isl.generate(ctx, node, res_m=300.0, log=lambda *a: None)
     import json
     S = json.loads((out / "islands" / str(node) / "settlements.json").read_text(encoding="utf-8"))
-    v = max(S["villages"], key=lambda x: x["households"] if not x.get("seat") else -1)
+    # 户数最多的普通村：不是邑治、也不是镇所在的村（那是「镇」，营建器不营建）
+    town_v = {t["village"] for t in S.get("towns", []) if t.get("village") is not None}
+    v = max(S["villages"], key=lambda x: x["households"] if not x.get("seat") and x["id"] not in town_v else -1)
     return ctx, node, v
 
 
