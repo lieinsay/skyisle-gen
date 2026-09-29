@@ -32,8 +32,8 @@ RAIN_Q = 16.0   # 雨量加权汇流的量子（1/16 mm）：权重取整后求�
 
 def local_rain(height: np.ndarray, land: np.ndarray, P_mm: float, surface_m: float, u: float, v: float, res_km: float, hc: dict) -> np.ndarray:
     """局地年降水（mm，P4，L11 的生成器那半）：海拔（与游戏 src/weather 的 orographic_per_km 同形同数）× 山脉尺度的迎风坡，再按全群陆地的均值归一——
-    群的雨总量是行星层给的，山只把它重新分。迎风 G = 顺风方向的地势升降（m/km），在 windward_smooth_km 见方的块均值上量（虚空按群里最低的陆地填：
-    迎风的岸崖抬升、背风的岸崖跌落），双线性放大回来。两个系数都 0：处处 P_mm。C++ 版 hydro.cpp 同式。"""
+    群的雨总量是行星层给的，山只把它重新分。迎风 G = 顺风方向的地势升降（m/km），在 windward_smooth_km 见方的块均值上量（虚空按最近的陆地填：
+    岛浮在空中、风从底下绕过去，岸崖不算迎风的山），双线性放大回来。两个系数都 0：处处 P_mm。C++ 版 hydro.cpp 同式。"""
     oro, wwg = float(hc.get("oro_per_km", 0.0)), float(hc.get("windward_gain", 0.0))
     rain = np.where(land, P_mm, 0.0)
     if oro == 0.0 and wwg == 0.0:
@@ -42,7 +42,11 @@ def local_rain(height: np.ndarray, land: np.ndarray, P_mm: float, surface_m: flo
     H, W = height.shape
     hmin = float(np.min(height[land]))
     f = max(1, int(round(float(hc["windward_smooth_km"]) / res_km)))
-    hc_ = block_mean(np.where(land, height, hmin), f)
+    # 虚空按最近的陆地填（3 块以内；再远按群里最低的陆地）：浮在空中的岛下面有风绕过去，岸崖不算迎风的「山」
+    from .grid import nearest_propagate
+    _nd, ns = nearest_propagate(land, 3 * f, 1.0)
+    hfill = np.where(land, height, np.where(ns >= 0, height.ravel()[np.maximum(ns, 0)], hmin))
+    hc_ = block_mean(hfill, f)
     Hc, Wc = hc_.shape
     step = f * res_km
     jp, jm = np.minimum(np.arange(Wc) + 1, Wc - 1), np.maximum(np.arange(Wc) - 1, 0)
