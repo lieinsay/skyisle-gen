@@ -238,7 +238,8 @@ int place_public_compounds(Work& w, std::vector<Slot>& cands) {
                 if (sl.taken || sl.tmpl != tmpl || !sl.valid) continue;
                 bool clash = false;
                 for (const Compound& c : w.plan.compounds) clash = clash || overlap(c.plot, sl.box, -0.1);
-                if (clash) continue;
+                // 占用栅格看不出不到一格的相交：弯一点的街上、朝向与街不正交的地块，角会擦进街里（山城的教堂贴街、退让 0）
+                if (clash || road_hits_obb(w, sl.box, 0.05)) continue;
                 const double sc = site_score(w, f, sl.box.c) + 0.3 * sl.interest + (sl.access_side == SIDE_FRONT ? 0.3 : 0.0);
                 if (sc > best) best = sc, arg = k;
             }

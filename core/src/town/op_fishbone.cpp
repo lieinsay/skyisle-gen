@@ -433,7 +433,12 @@ void op_fishbone(Work& w) {
                     if (!s.cell_of(x, i, j) || s.sky(i, j) || s.edge(i, j) || s.water(i, j) != WATER_NONE || w.blocked(i, j)) break;
                     line.push_back(x);
                 }
-                if (line.size() >= 4) add_road(w, line, RC_PATH, road_width(w, RC_PATH, rx));
+                // 按几何量宽：伸出去的田间道可能擦着别家院角（栅格上只挡 blocked 格，不到一格的看不出），比最窄的路还窄就不伸
+                const double pw = road_width(w, RC_PATH, rx);
+                if (line.size() >= 4) {
+                    const double fit = road_fit(w, line);
+                    if (fit >= std::max(0.8, 0.5 * pw)) add_road(w, line, RC_PATH, std::min(pw, fit));
+                }
             }
         }
     }
