@@ -1,10 +1,12 @@
 // 编排（PLAN-TOWN 第五节）：场地分析 → 户与亲缘 → 村心与朝向 → 形态算子（街网、地块、落位）→ 出村大路 → 泊场 → 塘 → 路边的庙与树 →
 // 场院 → 井 → 宅院成形 → 校验与指标。各步的随机流按名字分开（Work::rng）。
+// 优先次序（用户定）：地形 > 合理 > 风格——照风格的地面上限住不下全村，风格让路，上限放宽再排（plan_site）。
 #include "skyisle/town/plan.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 
 #include "plan_work.hpp"
@@ -408,7 +410,7 @@ void choose_facing(Work& w) {
 }
 
 // 按风格的权重挑，只在这块地能用的算子里挑（滨水要河、等高线要坡、地坑院要平塬、小村的算子看户数）；
-// 一个都不能用就用风格里权重最大的那个（风格不合这块地：照风格硬做，校验会说地不够），风格一个算子都没写才团块生长
+// 一个都不能用就用风格里权重最大的那个（风格不合这块地：住不下时 plan_site 放宽地面上限再排），风格一个算子都没写才团块生长
 std::string pick_operator(Work& w) {
     if (!w.req.force_operator.empty()) return w.req.force_operator;
     Rng r = w.rng("operator");
@@ -426,9 +428,7 @@ std::string pick_operator(Work& w) {
     return ids[static_cast<size_t>(r.choice_p(p))];
 }
 
-}  // namespace
-
-Plan plan_site(const Site& s, const Style& st, const PlanRequest& req) {
+Plan plan_once(const Site& s, const Style& st, const PlanRequest& req) {
     using clk = std::chrono::steady_clock;
     auto t0 = clk::now();
     auto lap = [&](Work& w, const char* k) {
@@ -513,6 +513,62 @@ Plan plan_site(const Site& s, const Style& st, const PlanRequest& req) {
     verify(w);
     lap(w, "verify");
     return std::move(w.plan);
+}
+
+int housed(const Plan& p) {
+    int n = 0;
+    for (const Household& h : p.households) n += h.compound >= 0;
+    return n;
+}
+
+bool housed_all(const Plan& p) {
+    for (const Check& c : p.checks)
+        if (c.id == "TP-hh") return c.ok;
+    return true;
+}
+
+std::string limits_text(const Style& st) {
+    char b[96];
+    std::snprintf(b, sizeof b, "%.0f°、挖填 %.1f m、台地 %.1f m", st.max_slope_deg, st.max_cut_m, st.max_terrace_m);
+    return "坡 " + std::string(b);
+}
+
+}  // namespace
+
+// 优先次序（用户定，2026-09-29）：地形 > 合理 > 风格。先照风格的地面上限（坡、一栋房的挖填、一个院子的台地高差）排；
+// 住不下全村（TP-hh 没过）就是风格跟这块地不合——风格让路：上限分两档放宽到仍合理的值再排（坡上的村修台地），
+// 取头一档住得下的；两档都住不下取住下最多的。照风格住得下的一次排完，产物与不放宽时一模一样。
+Plan plan_site(const Site& s, const Style& st, const PlanRequest& req) {
+    Plan best = plan_once(s, st, req);
+    if (req.scale == "compound" || housed_all(best)) return best;
+    const int want = static_cast<int>(best.households.size()), n0 = housed(best);
+    // 第一档：坡放到 1.5 倍 + 2°（≤ 18°）、挖填 1.5 倍（≤ 2 m）、台地 1.6 倍（≤ 4 m）；第二档：山地村落的常见上限（25°、2.5 m、6 m）
+    const double lv[2][3] = {{std::min(18.0, 1.5 * st.max_slope_deg + 2.0), std::min(2.0, 1.5 * st.max_cut_m), std::min(4.0, 1.6 * st.max_terrace_m)},
+                             {25.0, 2.5, 6.0}};
+    int best_n = n0, best_lv = 0;
+    Style used = st, prev = st;
+    for (int k = 0; k < 2 && !housed_all(best); ++k) {
+        Style r = st;
+        r.max_slope_deg = std::max(st.max_slope_deg, lv[k][0]);
+        r.max_cut_m = std::max(st.max_cut_m, lv[k][1]);
+        r.max_terrace_m = std::max(st.max_terrace_m, lv[k][2]);
+        if (r.max_slope_deg == prev.max_slope_deg && r.max_cut_m == prev.max_cut_m && r.max_terrace_m == prev.max_terrace_m) continue;
+        prev = r;
+        Plan q = plan_once(s, r, req);
+        const int n = housed(q);
+        if (housed_all(q) || n > best_n) best = std::move(q), best_n = n, best_lv = k + 1, used = r;
+    }
+    if (best_lv == 0) return best;
+    best.metrics["terrain_relax_level"] = best_lv;
+    best.metrics["max_slope_deg_used"] = used.max_slope_deg;
+    best.metrics["max_cut_m_used"] = used.max_cut_m;
+    best.metrics["max_terrace_m_used"] = used.max_terrace_m;
+    const bool all = housed_all(best);
+    best.checks.push_back({"TP-terrain", false, all,
+                           "地形优先：照风格的上限（" + limits_text(st) + "）只住下 " + std::to_string(n0) + " / " + std::to_string(want) + " 户，放宽到" +
+                               limits_text(used) + "（坡上修台地）再排" +
+                               (all ? "，都住下了" : "，也只住下 " + std::to_string(best_n) + " 户（这块地实在不够）")});
+    return best;
 }
 
 }  // namespace skyisle::town
