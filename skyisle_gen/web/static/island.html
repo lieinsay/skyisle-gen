@@ -93,7 +93,7 @@ a{color:var(--acc2)}
     <label class="chk"><input type="checkbox" id="ovWater" checked> 河 / 溪涧 / 湖</label>
     <label class="chk" title="河道按中心线画成平滑曲线，线宽 = 真实河宽 × 缩放（小 / 中 / 大河最细 1.8 / 2.4 / 3 px）；关掉则按栅格逐格涂色"><input type="checkbox" id="ovVec" checked> 河道矢量（平滑、按河宽）</label>
     <label class="chk" title="河谷底的漫滩：高程 = 河床 + 水深，涨水即漫"><input type="checkbox" id="ovFlood"> 漫滩</label>
-    <label class="chk" title="黄 = 已垦的田、橙 = 已垦的梯田、褐 = 撂荒（悬停看年头）、淡绿 = 宜垦但没开（P5）"><input type="checkbox" id="ovArable" checked> 已垦 / 梯田 / 撂荒（淡绿 = 宜垦没开）</label>
+    <label class="chk" title="黄 = 已垦的田、橙 = 已垦的梯田、嫩绿 = 已垦的圩田（P6）、褐 = 撂荒（悬停看年头）、淡绿 = 宜垦但没开（P5）"><input type="checkbox" id="ovArable" checked> 已垦 / 梯田 / 圩田 / 撂荒（淡绿 = 宜垦没开）</label>
     <label class="chk"><input type="checkbox" id="ovCliff"> 崖缘</label>
     <label class="chk" title="岛与岛之间只有船（P5 起没有索桥与导水槽）"><input type="checkbox" id="ovLinks" checked> 短渡</label>
     <label class="chk"><input type="checkbox" id="ovLabels" checked> 岛号标签</label>
@@ -603,9 +603,9 @@ function drawResources(ctx){
   }
 }
 // ------------------------------------------------------------ 营建此聚落（/town.html，聚落营建器的调试台）
-// 田（P5）：1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒（与 farmland.png 同；P5 之前的产物把 arable 的 1 / 2 映成 2 / 3）
-const FARM_RGB = [null, [120, 200, 120], [240, 205, 80], [210, 150, 40], [170, 110, 90]];
-const FARM_TIP = ['', '（宜垦，没开）', '（已垦）', '（已垦·梯田）', '（撂荒）'];
+// 田（P5）：1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒；P6：5 已垦的圩田（与 farmland.png 同；P5 之前的产物把 arable 的 1 / 2 映成 2 / 3）
+const FARM_RGB = [null, [120, 200, 120], [240, 205, 80], [210, 150, 40], [170, 110, 90], [150, 215, 110]];
+const FARM_TIP = ['', '（宜垦，没开）', '（已垦）', '（已垦·梯田）', '（撂荒）', '（已垦·圩田）'];
 function townUrl(name){ return `/town.html?run=${encodeURIComponent(run)}&node=${node}&site=${encodeURIComponent(name)}`; }
 function fillTownSites(S){
   const sel = $('townSite'); if (!sel) return;
@@ -635,7 +635,7 @@ function drawSettlements(ctx){
   const zoomedS = view.s * (10 / R.step) > 14;
   if (zoomedS) for (const d of S.landings || []) { const p = cellPos(d.cell); ctx.strokeStyle = d.flat ? '#3cc8ff' : '#ff8c5a'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(p[0], p[1], 3.5, 0, 7); ctx.moveTo(p[0] - 2, p[1] - 2); ctx.lineTo(p[0] - 2, p[1] + 2); ctx.moveTo(p[0] + 2, p[1] - 2); ctx.lineTo(p[0] + 2, p[1] + 2); ctx.moveTo(p[0] - 2, p[1]); ctx.lineTo(p[0] + 2, p[1]); ctx.stroke(); }   // Ⓗ：泊场（橙 = 附近没平地）
   // P7：航船线（从最远的村开到镇上的大泊场）、镇朝大泊场的街、中转站
-  const kmPos = k => { const c = cellXY(k[0], k[1]); return [c[0] / R.step * view.s + view.tx, c[1] / R.step * view.s + view.ty]; };
+  const kmPos = k => { const c = cellXY(k[0], k[1]); return [c[0] * view.s + view.tx, c[1] * view.s + view.ty]; };   // cellXY 已按抽稀后的格距（R.res_m）换算，不再除 R.step
   for (const ln of S.boat_lines || []) { ctx.strokeStyle = 'rgba(64,224,255,0.85)'; ctx.lineWidth = 1.3; ctx.beginPath(); ln.pts_km.forEach((k, i) => { const p = kmPos(k); if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); }); ctx.stroke();
     if (zoomedS) { const p = kmPos(ln.pts_km[0]); ctx.fillStyle = '#a0f0ff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`${ln.name}（${ln.stops.length} 村，${ln.interval_days === 1 ? '每日' : ln.interval_days + ' 日'}一班）`, p[0] + 5, p[1] - 5); } }
   for (const t of S.towns || []) if (t.street) { const a = kmPos(t.street.from_km), b = kmPos(t.street.to_km); ctx.strokeStyle = '#ff9628'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.fillStyle = '#40a0ff'; ctx.fillRect(b[0] - 4, b[1] - 4, 8, 8); }
