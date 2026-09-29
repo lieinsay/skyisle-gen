@@ -142,6 +142,18 @@ python -m skyisle_gen.cli island floats --run out/seed42 --jobs 28          # �
 - 产物：`settlements.json` 的 `waterworks`（渠首、渠的折线、塘、闸、圩、圩田片与摘要）、`terrain.npz` 的 `polder_id`、`farmland.png` 码 5 圩田、`settlements.png` 码 15 塘 / 16 闸；
   调试台「水利」叠加层；俯视图 `python docs/probes/works_view.py out/seed42/islands/6329 --auto head|patch`；transect.py 多一张水利表。校验多 SET-works。
 
+**地貌与聚落 P6 修订（P6b）：有水利就有人维护；原始地貌与人工地貌分开记**（DESIGN-NOTES 四点三十九，Zhouzhu `docs/PLAN-LAND.md` L30 / L31，用户 09-30 看了 P6 的产物后提的；
+`island/waterworks.py`、`island/settle.py` 的 `polder_villages` + `core/src/island/waterworks.cpp`、`settle.cpp`，配置 `[island.works] manage_walk_km / polder_village_blocks / village_head_sep_km`）：
+- 次序是「田（含圩田）→ 村址 → 水利」：**每处渠首、渠、塘、闸、圩都记管它的村（`village`），都在那个村走得到的 2 km 以内**（渠的每一点、圩的每一格都算）。
+- **圩田自己成村**：圩田按 3 × 3 圩一组另成田块，整组走得到现有的村就挂在那个村上（`villages[].polder_fields`），走不到就在圩里的高处落一个圩村（`villages[].polder`，户从这组圩田来）。
+- **渠首一村一堰**：一处渠首只灌管它的那个村的田，渠只走那个村走得到的地方（截短），灌区按格算（渠水面以下、走得到的格），渠首隔 1.5 km；纵浦横塘按两旁的圩分给各自的村，排水渠走出去就截短。
+- **废弃的水利**：废村旁一口废塘，照活村的规矩找得到渠首的另有废渠首、废渠（`abandoned: true`、`abandoned_years`、`ruin`，没有管它的村）；废圩不做（废村在旱地上）。
+- **原始地貌与人工改造**：`terrain.npz` 加 `landcover_natural`（没有人以前的地表：圩田那格原是湿地）与 `landuse`（0 没动过 / 1 开垦的田 / 2 梯田 / 3 渠灌田 / 4 圩田 / 5 撂荒 / 6 樵牧 / 7 采场），
+  `island.json` 的 `landcover` 加原始 / 现状 / 各类改造的面积；调试台底图多「原始地貌（没人以前）」「人工改造」，悬停读「原始：湿地 → 现状：圩田（人工）」。
+- 剖面八群：水利离管它的村全在 2 km 内（改前离最近的村：#5498 45%、#6615 48% 的圩超过 2 km，渠首最远 7.3 km）；圩村 33 个、挂着圩田的村 67 个；废塘 13 口；
+  原始湿地 = 现状湿地 + 圩田，没人常住的岛上本来就没有湿地（湿地只长在 ≥ 94 km² 的有人的岛上）；已垦 = 额度、人口 = ⑨ 不变。镇只从 ≥ 8 户的村里挑（小圩村不当镇）；
+  #6329（开局）、#6072 的邑治跟着换了（P7 的贪心挑镇对户数敏感）。校验多 SET-nature；俯视图 `works_view.py --auto ruin`；transect.py 多「水利离村多远」「原始地貌与人工地貌」两张表。
+
 **地貌与聚落 P7：镇、邑治、航船、中转站**（DESIGN-NOTES 四点三十八，Zhouzhu `docs/PLAN-LAND.md` P7 的生成器那半——PLAN-LAND 的最后一期，`island/market.py` + `core/src/island/market.cpp`，配置 `[island.market]`）：
 - 前提（L24，用户定）：船寻常，但能控制的浮石船造起来有门槛，一般人家没有——**本岛走路赶集，跨岛搭定班的航船**。
 - **泊场先于镇**：能停很多船、能堆货的大块缓坡平地（坡 ≤ 4° 的空平地，1 km 见方窗里够 0.5 km²，隔 5 km）是 `harbors`，每处记「能停多少船」（平地一半能用、一条船 2000 m²，满窗 302 条）；
