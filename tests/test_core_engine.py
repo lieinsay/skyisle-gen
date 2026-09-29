@@ -251,7 +251,7 @@ def _build(ctx, node, backend, res_m=300.0, threads=4):
     return g
 
 
-GRIDS = ("island_id", "cliff", "height", "river", "stream", "lake", "landcover", "arable", "floodplain", "flowacc_km2",
+GRIDS = ("island_id", "cliff", "height", "river", "stream", "lake", "landcover", "arable", "cultivable", "floodplain", "flowacc_km2",
          "river_width_m", "river_depth_m", "cut_m", "slope_deg", "filled", "recv_i", "recv_j", "route_h")
 
 

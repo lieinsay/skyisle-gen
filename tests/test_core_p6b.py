@@ -180,6 +180,34 @@ def test_generate_p3_resources_identical(small_ctx, tmp_path):
     assert ga["resources"] == gb["resources"] and ga["settle"] == gb["settle"]
 
 
+def test_generate_p5_farmland_identical(small_ctx, tmp_path):
+    """P5（宜垦 / 已垦 / 撂荒、定居门槛、没人住 ≠ 没人用、荒地归谁）：小世界里没人住的岛多半已有工棚，特殊用途分两遍走——
+    一遍放宽放牧（夏牧、烽火台、废村、工棚），一遍关掉放牧与烽火台、庙与墓岛必有；每条代码路径走到，两个后端的整套产物仍逐字节相同。"""
+    from skyisle_gen import island as isl
+    common = ["island.settle.ruin_min_hh=4", "island.settle.graze_min_km2=0.05", "island.settle.graze_reach_km=1e3", "island.settle.shieling_min_km2=0.5"]
+    passes = [common + ["island.settle.graze_max=1"], common + ["island.settle.graze_max=0", "island.settle.beacon_max=0", "island.settle.shrine_p=1.0", "island.settle.tomb_p=1.0",
+                                "island.settle.tomb_max_km2=1e6"]]
+    base = ["island.settle.ruin_min_hh=8", "island.settle.graze_min_km2=0.5", "island.settle.graze_reach_km=10.0", "island.settle.shieling_min_km2=3.0",
+            "island.settle.graze_max=4", "island.settle.beacon_max=2", "island.settle.shrine_p=0.5", "island.settle.tomb_p=0.35", "island.settle.tomb_max_km2=5.0"]
+    seen = set()
+    for extra in passes:
+        for node in _nodes(small_ctx, 3)[1:3]:
+            outs = {}
+            for b in ("python", "cpp"):
+                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
+                                      return_state=True, out_root=tmp_path / b)
+                small_ctx.cfg["engine"]["backend"] = "python"
+                outs[b] = (_products(out), g)
+            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
+            assert sorted(pa) == sorted(pb)
+            assert not [k for k in pa if pa[k] != pb[k]], node
+            assert ga["settle"] == gb["settle"]
+            S = gb["settle"]
+            seen |= {u["kind"] for u in S["uses"]} | {x["occupancy"] for x in S["specials"]} | ({"废村"} if S["ruins"] else set())
+    isl.island_config(small_ctx, base)                      # --set 会留在 ctx 上：改回默认
+    assert {"烽火台", "庙", "墓岛", "废村", "工棚"} <= seen and seen & {"放牧", "夏牧"}, seen
+
+
 def test_generate_cpp_thread_independent(small_ctx, tmp_path):
     node = _nodes(small_ctx, 1)[0]
     a, _ = _gen(small_ctx, node, "cpp", tmp_path / "t1", threads=1)

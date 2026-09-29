@@ -104,12 +104,13 @@ def test_island_deterministic_and_consistent(small_ctx):
         ck = (J1["raster"]["res_m"] / 1000.0) ** 2
         tim = [d for d in Rj["deposits"] if d["kind"] == "timber"]
         assert abs(sum(d["area_km2"] for d in tim) - np.isin(z["patch_id"], [d["id"] for d in tim]).sum() * ck) < 0.01 * max(1, len(tim))
-        # 散：赋存场 [6, H, W]；岩类（金属矿 / 石料 / 硫磺）的场不上耕地、不上湿地；赋存区与采场的格有效
+        # 散：赋存场 [7, H, W]；岩类（金属矿 / 石料 / 硫磺）的场不上田（在种与撂荒的；P5 起已垦避开它）、不上湿地；赋存区与采场的格有效
         RF = z["res_field"]
+        farm = (z["cultivated"] > 0) | (z["fallow_years"] > 0) if STEPS >= 5 else np.zeros(land.shape, dtype=bool)
         assert RF.shape == (len(Rj["fields"]["kinds"]),) + z["height"].shape and (RF[:, ~land] == 0).all()
         for k in Rj["fields"]["rock_kinds"]:
             f = RF[Rj["fields"]["kinds"].index(k)] > 0
-            assert not (f & (z["arable"] > 0)).any() and not (f & (z["landcover"] == 9)).any()
+            assert not (f & farm).any() and not (f & (z["landcover"] == 9)).any()
         assert Rj["occurrences"], "至少有石料 / 黏土 / 砂砾之一的赋存区"
         for o in Rj["occurrences"]:
             i, j = o["cell"]
@@ -117,7 +118,7 @@ def test_island_deterministic_and_consistent(small_ctx):
         for w in Rj["workings"]:
             i, j = w["cell"]
             assert Rj["occurrences"][w["occurrence"]]["kind"] == w["kind"]
-            assert z["arable"][i, j] == 0 and z["landcover"][i, j] != 4 and z["river"][i, j] == 0 and not z["lake"][i, j] and not z["cliff"][i, j]
+            assert not farm[i, j] and z["landcover"][i, j] != 4 and z["river"][i, j] == 0 and not z["lake"][i, j] and not z["cliff"][i, j]
     if STEPS >= 3:
         C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
         a, m = C["annual"], C["means_check"]                                                 # IS-season
@@ -145,7 +146,7 @@ def test_island_deterministic_and_consistent(small_ctx):
         assert parts == S["households"] == round(S["population"] / S["household_size"])
         if S["villages"]:
             assert S["households_in_towns_market"] + S["households_in_specials"] == S["nonfarm_households"] == round(S["households"] * S["nonfarm_share"])
-        assert abs(sum(f["area_km2"] for f in S["fields"]) - float((z["arable"] > 0).sum()) * (J1["raster"]["res_m"] / 1000) ** 2) < 1e-3
+        assert abs(sum(f["area_km2"] for f in S["fields"]) - float((z["cultivated"] > 0).sum()) * (J1["raster"]["res_m"] / 1000) ** 2) < 1e-3
         assert all(f["households"] >= 8 for f in S["fields"] if f["village"] and f["village"] > 0)
         for v in S["villages"] + S["specials"]:
             i, j = v["cell"]
@@ -157,7 +158,7 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert d.min() > 0.05, d.min()                       # 不同村不同格（1 km 间距是软项：放不下时退而求其次）
             assert (d.min(axis=1) >= 1.0 - 1e-9).mean() >= 0.8    # 八成以上的村满足 1 km 间距
         assert any(v.get("seat") for v in S["villages"]) and S["villages"][0]["island"] == 0 or S["n_villages"] == 0
-        # SET-land：飞船随处可停——没有码头；每个村 / 专业聚落一块同岛、非水非崖的泊场；每条索桥两端各一桥头
+        # SET-land：飞船随处可停——没有码头；每个村 / 专业聚落一块同岛、非水非崖的泊场；P5 起没有索桥、桥头与导水槽
         assert "docks" not in S
         lands = {L["id"]: L for L in S["landings"]}
         assert len(lands) == len(S["villages"]) + len(S["specials"])
@@ -165,10 +166,37 @@ def test_island_deterministic_and_consistent(small_ctx):
             L = lands[v["landing"]]
             i, j = L["cell"]
             assert z["island_id"][i, j] == v["island"] and not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0
-        n_bridge = sum(1 for e in J1["links"] if e["kind"] == "bridge")
-        assert len(S["bridgeheads"]) == 2 * n_bridge
-        for d in S["bridgeheads"]:
-            assert z["cliff"][d["cell"][0], d["cell"][1]] and z["island_id"][d["cell"][0], d["cell"][1]] == d["island"]
+        assert all(e["kind"] == "ferry" for e in J1["links"]) and "channels" not in J1 and "n_bridges" not in J1["layout"]
+        assert "bridgeheads" not in S and "channels" not in S
+        # P5：宜垦 / 已垦 / 撂荒——已垦 ⊂ 宜垦（梯田标记一致）、撂荒 ⊂ 宜垦且不与已垦重叠；宜垦 > 已垦 = 行星层额度；旧的 arable 不再写
+        assert "arable" not in z.files and (out / "farmland.png").exists() and not (out / "arable.png").exists()
+        cv, ct, fy = z["cultivable"], z["cultivated"], z["fallow_years"]
+        assert not ((ct > 0) & (ct != cv)).any() and not ((fy > 0) & ((cv == 0) | (ct > 0))).any()
+        assert (cv > 0).sum() > (ct > 0).sum() > 0
+        F = S["farmland"]
+        assert F["cultivated_km2"] == F["quota_km2"] and F["cultivable_km2"] > F["cultivated_km2"]
+        assert abs(J1["constraints"]["arable_frac"]["actual"] - J1["constraints"]["arable_frac"]["target"]) < 0.005
+        # 定居门槛：有农户（村或散户）的岛，已垦都够 settle_min_hh 户的地；专业聚落的住法、工棚不在有农户的岛上、工棚 / 季节住记着住哪个村
+        ck = (J1["raster"]["res_m"] / 1000) ** 2
+        farm_isl = {v["island"] for v in S["villages"]} | {h["island"] for h in S["hamlets"]}
+        for k in farm_isl:
+            assert float(((z["island_id"] == k) & (ct > 0)).sum()) * ck >= F["settle_min_hh"] * S["land_per_household_km2"] - 1e-6 or F["forced_km2"] > 0
+        vids = {v["id"] for v in S["villages"]}
+        for x in S["specials"]:
+            assert x["occupancy"] in ("常住", "工棚", "季节住")
+            assert x["occupancy"] != "工棚" or x["island"] not in farm_isl
+            assert x["occupancy"] == "常住" or not S["villages"] or x["home_village"] in vids
+        # 没人住 ≠ 没人用：有人用的岛都没人常住；废村在自己的岛上、撤空了几年、旁边的田撂荒同样的年头；每岛一条荒地归属
+        res_isl = farm_isl | {x["island"] for x in S["specials"] if x["occupancy"] == "常住"}
+        for u in S["uses"]:
+            assert u["island"] != 0 and u["island"] not in res_isl and z["island_id"][u["cell"][0], u["cell"][1]] == u["island"]
+        for r in S["ruins"]:
+            assert r["abandoned_years"] >= 1 and z["island_id"][r["cell"][0], r["cell"][1]] == r["island"] and r["name"].startswith("废村")
+            assert (fy == min(255, r["abandoned_years"])).any()
+        assert [t["island"] for t in S["land_tenure"]] == list(range(len(J1["islands"])))
+        for t in S["land_tenure"]:
+            assert t["owner"] in ("村", "大户", "官荒") and (t["owner"] == "村") == (t["island"] in farm_isl)
+            assert t["status"] in ("常住", "季节住", "有人用", "荒岛") and (t["status"] == "常住") == (t["island"] in res_isl)
         # SET-town：邑治是镇，每个村归一个镇；开垦只减林地（林地占比不升）
         if S["villages"]:
             assert any(t["seat"] for t in S["towns"]) and all(v.get("market_town") for v in S["villages"])

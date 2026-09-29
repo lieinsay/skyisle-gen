@@ -177,20 +177,17 @@ def test_float_stats_summary():
     assert s["spearman_age"] < -0.4 and 0.6 < s["up_share"] < 0.8 and s["calib"]["rim_floor"]
 
 
-def test_wide_bridges_still_identical(world, tmp_path):
-    """索桥现在只架在岸距 ≤ 100 m、高差 ≤ 30 m 的岛之间（几乎没有）：桥头 / 导水槽 / 郭的代码路径改用旧判据（2 km / 250 m）
-    跑一群，两个后端照样逐字节相同，且真有索桥。"""
+def test_old_bridge_keys_make_no_bridges(world, tmp_path):
+    """P5（用户定）去掉了索桥：旧 run 的快照里留着的 bridge_max_km / bridge_max_dh_m 设成旧判据（2 km / 250 m）也不再有索桥、
+    桥头与导水槽，岛对全是短渡且连通；两个后端照样逐字节相同。"""
     wide = ["island.layout.bridge_max_km=2.0", "island.layout.bridge_max_dh_m=250"]
-    narrow = ["island.layout.bridge_max_km=0.1", "island.layout.bridge_max_dh_m=30"]
-    for node in _nodes(world):
-        a, ga = _gen(world, node, "python", tmp_path / "py", wide)
-        b, gb = _gen(world, node, "cpp", tmp_path / "cpp", wide)
-        if gb["json"]["layout"]["n_bridges"] == 0:
-            continue
-        pa, pb = _products(a), _products(b)
-        assert sorted(pa) == sorted(pb) and not [k for k in pa if pa[k] != pb[k]], node
-        assert len(gb["settle"]["bridgeheads"]) == 2 * gb["json"]["layout"]["n_bridges"]
-        _gen(world, node, "cpp", tmp_path / "n", narrow)      # 判据改回来（--set 会留在 ctx 上）
-        return
-    _gen(world, _nodes(world, 1)[0], "cpp", tmp_path / "n", narrow)
-    pytest.skip("这个 seed 挑的几群在旧判据下也没有索桥")
+    node = _nodes(world, 1)[0]
+    a, ga = _gen(world, node, "python", tmp_path / "py", wide)
+    b, gb = _gen(world, node, "cpp", tmp_path / "cpp", wide)
+    pa, pb = _products(a), _products(b)
+    assert sorted(pa) == sorted(pb) and not [k for k in pa if pa[k] != pb[k]], node
+    for g in (ga, gb):
+        J = g["json"]
+        assert all(e["kind"] == "ferry" for e in J["links"]) and "channels" not in J and "n_bridges" not in J["layout"]
+        assert "bridgeheads" not in g["settle"] and "channels" not in g["settle"]
+    _gen(world, node, "cpp", tmp_path / "n", ["island.layout.bridge_max_km=0.1", "island.layout.bridge_max_dh_m=30"])   # 改回来（--set 会留在 ctx 上）
