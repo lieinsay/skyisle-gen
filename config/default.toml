@@ -19,7 +19,7 @@ grid_res_deg = 1.0
 [shared.ships]         # 地形分类阈值与航程共用一组（docs/02 第三节：分类即能力阈值）
 # 节点 = 岛群（R10）：阈值量的是「岛群之间」的间距；群内小岛彼此 5–15 km，永远是密接
 # （半小时可达），属第三层，不进管线。
-bridge_days = 0.15     # 密接群岛：群与群之间可架索桥、短渡
+bridge_days = 0.15     # 密接群岛：群与群之间短渡可达（键名沿用；P5 起岛与岛之间没有索桥、全靠船，原来「可架索桥」的说法作废，这一档距离不变）
 small_days = 1.0       # 中疏诸岛：群间小船单日可达；也是「宽空域」起算宽度
 big_days = 3.0         # 稀疏岛链：群间需好船；大船最大单跳航程
 
@@ -108,7 +108,7 @@ land_frac_cap = 0.35          # f 硬上限（印尼水平）；密接群岛整�
 land_frac_sigma = 0.5         # f 的对数正态抖动（群与群之间的陆地差异；抖动后仍封顶）
 # 可用地率（R9）：陆地里能耕的比例。只是一个标量，不生成岛内地形（第三层按需生成）。
 arable_frac_sigma = 0.35      # 对数正态抖动（均值 = shared.scale.arable_frac_mean）
-arable_frac_range = [0.03, 0.30]  # 夹断：火山岩岛 ~0.03，冲积平坦岛群 ~0.30
+arable_frac_range = [0.03, 0.30]  # 夹断：多山、土薄的岛群 ~0.03，低平、土厚的岛群 ~0.30（没有火山：P3）
 height_scale_m = 1500.0       # height_m 的口径：主岛「台面」= 陆地高程中位数（④ 的岛上气温在这个高度），不是峰高；峰由第三层按岛龄 × 面积长出（DESIGN-NOTES 四点十九）
 height_noise_cells = 5
 height_jitter_m = 150.0
@@ -360,7 +360,7 @@ precip_full = 0.25            # 人口 = P1 × 可耕地 × clip(降水 / precip
                               # 骨架第二版由 0.5 改 0.25：核心是谷物（粟麦）农业，0.25 ≈ 700 mm/年已足（郑州 640 mm）；0.5 ≈ 1,900 mm 是稻作口径
 precip_floor = 0.25           #   折减下限（再干也不至于空）
 control_radius_days = 2.2     # R0：控制力 exp(−w / R) 的基准尺度（w = 商旅成本 × 后勤倍率 + R0 × L_trade）
-ship_logistics_mult = 3.0     # 群间需飞行（间距 > 索桥 bridge_days）的边，大宗后勤成本倍率：能架桥短渡的才便宜（docs/02 §三「帝国只能长在密接群岛」）
+ship_logistics_mult = 3.0     # 群间需远航（间距 > 短渡 bridge_days）的边，大宗后勤成本倍率：短渡可达的才便宜（docs/02 §三「帝国只能长在密接群岛」；P5 起没有索桥，只改说法）
 control_min = 0.2             # θ：控制力低于此即圈不进来（半径 = R × ln(1/θ) ≈ 1.6 R）
 radius_pop_exponent = 0.25    # β：R_c = R0 × (核心实力 / 中位)^β；核心实力 S = 控制范围内 Σ 人口 × 控制力（聚得拢的人与粮）
 capital_min_strength_frac = 1.0   # 核心实力低于中位 × 此值的邑养不起一邦，归入控制力最大的邻邦；0.5 时邦数翻倍、中位只 5 邑，1.0 时 ≈300 邦、中位 14 邑（seed 42）
@@ -501,12 +501,9 @@ surface_lo = 0.6              # 其余岛台面 = 主岛台面 × U(lo, hi)（�
 surface_hi = 1.0
 layered_spread_m = 400.0      # 叠层群：其余岛再 ± U(0.5, 1) × 此值，出现上下错开的岛
 age_jitter = 0.08             # 群内各岛岛龄围绕节点岛龄的抖动（主岛不抖）
-# 索桥：岸距 ≤ bridge_max_km 且岸缘高差 ≤ bridge_max_dh_m；否则短渡（飞船）。2026-09-27 用户定：去掉不合理的长索桥（DESIGN-NOTES 四点二十八）——
-# 前工业时代的绳索桥跨度几十到一百来米，现实最长的钢缆悬索桥主跨也才约 2 km（旧值 2 km 等于到处架现代最长的桥）；
-# 高差：100 m 长的桥两头差 250 m（旧值）等于一面墙，30 m 约 17° 坡。群内岸距一般 ≥ layout.gap_min_km（1 km），索桥几乎只剩贴得很近的岛对
-bridge_max_km = 0.1
-bridge_max_dh_m = 30.0
-ferry_max_km = 20.0           # 只给岸距 ≤ 此值的岛对连短渡（连通性回退另补）
+# 岛与岛之间没有索桥（P5，2026-09-29 用户定：有更方便的船；架超过 20 m 的桥太麻烦、不合理），全靠船；导水槽只沿索桥走，也随之没了。
+# 旧键 bridge_max_km / bridge_max_dh_m 删掉（旧 run 的快照里留着无害）；岛上跨溪涧的短桥在营建器里，不受影响
+ferry_max_km = 20.0           # 只给岸距 ≤ 此值的岛对连短渡（飞船航线；连通性回退另补）
 
 [island.territory]            # 势力范围（territory.py，DESIGN-NOTES 四点二十二）：邻群的陆地不许叠——与每个邻群按等效半径 √(陆地/π) 分界
 enabled = true                # 布局照旧摆，越界了才带约束重摆（主岛挪进来、放不下再转走向；其余岛带约束），没越界的群产物不变
@@ -643,6 +640,12 @@ arable_temp_min_c = 2.0
 terrace_slope_deg = 8.0       # 可耕且坡度 ≥ 此值 → 梯田
 arable_patch_km = 2.0         # 适宜度乘的斑块噪声：特征尺度与幅度（田块成团；0 = 关）
 arable_patch_amp = 0.35
+# 宜垦（P5，DESIGN-NOTES 四点三十六）：地本身能不能种，与此刻有没有人种（已垦，聚落层按人口定）拆开。上面按行星层额度取的是「上等地」
+# （额度内最好的宜垦地：资源层照旧避开它，赋存场不变）；宜垦是下面这些条件都满足的格（上等地一定算宜垦），坡 ≥ terrace_slope_deg 的要修梯田
+cultivable_slope_max_deg = 25.0   # 坡 < 此值（再陡梯田也修不起）
+cultivable_summer_min_c = 10.0    # 最暖的月份（海拔温度的年均 + 半个季节温差）≥ 此值：生长季够种一季（与林线同一条 10 °C 线；只看年均会把大陆性强、夏天够热的群当成不宜垦）
+cultivable_soil_min = 0.2         # 土层指数 ≥ 此值（与成林门槛同）
+cultivable_wet_min = 0.25         # 湿度指数 ≥ 此值（平地约 375 mm）或离河湖 water_near_cells 内（引得到水）；更干的只留给行星层的降水线（P8）
 
 [island.resources]            # 5.3c 地形区与资源分布（resources.py；第三层叙事 / 场景素材，不进管线）
 relief_km = 2.0               # 局地起伏的方窗半宽（km）：起伏 = 窗内最高 − 最低
@@ -815,4 +818,26 @@ town_clear_mult = 1.5
 city_urban_rate = 0.3         # 都（5.7）：城居人口 = 本邑人口 × 城居率 + 邦人口 × 集聚率（普通邦 / 变法之国）；「帝国拨盘」
 city_gather_rate = 0.05
 city_gather_rate_reformer = 0.10
-city_guo_km = 5.0             # 郭：索桥可达且离城此距离内的村并入（3 km 时都城周围常常一个村都没有：邑治的田块本身就 2 km 宽）
+city_guo_km = 5.0             # 郭：离城此距离内、在城所在的岛上或与它岸距 ≤ city_guo_ferry_km 的岛上的村并入（3 km 时都城周围常常一个村都没有：邑治的田块本身就 2 km 宽）
+city_guo_ferry_km = 3.0       # P5：没有索桥了，「郭」原来的「索桥可达」换成同岛或船程近（短渡一刻钟）
+# ---- P5（DESIGN-NOTES 四点三十六）：有的地方就是没人——已垦由人口从最好的宜垦地往外填（好地先占），定居有门槛，没人住 ≠ 没人用
+settle_min_hh = 20            # 定居门槛：一片宜垦地（连通、不跨岛）要常住，头一轮分到的地至少够这么多户（一个像样的村，约百口人）；不够的整片让出来，额度补给留下的片
+settle_water_km = 1.0         # ……要有水：此距离内有河 / 湖 / 溪涧 / 泉，
+settle_rain_mm = 400.0        # ……或年降水 ≥ 此值（能蓄雨：蓄水池、水窖）；能落船：landing_reach_cells 内有坡 ≤ landing_slope_max_deg 的平地；片的宜垦地也要够 settle_min_hh 户
+fallow_frac = 0.08            # 撂荒：留下的片里接着往外、离在种的田 ≤ fallow_ring_cells 格的一层，取已垦的这么多（额度之外：已垦照旧 = 额度）
+fallow_ring_cells = 2
+fallow_years_max = 25         # 每个连通块一个年头：1 … 此值（游戏按年头撒：一两年野草、三五年灌丛、十几二十年小树林）
+fallow_grass_years = 2        # 撂荒地的地表：≤ 此年头草坡；≤ fallow_shrub_years 灌丛（原本是林 / 灌丛的）；再久回到原本的地表
+fallow_shrub_years = 9
+ruin_max = 3                  # 废村：让出来的片里头一轮分得最多的几片（≥ ruin_min_hh 户），至多这么多个；头一轮分到的地是撂荒的田
+ruin_min_hh = 8
+ruin_years = [5, 60]          # 撤空了几年（均匀整数，含两端）；旁边的田撂荒同样的年头
+graze_min_km2 = 0.5           # 放牧岛：没人常住的岛上草坡 / 高山草甸 / 灌丛 ≥ 此面积、离最近的村 ≤ graze_reach_km，按离村近挑至多 graze_max 座（只放牲口）
+graze_reach_km = 10.0
+graze_max = 4
+shieling_min_km2 = 3.0        # 放牧岛里草坡 + 高山草甸 ≥ 此面积的是夏牧（夏天赶上来、搭牧棚住一季）
+beacon_max = 2                # 烽火台：群边高处——离主岛最远的几座没人住的岛（彼此方位差 ≥ beacon_sep_deg），轮班守
+beacon_sep_deg = 90.0
+shrine_p = 0.5                # 庙：以此概率在邑治附近一座没人住的岛上有一座（逢年过节有人上岛）
+tomb_p = 0.35                 # 墓岛：以此概率在邑治附近一座 ≤ tomb_max_km2 的没人住的小岛上
+tomb_max_km2 = 5.0
