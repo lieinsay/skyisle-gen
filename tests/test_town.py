@@ -391,12 +391,50 @@ def test_operator_fit_rules():
     assert P["ops_fit"] == ["street_village"] and P["op"] == "street_village"
 
 
-def test_unfit_style_says_why():
-    """风格与地形不合（水乡的坡度上限 8°，朝阳坡上处处更陡）：照风格硬做、住不下，校验说清楚是地不够。"""
+def _check(P, cid):
+    return next((c for c in P["checks"] if c["id"] == cid), None)
+
+
+def test_terrain_first_relaxes_ground_limits():
+    """优先次序（用户定）：地形 > 合理 > 风格。水乡的坡度上限 8°，朝阳坡上处处更陡——照风格一户都住不下，
+    风格让路：地面上限放宽一档（坡 14°、挖填 1.5 m、台地 2.4 m）再排，全村住下，TP-terrain 说放宽了多少。"""
     _, P = _style_plan("jiangnan", "朝阳坡")
-    c = next(c for c in P["checks"] if c["id"] == "TP-hh")
-    assert not c["ok"] and "能盖房的地" in c["msg"] and "8°" in c["msg"]
-    assert P["metrics"]["buildable_share_near"] < 0.1
+    assert not hard_failures(P), [c["id"] + "：" + c["msg"] for c in hard_failures(P)]
+    assert (P["households"]["compound"] >= 0).all()
+    c = _check(P, "TP-terrain")
+    assert c and not c["hard"] and c["ok"] and "地形优先" in c["msg"] and "坡 8°" in c["msg"] and "只住下 0 / 40 户" in c["msg"]
+    M = P["metrics"]
+    assert M["terrain_relax_level"] == 1 and M["max_slope_deg_used"] == pytest.approx(14.0) and M["max_cut_m_used"] == pytest.approx(1.5)
+    assert M["buildable_share_near"] > 0.5   # 按放宽后的上限量
+
+
+def test_style_that_fits_the_ground_is_not_relaxed():
+    """照风格住得下的一次排完：没有 TP-terrain、没有放宽的指标，产物与不放宽时一样。"""
+    _, P = _style_plan("huabei", "河谷", hh=60)
+    assert _check(P, "TP-terrain") is None and "terrain_relax_level" not in P["metrics"]
+    assert _check(P, "TP-hh")["ok"]
+
+
+def test_terrain_first_smaller_yards_when_plots_do_not_fit():
+    """绿地村的宅地（toft & croft）进深 60–100 m，峡湾岸海边那条平地摆不下：风格让路，余下的户换风格里最小的院子（小农舍）沿路排开。"""
+    _, P = _style_plan("england", "峡湾岸", op="green")
+    assert not hard_failures(P), [c["id"] + "：" + c["msg"] for c in hard_failures(P)]
+    assert (P["households"]["compound"] >= 0).all()
+    names = {c["template_name"] for c in P["compounds"] if c["kind"] == "house"}
+    assert "toft & croft" in names and "小农舍（cottage）" in names
+
+
+def test_style_miss_caused_by_terrain_is_excused():
+    """TP-style 里地形逼出来的偏离单列「地形所致、不算」：华北团村上山顶，只能顺山脊成带（村心摆一块 λ 1.6 的，
+    一半落在坡上）；朝阳坡上鱼骨街村拉成 λ 4 是排法自己拉长的（摆得下团村），照实算没过。"""
+    _, P = _style_plan("huabei", "山顶", op="organic", hh=60)
+    c = _check(P, "TP-style")
+    assert "地形所致、不算：λ" in c["msg"] and "lambda =" not in c["msg"]
+    assert P["metrics"]["lambda"] > 1.6 and P["metrics"]["lambda_room_share"] < 0.85
+    _, P = _style_plan("huabei", "朝阳坡", op="fishbone", hh=60)
+    c = _check(P, "TP-style")
+    assert not c["ok"] and "lambda =" in c["msg"] and "地形所致" not in c["msg"]
+    assert P["metrics"]["lambda_room_share"] >= 0.85
 
 
 def test_gallery_command(tmp_path):
