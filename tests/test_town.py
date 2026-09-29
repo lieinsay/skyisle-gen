@@ -280,3 +280,206 @@ def test_plan_cli_products(tmp_path):
     assert J["style"]["id"] == "huabei" and J["compounds"] and J["checks"]
     assert all(c["ok"] for c in J["checks"] if c["hard"])
     assert load_style(str(out / "style.resolved.toml")) is not None, "解析后的风格能原样再读回来"
+
+
+# ---------------------------------------------------------------- 第三步：其余村级算子与十一个风格、画廊
+from skyisle_gen.town.style import OPERATORS  # noqa: E402
+
+ALL_STYLES = [x["id"] for x in list_styles()]
+_GROUNDS: dict = {}
+
+
+def _ground(terrain, hh=40, hf=1.0):
+    key = (terrain, hh, hf)
+    if key not in _GROUNDS:
+        _GROUNDS[key] = site_synth(terrain, "village", hh, town_config(), seed=1, half_factor=hf)
+    return _GROUNDS[key]
+
+
+def _style_plan(style, terrain, op=None, hh=40):
+    """与 town synth --terrain 同一种 --style 同一种 一样：窗口按风格的放大系数。"""
+    st = load_style(style)
+    sd, meta = _ground(terrain, hh, float(st.get("site", {}).get("window_factor", 1.0)))
+    return st, make_plan(sd, meta, st, op)
+
+
+def test_all_styles_load():
+    assert set(ALL_STYLES) == {"huabei", "jiangnan", "huizhou", "linpan", "lingnan", "yaodong", "hakka", "nordic", "central_eu", "england",
+                               "med_hill", "japan"}
+    for sid in ALL_STYLES:
+        st = load_style(sid)
+        ops = {k: v for k, v in st["village"]["operators"].items() if v > 0}
+        assert ops and set(ops) <= set(OPERATORS), sid
+        assert style_flat(st)["str"]["style.meta.id"] == sid
+
+
+@pytest.mark.parametrize("style", ALL_STYLES)
+def test_every_style_on_the_same_valley(style):
+    """画廊的验收（PLAN-TOWN 第三步）：同一块河谷地 × 十二个风格，按风格的权重挑算子——硬项全过、户都住下。"""
+    st, P = _style_plan(style, "河谷")
+    assert not hard_failures(P), [c["id"] + "：" + c["msg"] for c in hard_failures(P)]
+    assert P["op"] in st["village"]["operators"] and P["op"] in P["ops_fit"]
+    assert (P["households"]["compound"] >= 0).all()
+
+
+# 每个算子在合它的地上（风格 × 算子 × 地形）；后面是这个算子的特征指标
+OP_CASES = [("central_eu", "hufen", "平原"), ("central_eu", "street_village", "河谷"), ("central_eu", "green", "平原"),
+            ("central_eu", "organic", "朝阳坡"), ("england", "street_village", "平原"), ("england", "green", "河谷"),
+            ("england", "organic", "平原"), ("hakka", "enclosure", "朝阳坡"), ("hakka", "enclosure", "平原"), ("huizhou", "organic", "河谷"),
+            ("japan", "dispersed", "平原"), ("japan", "street_village", "河谷"), ("japan", "organic", "平原"),
+            ("jiangnan", "waterfront", "曲流平原"), ("jiangnan", "waterfront", "两河交汇"), ("jiangnan", "street_village", "平原"),
+            ("lingnan", "comb", "平原"), ("linpan", "dispersed", "曲流平原"), ("med_hill", "organic", "山顶"),
+            ("nordic", "dispersed", "朝阳坡"), ("nordic", "street_village", "河谷"), ("yaodong", "contour", "黄土沟"),
+            ("yaodong", "organic", "平原")]
+SIGNATURE = {"dispersed": ("site_clark_evans", "sites", "site_nn_median_m"), "waterfront": ("water_front_share",),
+             "comb": ("lane_spacing_cv", "lane_spacing_m"), "enclosure": ("hh_per_enclosure", "enclosures"), "contour": ("terraces", "terrace_step_m"),
+             "hufen": ("frontage_cv",), "street_village": ("face_street_share",)}
+
+
+@pytest.mark.parametrize("style,op,terrain", OP_CASES)
+def test_operator_on_fitting_ground(style, op, terrain):
+    st, P = _style_plan(style, terrain, op)
+    assert P["op"] == op
+    assert not hard_failures(P), [c["id"] + "：" + c["msg"] for c in hard_failures(P)]
+    for k in SIGNATURE.get(op, ()):
+        assert k in P["metrics"], f"{op} 没出指标 {k}"
+    kinds = {f["kind"] for f in P["features"]}
+    M = P["metrics"]
+    if op == "dispersed":
+        assert M["sites"] >= 5 and M["site_nn_median_m"] > 40.0, "散居：一处处隔开"
+        if style == "japan":
+            assert M["site_clark_evans"] >= 1.0, "砺波散居村 R ≥ 1（匀散）"
+    if op == "waterfront":
+        assert M["water_front_share"] >= 0.3 and "steps" in kinds, "前街后河：房临水、有河埠头"
+    if op == "enclosure":
+        assert any(b["role"] == "ring" for b in P["buildings"]) and M["hh_per_enclosure"] >= 4, "土楼 / 围龙屋：一楼住多户"
+    if op == "contour":
+        assert M["terraces"] >= 2, "沿沟台：至少两层台"
+    if op == "green":
+        assert "green" in kinds, "围绿：有村绿"
+    if op == "comb":
+        assert M["lane_spacing_cv"] <= 0.3, "梳式：巷距匀"
+    if style == "england" and op == "street_village":
+        assert "garden" in kinds and "furlong" in kinds, "toft 后是 croft，村外是敞田的条田"
+    if style == "japan" and op == "organic":
+        assert "moat" in kinds, "環濠集落有濠"
+
+
+def test_operator_fit_rules():
+    """挑算子只在这块地能用的里挑：滨水要河、等高线要坡、地坑院 / 散居村 / 環濠集落 / 绿地村要平地。"""
+    _, P = _style_plan("yaodong", "平原")
+    assert "contour" not in P["ops_fit"] and P["op"] == "organic", "平地上没有沿沟台"
+    _, P = _style_plan("yaodong", "峡湾岸")
+    assert "organic" not in P["ops_fit"] and P["op"] == "contour", "陡岸上没有地坑院"
+    _, P = _style_plan("jiangnan", "平原")
+    assert "waterfront" not in P["ops_fit"], "平原没有河：不做前街后河"
+    _, P = _style_plan("japan", "朝阳坡")
+    assert P["ops_fit"] == ["street_village"] and P["op"] == "street_village"
+
+
+def test_unfit_style_says_why():
+    """风格与地形不合（水乡的坡度上限 8°，朝阳坡上处处更陡）：照风格硬做、住不下，校验说清楚是地不够。"""
+    _, P = _style_plan("jiangnan", "朝阳坡")
+    c = next(c for c in P["checks"] if c["id"] == "TP-hh")
+    assert not c["ok"] and "能盖房的地" in c["msg"] and "8°" in c["msg"]
+    assert P["metrics"]["buildable_share_near"] < 0.1
+
+
+def test_gallery_command(tmp_path):
+    from skyisle_gen.cli import main
+    assert main(["town", "gallery", "--terrain", "河谷", "--styles", "华北集村,jiangnan", "--households", "30", "--out", str(tmp_path)]) == 0
+    out = tmp_path / "town" / "gallery" / "河谷-村30户-s1"
+    assert (out / "gallery.png").stat().st_size > 0
+    J = json.loads((out / "gallery.json").read_text(encoding="utf-8"))
+    assert [t["style_id"] for t in J["tiles"]] == ["huabei", "jiangnan"] and J["request"]["operators"] == "default"
+    # 每一格与 town synth 同参数的方案逐一相同
+    for t in J["tiles"]:
+        st, P = _style_plan(t["style_id"], "河谷", hh=30)
+        assert t["operator"] == P["op"] and t["buildings"] == len(P["buildings"]) and t["compounds"] == len(P["compounds"])
+        assert not t["hard_fail"]
+    # 每个能用的算子各一格；两种地形一行一种
+    assert main(["town", "gallery", "--terrain", "黄土沟,平原", "--styles", "yaodong", "--operators", "each", "--households", "30",
+                 "--out", str(tmp_path)]) == 0
+    J = json.loads((tmp_path / "town" / "gallery" / "黄土沟+平原-村30户-s1-各算子" / "gallery.json").read_text(encoding="utf-8"))
+    by = {}
+    for t in J["tiles"]:
+        by.setdefault(t["terrain"], []).append(t["operator"])
+        assert t["operator"] in t["operators_fit"]
+    assert sorted(by["黄土沟"]) == sorted(J["tiles"][0]["operators_fit"]) and by["平原"] == ["organic"]
+
+
+# ---------------------------------------------------------------- 第五步：营建调试台 /town.html
+def test_town_console_api(tmp_path):
+    import base64
+    import threading
+    import urllib.parse
+    import urllib.request
+    from functools import partial
+    from http.server import ThreadingHTTPServer
+
+    from skyisle_gen.web.server import App, Handler
+    from skyisle_gen.web.town_api import town_dumps
+    app = App(tmp_path)
+    api = app.town
+    S = api.styles()
+    assert len(S["styles"]) == 12 and "河谷" in S["terrains"]
+    assert {o["id"] for o in next(x for x in S["styles"] if x["id"] == "japan")["operators"]} == {"dispersed", "street_village", "organic"}
+    req = {"source": "synth", "terrain": "平原", "households": 20, "style": "huabei", "operator": "organic"}
+    J = api.plan(req)
+    assert J["op_name"] == "团块生长" and J["plan"]["plan"]["operator"] == "organic" and J["saved"] is None
+    assert all(c["ok"] for c in J["plan"]["checks"] if c["hard"])
+    g = J["ground"]
+    assert len(base64.b64decode(g["height_u16"])) == 2 * g["rows"] * g["cols"] and len(base64.b64decode(g["occ_u8"])) == g["rows"] * g["cols"]
+    assert base64.b64decode(g["png"])[:4] == b"\x89PNG"
+    json.loads(town_dumps(J))
+    # 同一块地换一种窗口系数相同的风格：地面走缓存；方案与命令行的一样
+    J2 = api.plan({**req, "style": "lingnan", "operator": ""})
+    assert len(api.grounds) == 1 and J2["plan"]["style"]["id"] == "lingnan"
+    st = load_style("lingnan")
+    sd, meta = _ground("平原", 20)
+    assert len(J2["plan"]["buildings"]) == len(make_plan(sd, meta, st)["buildings"])
+    # 参数覆盖：只收 style.* / town.*；覆盖进了风格哈希
+    with pytest.raises(ValueError):
+        api.plan({**req, "sets": ["bogus=1"]})
+    J3 = api.plan({**req, "sets": ["style.street.lane_width_m=[2.5,3]"], "save": True})
+    assert J3["plan"]["style"]["hash"] != J["plan"]["style"]["hash"]
+    out = Path(J3["saved"])
+    for fn in ("plan.json", "site.npz", "plan.png", "plan.svg", "style.resolved.toml"):
+        assert (out / fn).stat().st_size > 0, fn
+    assert "lane_width_m = [2.5, 3]" in api.style_text("huabei", ["style.street.lane_width_m=[2.5,3]"])
+    # 走一遍 HTTP：页面、清单、营建、参数
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), partial(Handler, app=app))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        assert b"/api/town/plan" in op.open(base + "/town.html").read()
+        assert len(json.loads(op.open(base + "/api/town/styles").read())["styles"]) == 12
+        body = json.dumps({**req, "style": "英格兰集村", "operator": "street_village"}, ensure_ascii=False).encode("utf-8")
+        Jh = json.loads(op.open(urllib.request.Request(base + "/api/town/plan", data=body, method="POST")).read())
+        assert Jh["plan"]["style"]["id"] == "england" and Jh["op_name"].startswith("规划型")
+        assert 'id = "huabei"' in op.open(base + "/api/town/style?name=" + urllib.parse.quote("华北集村")).read().decode("utf-8")
+    finally:
+        srv.shutdown()
+
+
+def test_town_console_sites(group):
+    """岛群里的聚落清单与「营建此聚落」：村能营建、镇与专业聚落标出来（第四 / 六步）。"""
+    from skyisle_gen.web.town_api import TownApi
+    ctx, node, v = group
+    api = TownApi(ctx.out_dir.parent, lambda run: ctx)
+    S = api.sites("town", node)
+    names = {r["name"]: r for r in S["sites"]}
+    assert names[v["name"]]["plannable"] and names[v["name"]]["households"] == v["households"]
+    assert all(not r["plannable"] for r in S["sites"] if r["kind"] == "镇")
+    J = api.plan({"source": "site", "run": "town", "node": node, "site": v["name"], "style": "huabei", "half": 300})
+    assert J["meta"]["site"] == v["name"] and J["plan"]["households"]
+
+
+def test_island_console_links_to_town():
+    static = PKG / "web" / "static"
+    i = (static / "island.html").read_text(encoding="utf-8")
+    assert "/town.html?run=" in i and "营建此聚落" in i and "dblclick" in i
+    t = (static / "town.html").read_text(encoding="utf-8")
+    for api in ("/api/town/styles", "/api/town/sites", "/api/town/plan", "/api/town/style"):
+        assert api in t
