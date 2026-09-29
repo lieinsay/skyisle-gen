@@ -46,9 +46,10 @@
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165；营建调试台 /town.html?run=seed42&node=2051&site=村037
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 246 个测试，约 7 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
+  $py -m pytest tests -q                          # 247 个测试，约 7 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
                                                   # 扩展没编时 C++ 的 124 个跳过，其余经 tests/conftest.py 自动用 python 后端）
   $py docs/probes/transect.py out/seed42/islands 6615,6610,6329,6073,6072,5766,5498,2051 --run out/seed42
+  $py docs/probes/works_view.py out/seed42/islands/6329 --auto head|patch [--out 图.png]   # 水利俯视图（P6）：灌田最多的渠首的渠网 / 最大的一片圩田（也可 --head N / --patch N / --rows --cols）
                                                   # 量剖面（Zhouzhu PLAN-LAND 第二节同口径：地形 / 河 / 湿地、宜垦 / 已垦 / 撂荒、小岛有没有人、有人用没人住的岛），直接读岛群产物
   ```
 - **C++ 核心库（`core/`，行星计划 P6；设计稿 `docs/PLAN-CORE.md`，DESIGN-NOTES 四点二十三 – 四点二十六）**：`[engine] backend = "cpp" | "python"`（**P6d 起默认 cpp**）。
@@ -134,7 +135,11 @@ skyisle_gen/
                  settle    聚落（PLAN-SETTLE，DESIGN-NOTES 四点十五 / 四点十八 / 四点三十六）：人口只读 ⑨ → 户（10% 非农）；已垦（farmland：好地先占 + 定居门槛、撂荒、废村）
                            连通块切田块（k-means 按 80 户地量分）；村址评分；蓄水池 / 取水点；专业聚落的住法（常住 / 工棚 / 季节住）；没人住的岛有人用（放牧 / 烽火台 / 庙 / 墓岛）；
                            前哨、三个主家候选、都与城（城居人口 = 本邑 × 城居率 + 邦 × 集聚率，郭 = 同岛或船程 3 km 内，仓城 = 主泊场，祭台）；荒地归谁 → settlements.json / png
-                 farmland  （P5，四点三十六）宜垦 cultivable_land（hydro 钩子）/ 已垦 fill_cultivated / 废村、住法、有人用、荒地归谁（C++ farmland.cpp 与 settle.cpp）
+                 farmland  （P5，四点三十六）宜垦 cultivable_land（hydro 钩子）/ 已垦 fill_cultivated / 废村、住法、有人用、荒地归谁（C++ farmland.cpp 与 settle.cpp）；
+                           P6 起 fill_cultivated 分两遍：第一遍之后挑人口压力到了的湿地排干（waterworks.polder_plan），第二遍圩田的格先占（额度之内）→ polder_id
+                 waterworks（P6，四点三十七）水利：圩田（polder_plan：湿地周围 2 km 的平地种了过半才排干，600 m 一格一圩）、谷口的渠（build_waterworks：渠首从高往低挑在常年河 / 大溪涧上，
+                           渠 = Dijkstra 最省工的路合成的树、划不划算按新接的渠长 ≤ 0.5 km + 3 km × 田的面积）、村塘 / 山塘 / 圩塘 / 堰塘、渠首闸 / 圩闸 / 排水闸、纵浦横塘与排水渠
+                           → settlements.json 的 waterworks；C++ waterworks.cpp 逐位同式（Dijkstra 按 (工, 格号) 出堆、长度按直步 / 斜步计数）
                  tiers     聚落层级（四点十八）：**飞船取代车船、随处可停 → 没有码头**；专业聚落（矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地 / 盐井村，按资源量、封顶非农 40%）、
                            集镇（中心地：6 km 直线跨岛服务半径、镇距 ≥ 10 km、邑治必为镇）、每个聚落旁一块泊场、村周开垦（林地 → 草坡 / 灌丛薪炭林，林场 patch_id 划掉）、
                            村的采场（开垦之后：石 / 土 / 砂就近取，先合用 1.5 km 内已有的，再在 5 / 2 / 2 km 内按品位 × 距离挑；矿镇矿村改读金属矿赋存区）
@@ -165,7 +170,7 @@ config/town/styles/（base.toml 全部风格键的默认与注释，`operators =
 core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）：include/skyisle/ rng（与 numpy 逐位一致的 SeedSequence / PCG64 / 分布）、grid（栅格、噪声、连通分量、
                  形态学、倒角传播、重采样，外加 numpy 同式的 np_pow / c_pow / np_hypot / py_hypot / np_sum / np_median / pyround）、flow（填洼、D8、汇流、拓扑序）、config（扁平键值表）、
                  island/（types 群状态与各层记录、layout、territory、terrain、river、build：build_terrain / build_hydro（群内各岛并行）、
-                 resources / climate（含天气）/ settle（含层级）/ generate（整群编排与粗版块降采样）；json.hpp 记录的 JSON 形）；
+                 resources / climate（含天气）/ farmland / waterworks（P6 水利）/ settle（含层级）/ generate（整群编排与粗版块降采样）；json.hpp 记录的 JSON 形）；
                  planet/（P6c：planet.hpp 行星层 ①–④ 的产物结构与 stage1–4 / run、球面与网格公共件；view.hpp 行星层 → 第三层的 PlanetView / NodeInputs；
                  P6d：graph.hpp 图算法（CSR、Dijkstra、抽样介数、弱连通分量）、civ.hpp ⑤–⑨ 的产物结构与 stage5–9 / run_society / apply_polity）；src/ 同名 .cpp（planet/stage5–9.cpp）；
                  third_party/pocketfft（np.fft 的同一份实现，numpy 2.5.2 引用的提交）；python/（nanobind：module.cpp 公共件、bind_island.cpp 第三层、bind_planet.cpp ①–④、bind_civ.cpp ⑤–⑨）；
@@ -263,6 +268,10 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   没有农户的岛上的浮石采石村 / 矿村 / 窑村是工棚，烧炭营季节住；放牧 ≤ 4、烽火台 ≤ 2、庙 50%、墓岛 35%。剖面八群 < 30 km² 的小岛常住的 25–100% → 0–62%（多数 0–9%）。
   **大岛保底**（用户 09-29 定）：主岛以外 ≥ 30 km²、有合门槛的宜垦片的岛先分一块连成片的 20 户的地（一个村，户从主岛匀过去）；村多大按门槛定（试过 80 户：主岛占比 72.9% → 68.7%，
   且 3 座岛长不出连成一块的 80 户的地反而保不住）。剖面八群 ≥ 30 km² 的非主岛 107 座全有村，住在 < 30 km² 小岛上的人 2.0% → 1.1%（人没少，住处变了）。
+  **水利**（P6，2026-09-30，四点三十七，`[island.works]`，都是我定的、等用户看）：渠首在汇水 ≥ 10 km² 的常年河或 ≥ 30 km² 的季节性溪涧（配堰塘）上、从高往低挑、隔 3 km；
+  渠比降 0.5 m/km、挖穿 3 m、走出 6 km 的工、横坡费工 100、田里的格点 0.8 km、新接的渠 ≤ 0.5 km + 3 km × 田的面积才修（第二版没有这条时每 km² 灌田配 3.7–7.2 km 渠，加了以后 2.5–3.4）；
+  村塘 40 m²/户、山塘 / 堰塘 = 所灌田的 3%；圩田：湿地片 ≥ 0.3 km²、周围 2 km 的平地（坡 < 5°）第一遍种了过半才排干、600 m 一圩、圩塘 5%、水田线 800 mm；
+  **圩田在额度之内**（第二遍先占、挤掉最外一层的地）。剖面八群圩田 0–38 km²（#5498 湿地的 19%、#6329 2.8 km²、#6610 26 km² 全是泽田），谷口的渠 92–489 km、灌田占已垦 7–30%。
   资源 `[island.resources]`（四点二十一）：赋存区阈值 矿 / 硫磺 / 砂金 0.15、黏土 / 砂砾 0.3、石料 0.4，隔一格的碎块算一处、≥ 0.05 km²（不合并时 #1165 有 1,940 区，合并后 736）；
   岩类可放区的丘陵坡门槛 8°（「严格按地表、林地一律不放」在林多的群只剩 1–5% 的地、九成以上的村取不到石头，用户选了按地形判）；
   **可放区 ≠ 石料区**：石料按露头算，坡 12° 起算、30° 满，裸岩 / 高山草甸 / 峡谷壁至少 0.6，林坡 × 0.8，> 40° 算崖面（第一版 8° 林坡就算，#1165 石料区 31%、看上去全岛是石头）；砂金增益 8。
@@ -301,6 +310,8 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 
 - Monte Carlo 引擎（`s08.engine="mc"` 只留接口）、软先到权重（`first_arrival_weight` 默认关未实现）
 - 季节窗口进模型（现只有 `seasonal` 标志与 ④ 的窗口比例；岛群生成器已给出每季窗口，但管线不读它）；政治性障碍只支持经纬矩形覆盖
+- 水利（P6）：渠只是线、不改地表也不回头改墒情 / 适宜度（「渠和塘算近水」是游戏的事）；平地上的渠是 45° 与正南北的折线；纵浦横塘是正南北东西的网格；没有「长藤结瓜」、北方的井；
+  挑圩田只看第一遍的压力；粗版不跑聚落、看不到渠与圩田（DESIGN-NOTES 四点三十七末尾）
 - 岛群生成器：资源不进村址选择（村定了再去找石 / 土，矿镇落在矿旁）、赋存区的储量只有面积 × 品位没有吨位、没有地下水与岩性栅格（岩性一岛一种）；河宽是夸张后的数，不是水文模型；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；散户多（已垦按格排先后，田是一片片的）；粗版不跑聚落、地表里的田仍按上等地画；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四
 - 九格表 ④ 特有种 / ⑦ 外观 标【待填】；⑨ 文本量词与归因还比较模板化。⑧ 的世仇 = 接壤且势均力敌、界边最多的邻邦（启发式）
 - 政治层：兼并史是静态快照 + 逐邦顺序（无年内事件、无分裂/复国）；附庸只一层；邦名是 `邦NNN` 占位；南圈与 NW 圈不发生变法（docs/11 §八）
