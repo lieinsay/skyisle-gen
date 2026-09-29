@@ -1,5 +1,6 @@
-// 聚落（settle.py 的 build_settlements / build_links_water / build_homes_city）与层级（tiers.py 的 special_settlements /
-// market_towns / landings / clear_forest / village_workings）。运算次序、排序的稳定性、round 的位数照抄 Python 版。
+// 聚落（settle.py 的 build_settlements / build_water / build_homes_city）与层级（tiers.py 的 special_settlements /
+// market_towns / landings / clear_forest / village_workings），P5 的已垦 / 废村 / 住法 / 有人用的岛 / 荒地归谁（farmland.py）。
+// 运算次序、排序的稳定性、round 的位数照抄 Python 版。
 #include "skyisle/island/settle.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <numeric>
 #include <set>
 
+#include "skyisle/island/farmland.hpp"
 #include "skyisle/island/resources.hpp"
 
 namespace skyisle::island {
@@ -47,6 +49,8 @@ struct Village {                     // 村与散户
     int64_t households_market = 0;
     int market_town = 0;
     bool has_market_town = false;
+    int64_t households_workers = 0, households_seasonal = 0;   // P5：住在这个村的工棚 / 季节住的专业聚落户（0 = 没有这个键）
+    bool has_workers = false, has_seasonal = false;
     int landing = 0;
     bool has_landing = false;
     std::string water_src;
@@ -68,7 +72,15 @@ struct Special {
     int landing = 0;
     bool has_landing = false;
     int working = -1;
+    std::string occupancy;           // P5：resident（常住）/ workcamp（工棚）/ seasonal（季节住）
+    int home_village = -1;           // 工棚 / 季节住的人住的村（−1 = None）
     std::string name() const { return "special:" + kind + ":" + std::to_string(id); }
+};
+
+struct Ruin {                        // P5：废村
+    int id = 0, tract = 0, island = 0, years = 0, ci = 0, cj = 0;
+    int64_t households_before = 0;
+    double fallow_km2 = 0, kx = 0, ky = 0, elev_m = 0;
 };
 
 struct Want {
@@ -158,11 +170,12 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     auto kmj = [&](double i, double j) { return Json::pair(kmx(j), kmy(i)); };
     Resources& R = g.res;
 
-    Mask land(H, W, 0), arable(H, W, 0), water(H, W, 0), river(H, W, 0);
+    Mask land(H, W, 0), water(H, W, 0), river(H, W, 0);
     std::vector<double> slope(N);
+    int64_t n_quota = 0;                 // 行星层的可耕率 = 已垦的额度（hydro 的上等地的格数；P5）
     for (size_t k = 0; k < N; ++k) {
         land.v[k] = g.island_id.v[k] >= 0 ? 1 : 0;
-        arable.v[k] = g.arable.v[k] > 0 ? 1 : 0;
+        n_quota += g.arable.v[k] > 0 ? 1 : 0;
         river.v[k] = g.river.v[k] > 0 ? 1 : 0;
         water.v[k] = (river.v[k] || g.lake.v[k] || g.stream.v[k] > 0) ? 1 : 0;
         slope[k] = static_cast<double>(static_cast<float>(g.slope.v[k]));
@@ -205,14 +218,23 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     }
 
     // ---------- 人口 → 户 ----------
-    int64_t n_arable = 0;
-    for (uint8_t x : arable.v) n_arable += x;
-    const double arable_km2 = static_cast<double>(n_arable) * cell_km2;
+    const double arable_km2 = static_cast<double>(n_quota) * cell_km2;
     const bool pop_polity = !std::isnan(inp.pop);
     const double pop = pop_polity ? inp.pop : arable_km2 * inp.people_per_arable_km2;
     g.settle_pop = pop;
     const double hh_size = sc("household_size");
     const int64_t hh_total = static_cast<int64_t>(std::nearbyint(pop / hh_size));
+    const int64_t nonfarm_hh = n_quota > 0 ? static_cast<int64_t>(std::nearbyint(static_cast<double>(hh_total) * sc("nonfarm_share"))) : 0;
+    const int64_t farm_total = hh_total - nonfarm_hh;
+    const double land_per_hh = arable_km2 / static_cast<double>(std::max<int64_t>(1, farm_total));
+    // ---------- 已垦（P5）：好地先占 + 定居门槛；撂荒与废村（farmland.cpp） ----------
+    Rng rng_fallow = part_rng(inp, "settle:fallow");
+    FillResult FL = fill_cultivated(g, c, rng_fallow, water, land_per_hh, n_quota);
+    Mask arable(H, W, 0), fallow(H, W, 0);
+    for (size_t k = 0; k < N; ++k) {
+        arable.v[k] = g.cultivated.v[k] > 0 ? 1 : 0;
+        fallow.v[k] = g.fallow_years.v[k] > 0 ? 1 : 0;
+    }
     std::vector<double> ar_isl(n_isl, 0.0);
     {
         std::vector<int64_t> cnt(n_isl, 0);
@@ -221,8 +243,6 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         for (int k = 0; k < n_isl; ++k) ar_isl[k] = static_cast<double>(cnt[k]) * cell_km2;
     }
     const double ar_sum = np_sum(ar_isl.data(), ar_isl.size());
-    const int64_t nonfarm_hh = ar_sum > 0 ? static_cast<int64_t>(std::nearbyint(static_cast<double>(hh_total) * sc("nonfarm_share"))) : 0;
-    const int64_t farm_total = hh_total - nonfarm_hh;
     std::vector<int64_t> hh_isl(n_isl, 0);
     for (int k = 0; k < n_isl; ++k) {
         const double share = ar_sum > 0 ? ar_isl[k] / std::max(1e-9, ar_sum) : (k == 0 ? 1.0 : 0.0);
@@ -241,9 +261,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             hh_isl[richest] += hh_isl[k];
             hh_isl[k] = 0;
         }
-    const double land_per_hh = arable_km2 / static_cast<double>(std::max<int64_t>(1, farm_total));
 
-    // ---------- 田块：可耕地 8 邻域连通块（不跨岛）；大块按 80 户（邑治 300）k-means 切分 ----------
+    // ---------- 田块：已垦 8 邻域连通块（不跨岛）；大块按 80 户（邑治 300）k-means 切分 ----------
     GridI lab;
     const int n_lab = label_by_island(arable, g.island_id, 8, lab);
     GridI fields_raster(H, W, 0);
@@ -289,7 +308,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                     fields_raster.v[cells[q]] = fid;
                     si += ii[q];
                     sj += jj[q];
-                    terr += g.arable.v[cells[q]] == 2 ? 1 : 0;
+                    terr += g.cultivated.v[cells[q]] == 2 ? 1 : 0;
                     dmin = std::min(dmin, dist_water.v[cells[q]]);
                 }
                 const double n = static_cast<double>(sel.size());
@@ -344,7 +363,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     {
         const double ww = sc("site_weights.water"), wsl = sc("site_weights.slope"), wl = sc("site_weights.lee"), wsh = sc("site_weights.shore");
         for (size_t k = 0; k < N; ++k) {
-            ok_site.v[k] = (land.v[k] && !arable.v[k] && !g.cliff.v[k] && !water.v[k] && !flood.v[k] && slope[k] < smax) ? 1 : 0;
+            ok_site.v[k] = (land.v[k] && !arable.v[k] && !fallow.v[k] && !g.cliff.v[k] && !water.v[k] && !flood.v[k] && slope[k] < smax) ? 1 : 0;
             score_base[k] = ww * clip(1.0 - dist_water.v[k] / (wnear + 1.0), 0.0, 1.0) + wsl * clip(1.0 - slope[k] / smax, 0.0, 1.0) +
                             wl * (1.0 - expo[k]) / 2.0 + wsh * clip(1.0 - dist_shore.v[k] / (snear + 1.0), 0.0, 1.0);
         }
@@ -526,6 +545,59 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         }
     if (seat < 0 && !villages.empty()) seat = 0;
     if (seat >= 0) villages[seat].seat = true;
+    // 废村（P5，place_ruins）：撂荒田 reach 格内同岛、能建村、没被占的格里按村址评分 + 近田取最高（平局按行列序）；没有就落在头一块田上
+    std::vector<Ruin> ruins;
+    for (const RuinTract& rt : FL.ruins) {
+        int imin = H, imax = -1, jmin = W, jmax = -1;
+        for (int32_t q : rt.cells) {
+            imin = std::min(imin, q / W);
+            imax = std::max(imax, q / W);
+            jmin = std::min(jmin, q % W);
+            jmax = std::max(jmax, q % W);
+        }
+        const int r0 = std::max(0, imin - reach), r1 = std::min(H, imax + reach + 1);
+        const int c0 = std::max(0, jmin - reach), c1 = std::min(W, jmax + reach + 1);
+        const int h = r1 - r0, w = c1 - c0;
+        Mask fm(h, w, 0);
+        for (int32_t q : rt.cells) fm(q / W - r0, q % W - c0) = 1;
+        const GridI dfield = distance_bands(fm, reach);
+        double best = -INF;
+        int pi = -1, pj = -1;
+        for (int a = 0; a < h; ++a)
+            for (int b = 0; b < w; ++b) {
+                const size_t gk = static_cast<size_t>(a + r0) * W + (b + c0);
+                if (!(ok_site.v[gk] && dfield(a, b) <= reach && g.island_id.v[gk] == rt.island && !taken.v[gk])) continue;
+                const double sv = score_base[gk] + w_field * (1.0 - dfield(a, b) / (reach + 1.0));
+                if (pi < 0 || sv > best) {
+                    best = sv;
+                    pi = a + r0;
+                    pj = b + c0;
+                }
+            }
+        if (pi < 0) {
+            pi = rt.cells[0] / W;
+            pj = rt.cells[0] % W;
+        }
+        taken(pi, pj) = 1;
+        Ruin r;
+        r.tract = rt.tract;
+        r.island = rt.island;
+        r.years = rt.years;
+        r.households_before = rt.households_before;
+        r.fallow_km2 = rt.fallow_km2;
+        r.ci = pi;
+        r.cj = pj;
+        r.kx = kmx(pj);
+        r.ky = kmy(pi);
+        r.elev_m = pyround(g.height(pi, pj), 0);
+        ruins.push_back(r);
+    }
+    std::stable_sort(ruins.begin(), ruins.end(), [](const Ruin& a, const Ruin& b) {
+        if (a.island != b.island) return a.island < b.island;
+        if (a.ci != b.ci) return a.ci < b.ci;
+        return a.cj < b.cj;
+    });
+    for (size_t k = 0; k < ruins.size(); ++k) ruins[k].id = static_cast<int>(k) + 1;
 
     // ---------- 聚落层级（tiers.py）：专业聚落 → 集镇 → 泊场 ----------
     std::vector<Special> specials;
@@ -743,6 +815,39 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                         if (wk.occurrence == s.occurrence) wk.special = s.id;
         }
     }
+    // 专业聚落的住法（P5，special_occupancy）：烧炭营季节住；没有村和散户的岛上的浮石采石村 / 矿村 / 窑村是工棚；其余常住。
+    // 工棚与季节住的人算在最近的村（格距平方最小、平局取先者）
+    {
+        std::set<int> farm_isl;
+        for (const Village& v : villages) farm_isl.insert(v.island);
+        for (const Village& v : hamlets) farm_isl.insert(v.island);
+        for (Special& s : specials) {
+            if (s.kind == "charcoal_camp") s.occupancy = "seasonal";
+            else if ((s.kind == "floatstone_village" || s.kind == "ore_village" || s.kind == "kiln_village") && !farm_isl.count(s.island))
+                s.occupancy = "workcamp";
+            else s.occupancy = "resident";
+            if (s.occupancy == "resident" || villages.empty()) continue;
+            size_t bq = 0;
+            int64_t bd = INT64_MAX;
+            for (size_t q = 0; q < villages.size(); ++q) {
+                const int64_t di = static_cast<int64_t>(villages[q].ci) - s.ci, dj = static_cast<int64_t>(villages[q].cj) - s.cj;
+                const int64_t d = di * di + dj * dj;
+                if (d < bd) {
+                    bd = d;
+                    bq = q;
+                }
+            }
+            Village& v = villages[bq];
+            s.home_village = v.id;
+            if (s.occupancy == "workcamp") {
+                v.households_workers += s.households;
+                v.has_workers = true;
+            } else {
+                v.households_seasonal += s.households;
+                v.has_seasonal = true;
+            }
+        }
+    }
     int64_t rest = nonfarm_hh;
     for (const Special& s : specials) rest -= s.households;
     // 集镇（market_towns）：按服务半径内户数贪心挑村升镇，镇距 ≥ town_spacing_km，邑治先入；非农户余量按服务户数分
@@ -869,7 +974,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                     const bool wtr = g.river.v[q] > 0 || g.lake.v[q];
                     const bool fl = land.v[q] && !wtr && !g.cliff.v[q] && static_cast<float>(g.slope.v[q]) <= lmax;
                     if (!(fl && g.island_id.v[q] == k)) continue;
-                    const bool open = !(g.arable.v[q] > 0) && g.landcover.v[q] != LC_FOREST;
+                    const bool open = !(g.cultivated.v[q] > 0) && g.landcover.v[q] != LC_FOREST;
                     const double d = np_hypot(static_cast<double>(a - i), static_cast<double>(b - j));
                     const float s32 = static_cast<float>(g.slope.v[q]);
                     const float p32 = 0.2f * s32;
@@ -925,83 +1030,26 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             }
         }
     }
-    // 栅格：1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 6 桥头 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落
+    // 栅格：1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用
     Grid<uint8_t> sr(H, W, 0);
     for (size_t k = 0; k < N; ++k) {
         if (fields_raster.v[k] > 0) sr.v[k] = 1;
-        if (fields_raster.v[k] > 0 && g.arable.v[k] == 2) sr.v[k] = 2;
+        if (fields_raster.v[k] > 0 && g.cultivated.v[k] == 2) sr.v[k] = 2;
+        if (fallow.v[k]) sr.v[k] = 11;
     }
     for (const auto& lc : land_cells) sr(lc[1], lc[2]) = 5;
     for (const Village& v : villages) sr(v.ci, v.cj) = v.town ? 9 : 3;
     for (const Village& v : hamlets) sr(v.ci, v.cj) = 4;
-    for (const Special& s : specials) sr(s.ci, s.cj) = 10;
+    for (const Ruin& r : ruins) sr(r.ci, r.cj) = 12;
+    for (const Special& s : specials) sr(s.ci, s.cj) = s.occupancy == "resident" ? 10 : 13;
 
-    // ---------- 第 2 步：桥头 / 导水槽 / 水设施（build_links_water） ----------
-    std::vector<Json> bridgeheads, channels, cisterns, intakes;
+    // ---------- 第 2 步：水设施（build_water；P5 起没有索桥，也就没有桥头与导水槽） ----------
+    std::vector<Json> cisterns, intakes;
     std::vector<std::array<double, 3>> cistern_info;   // [岛, 行, 列] 与 basin
     std::vector<double> cistern_basin;
     const bool has_river = !g.islands.empty() && g.islands[0].has_perennial;
     double water_ok_share = 0;
     {
-        std::vector<std::vector<std::array<int, 2>>> cliffs(n_isl);
-        for (int i = 0; i < H; ++i)
-            for (int j = 0; j < W; ++j)
-                if (g.cliff(i, j) && g.island_id(i, j) >= 0) cliffs[g.island_id(i, j)].push_back({i, j});
-        for (const Link& e : g.links) {
-            const int a = e.a, b = e.b;
-            if (!e.bridge || cliffs[a].empty() || cliffs[b].empty()) continue;
-            // _nearest_pair（sub = 1）：全体点对的最小距离，同值取 a 的次序、再取 b 的次序最先者。b 按行分桶、按当前最优半径剪枝
-            const auto& A = cliffs[a];
-            const auto& B = cliffs[b];
-            std::map<int, std::vector<std::pair<int, int>>> rows;    // 行 → (列, b 下标)，列升序
-            for (size_t q = 0; q < B.size(); ++q) rows[B[q][0]].push_back({B[q][1], static_cast<int>(q)});
-            int64_t best = INT64_MAX;
-            size_t ia = 0, ib = 0;
-            for (size_t p = 0; p < A.size(); ++p) {
-                const int ai = A[p][0], aj = A[p][1];
-                int64_t mine = INT64_MAX;
-                int mb = -1;
-                const int64_t lim = std::min<int64_t>(best, INT64_MAX / 4);
-                const int span = lim >= (1LL << 40) ? H + W : static_cast<int>(std::ceil(std::sqrt(static_cast<double>(lim)))) + 1;
-                auto lo = rows.lower_bound(ai - span);
-                for (auto it = lo; it != rows.end() && it->first <= ai + span; ++it) {
-                    const int64_t dr = it->first - ai;
-                    for (const auto& cb : it->second) {
-                        const int64_t dc = cb.first - aj;
-                        const int64_t d = dr * dr + dc * dc;
-                        if (d < mine || (d == mine && cb.second < mb)) {
-                            mine = d;
-                            mb = cb.second;
-                        }
-                    }
-                }
-                if (mb >= 0 && mine < best) {
-                    best = mine;
-                    ia = p;
-                    ib = static_cast<size_t>(mb);
-                }
-            }
-            for (int s = 0; s < 2; ++s) {
-                const int k = s == 0 ? a : b;
-                const auto& cell = s == 0 ? A[ia] : B[ib];
-                Json bh = Json::obj();
-                bh.set("island", k);
-                bh.set("to", k == a ? b : a);
-                bh.set("cell", cell_json(cell[0], cell[1]));
-                bh.set("km", Json::pair(kmx(cell[1]), kmy(cell[0])));
-                bh.set("gap_km", pyround(e.gap, 3));
-                bridgeheads.push_back(bh);
-            }
-        }
-        for (size_t q = 0; q < bridgeheads.size(); ++q) bridgeheads[q].set("id", static_cast<int64_t>(q) + 1);
-        for (const auto& t : g.tree) {
-            Json ch = Json::obj();
-            ch.set("a", t.first);
-            ch.set("b", t.second);
-            ch.set("a_km", Json::pair(g.islands[t.first].cx_j, g.islands[t.first].cy_j));
-            ch.set("b_km", Json::pair(g.islands[t.second].cx_j, g.islands[t.second].cy_j));
-            channels.push_back(ch);
-        }
         // 水设施
         std::vector<float> fa(N);
         for (size_t k = 0; k < N; ++k) fa[k] = static_cast<float>(g.acc_km2.v[k]);
@@ -1146,10 +1194,215 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             if (dd <= lim) ++ok;
         }
         water_ok_share = pyround(static_cast<double>(ok) / static_cast<double>(std::max<size_t>(1, villages.size())), 3);
-        for (const Json& bh : bridgeheads) sr(static_cast<int>(bh.at("cell").items()[0].as_int()), static_cast<int>(bh.at("cell").items()[1].as_int())) = 6;
         for (const auto& cc : cis_cells) sr(cc[1], cc[2]) = 7;
         for (const auto& it : intake_rec) sr(it[1], it[2]) = 8;
     }
+
+    // ---------- 没人常住的岛有人用（P5，island_uses）：放牧 / 夏牧、烽火台、庙、墓岛；各岛的住法 ----------
+    std::vector<Json> uses_json;
+    struct UseRec {
+        std::string kind;
+        int island, village;
+    };
+    std::vector<UseRec> use_recs;
+    std::vector<std::string> status(n_isl);
+    {
+        std::vector<uint8_t> resident(n_isl, 0), seasonal(n_isl, 0), used(n_isl, 0);
+        for (const Village& v : villages) resident[v.island] = 1;
+        for (const Village& v : hamlets) resident[v.island] = 1;
+        for (const Special& s : specials) {
+            if (s.occupancy == "resident") resident[s.island] = 1;
+            else if (s.occupancy == "seasonal") seasonal[s.island] = 1;
+            else used[s.island] = 1;
+        }
+        for (const Ruin& r : ruins) used[r.island] = 1;
+        Rng ru = part_rng(inp, "settle:uses");
+        const double r_shrine = ru.random(), r_tomb = ru.random();
+        if (!villages.empty()) {
+            std::vector<std::vector<int32_t>> icells(n_isl);
+            for (size_t k = 0; k < N; ++k)
+                if (g.island_id.v[k] >= 0) icells[g.island_id.v[k]].push_back(static_cast<int32_t>(k));
+            auto is_past = [&](int32_t q) {
+                const uint8_t cv = g.landcover.v[q];
+                return cv == LC_GRASS || cv == LC_ALPINE || cv == LC_SHRUB;
+            };
+            auto nearest_village = [&](int k, int& vid) {
+                const double cx = g.islands[k].cx_j, cy = g.islands[k].cy_j;
+                double best = INF;
+                vid = -1;
+                for (const Village& v : villages) {
+                    const double d = py_hypot(v.kx - cx, v.ky - cy);
+                    if (d < best) {
+                        best = d;
+                        vid = v.id;
+                    }
+                }
+                return best;
+            };
+            auto highest_cell = [&](int k) {
+                int32_t bq = -1;
+                double bh = 0;
+                for (int32_t q : icells[k])
+                    if (bq < 0 || g.height.v[q] > bh) {
+                        bh = g.height.v[q];
+                        bq = q;
+                    }
+                return bq;
+            };
+            auto blocked = [&](int k) { return resident[k] || seasonal[k] || used[k] || icells[k].empty(); };
+            const int seat_id = seat >= 0 ? villages[seat].id : -1;
+            auto add = [&](const char* kind, int k, int32_t q, const char* occ, int vid, Json note) -> Json& {
+                const int i = q / W, j = q % W;
+                Json u = Json::obj();
+                u.set("kind", kind);
+                u.set("island", k);
+                u.set("cell", cell_json(i, j));
+                u.set("km", Json::pair(kmx(j), kmy(i)));
+                u.set("elev_m", pyround(g.height(i, j), 0));
+                u.set("occupancy", occ);
+                u.set("village", vid < 0 ? Json() : Json(vid));
+                u.set("note", std::move(note));
+                uses_json.push_back(std::move(u));
+                use_recs.push_back({kind, k, vid});
+                used[k] = 1;
+                return uses_json.back();
+            };
+            // 放牧 / 夏牧：草坡 / 高山草甸 / 灌丛够大、离最近的村不远；按离村近挑前 graze_max 个
+            struct Gz {
+                double d;
+                int k, vid;
+                double pk, mk;
+            };
+            std::vector<Gz> graze;
+            for (int k = 1; k < n_isl; ++k) {
+                if (blocked(k)) continue;
+                int64_t np = 0, nm = 0;
+                for (int32_t q : icells[k]) {
+                    const uint8_t cv = g.landcover.v[q];
+                    np += is_past(q) ? 1 : 0;
+                    nm += (cv == LC_GRASS || cv == LC_ALPINE) ? 1 : 0;
+                }
+                const double pk = static_cast<double>(np) * cell_km2;
+                if (pk < sc("graze_min_km2")) continue;
+                int vid;
+                const double d = nearest_village(k, vid);
+                if (d <= sc("graze_reach_km")) graze.push_back({d, k, vid, pk, static_cast<double>(nm) * cell_km2});
+            }
+            std::stable_sort(graze.begin(), graze.end(), [](const Gz& a, const Gz& b) {
+                if (a.d != b.d) return a.d < b.d;
+                return a.k < b.k;
+            });
+            if (graze.size() > static_cast<size_t>(sc("graze_max"))) graze.resize(static_cast<size_t>(sc("graze_max")));
+            for (const Gz& z : graze) {
+                const bool shieling = z.mk >= sc("shieling_min_km2");
+                // 草场格里离本岛草场格心最近的一格
+                int64_t si = 0, sj = 0, cnt = 0;
+                for (int32_t q : icells[z.k])
+                    if (is_past(q)) {
+                        si += q / W;
+                        sj += q % W;
+                        ++cnt;
+                    }
+                const double mi = static_cast<double>(si) / static_cast<double>(cnt), mj = static_cast<double>(sj) / static_cast<double>(cnt);
+                int32_t bq = -1;
+                double bd = 0;
+                for (int32_t q : icells[z.k]) {
+                    if (!is_past(q)) continue;
+                    const double di = static_cast<double>(q / W) - mi, dj = static_cast<double>(q % W) - mj;
+                    const double d = di * di + dj * dj;
+                    if (bq < 0 || d < bd) {
+                        bd = d;
+                        bq = q;
+                    }
+                }
+                Json note = Json::arr();
+                note.push(shieling ? "shieling" : "graze");
+                note.push(z.pk);
+                note.push(z.d);
+                Json& u = add(shieling ? "shieling" : "graze", z.k, bq, shieling ? "seasonal" : "livestock", z.vid, std::move(note));
+                u.set("pasture_km2", pyround(z.pk, 3));
+                u.set("dist_km", pyround(z.d, 2));
+                if (shieling) seasonal[z.k] = 1;
+            }
+            // 烽火台：群边高处——离主岛最远的几座，彼此方位差 ≥ beacon_sep_deg
+            const double c0x = g.islands[0].cx_j, c0y = g.islands[0].cy_j;
+            const double sep = sc("beacon_sep_deg") * (PI / 180.0);
+            struct Far {
+                double negd;
+                int k;
+                double a;
+            };
+            std::vector<Far> far;
+            for (int k = 1; k < n_isl; ++k) {
+                if (blocked(k)) continue;
+                const double dx = g.islands[k].cx_j - c0x, dy = g.islands[k].cy_j - c0y;
+                far.push_back({-py_hypot(dx, dy), k, std::atan2(dy, dx)});
+            }
+            std::stable_sort(far.begin(), far.end(), [](const Far& a, const Far& b) {
+                if (a.negd != b.negd) return a.negd < b.negd;
+                return a.k < b.k;
+            });
+            std::vector<double> angs;
+            for (const Far& f : far) {
+                if (static_cast<int64_t>(angs.size()) >= static_cast<int64_t>(sc("beacon_max"))) break;
+                bool ok = true;
+                for (double b : angs) {
+                    double dd = std::fabs(f.a - b);
+                    if (dd > PI) dd = 2.0 * PI - dd;
+                    if (dd < sep) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (!ok) continue;
+                angs.push_back(f.a);
+                Json note = Json::arr();
+                note.push("beacon");
+                note.push(-f.negd);
+                add("beacon", f.k, highest_cell(f.k), "rotation", seat_id, std::move(note));
+            }
+            // 庙 / 墓岛：邑治附近没人住的岛（各按概率有没有）
+            const double sx = seat >= 0 ? villages[seat].kx : c0x, sy = seat >= 0 ? villages[seat].ky : c0y;
+            auto nearest_free = [&](double max_km2, int& kb) {
+                double best = INF;
+                kb = -1;
+                for (int k = 1; k < n_isl; ++k) {
+                    if (blocked(k)) continue;
+                    if (max_km2 >= 0 && g.islands[k].area_j > max_km2) continue;
+                    const double d = py_hypot(g.islands[k].cx_j - sx, g.islands[k].cy_j - sy);
+                    if (kb < 0 || d < best) {
+                        best = d;
+                        kb = k;
+                    }
+                }
+                return best;
+            };
+            if (r_shrine < sc("shrine_p")) {
+                int kb;
+                const double d = nearest_free(-1.0, kb);
+                if (kb >= 0) {
+                    Json note = Json::arr();
+                    note.push("shrine");
+                    note.push(d);
+                    add("shrine", kb, highest_cell(kb), "incense", seat_id, std::move(note));
+                }
+            }
+            if (r_tomb < sc("tomb_p")) {
+                int kb;
+                const double d = nearest_free(sc("tomb_max_km2"), kb);
+                if (kb >= 0) {
+                    Json note = Json::arr();
+                    note.push("tomb");
+                    note.push(d);
+                    add("tomb", kb, highest_cell(kb), "none", seat_id, std::move(note));
+                }
+            }
+            for (size_t q = 0; q < uses_json.size(); ++q) uses_json[q].set("id", static_cast<int64_t>(q) + 1);
+        }
+        for (int k = 0; k < n_isl; ++k)
+            status[k] = resident[k] ? "resident" : (seasonal[k] ? "seasonal" : (used[k] ? "used" : "empty"));
+    }
+    for (const Json& u : uses_json) sr(static_cast<int>(u.at("cell").items()[0].as_int()), static_cast<int>(u.at("cell").items()[1].as_int())) = 14;
 
     // ---------- 第 3 步：前哨、主家候选、都与城（build_homes_city） ----------
     std::vector<Json> outposts, homes;
@@ -1310,30 +1563,19 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
             const double rate = inp.reformer ? sc("city_gather_rate_reformer") : sc("city_gather_rate");
             const double city_pop = pop_own * sc("city_urban_rate") + inp.state_pop * rate;
             const int64_t city_hh = static_cast<int64_t>(std::nearbyint(city_pop / hh_size));
-            std::set<int> reach_set{0};
-            std::map<int, std::vector<int>> adj;
-            for (const auto& t : g.tree) {
-                adj[t.first].push_back(t.second);
-                adj[t.second].push_back(t.first);
-            }
-            std::vector<int> stack{0};
-            while (!stack.empty()) {
-                const int a = stack.back();
-                stack.pop_back();
-                for (int b : adj[a])
-                    if (!reach_set.count(b)) {
-                        reach_set.insert(b);
-                        stack.push_back(b);
-                    }
-            }
+            // 郭（P5 改：没有索桥了）：离城 ≤ city_guo_km、在城所在的岛上或与它岸距 ≤ city_guo_ferry_km（船程近）的岛上的村
+            const int k0 = seatv.island;
+            std::set<int> near_isl{k0};
+            for (const Link& e : g.links)
+                if (pyround(e.gap, 3) <= sc("city_guo_ferry_km")) {
+                    if (e.a == k0) near_isl.insert(e.b);
+                    else if (e.b == k0) near_isl.insert(e.a);
+                }
             const double glim = sc("city_guo_km") / res_km;
             std::vector<Village*> guo;
             for (Village& v : villages)
-                if (reach_set.count(v.island) && v.island != 0 &&
+                if (&v != &seatv && near_isl.count(v.island) &&
                     py_hypot(static_cast<double>(v.ci - seatv.ci), static_cast<double>(v.cj - seatv.cj)) <= glim)
-                    guo.push_back(&v);
-            for (Village& v : villages)
-                if (v.island == 0 && &v != &seatv && py_hypot(static_cast<double>(v.ci - seatv.ci), static_cast<double>(v.cj - seatv.cj)) <= glim)
                     guo.push_back(&v);
             int64_t guo_hh = 0;
             for (Village* v : guo) guo_hh += v->households;
@@ -1417,7 +1659,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         };
         for (const Village& v : villages) add_seed(v.ci, v.cj, v.households + (v.has_market ? v.households_market : 0), v.town != 0);
         for (const Village& v : hamlets) add_seed(v.ci, v.cj, v.households, false);
-        for (const Special& s : specials) add_seed(s.ci, s.cj, s.households, false);
+        for (const Special& s : specials)
+            if (s.occupancy != "workcamp") add_seed(s.ci, s.cj, s.households, false);   // P5：工棚不开垦
         int64_t n_land = 0, nf0 = 0;
         bool any_seed = false;
         for (size_t k = 0; k < N; ++k) {
@@ -1481,7 +1724,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     if (g.has_resources) {
         std::vector<uint8_t> base_ok(N);
         for (size_t k = 0; k < N; ++k)
-            base_ok[k] = (land.v[k] && !(g.river.v[k] > 0 || g.lake.v[k]) && !g.cliff.v[k] && g.arable.v[k] == 0) ? 1 : 0;
+            base_ok[k] = (land.v[k] && !(g.river.v[k] > 0 || g.lake.v[k]) && !g.cliff.v[k] && g.cultivated.v[k] == 0 && g.fallow_years.v[k] == 0) ? 1 : 0;
         const double decay = sc("working_decay_km"), share = sc("working_share_km");
         std::vector<Village*> order;
         for (Village& v : villages) order.push_back(&v);
@@ -1641,6 +1884,46 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         sync_resources(g);
     }
 
+    // ---------- 荒地归谁（P5，land_tenure）：有农户的岛归村；没有农户但有人用的岛归用它的村的大户；废村与别的荒岛官荒 ----------
+    Json tenure = Json::arr();
+    {
+        std::vector<int64_t> cv(n_isl, 0), ct(n_isl, 0), fl(n_isl, 0);
+        for (size_t k = 0; k < N; ++k) {
+            const int i = g.island_id.v[k];
+            if (i < 0) continue;
+            cv[i] += g.cultivable.v[k] > 0 ? 1 : 0;
+            ct[i] += g.cultivated.v[k] > 0 ? 1 : 0;
+            fl[i] += g.fallow_years.v[k] > 0 ? 1 : 0;
+        }
+        std::map<int, int> user;
+        for (const Special& s : specials)
+            if (s.occupancy != "resident" && s.home_village >= 0 && !user.count(s.island)) user[s.island] = s.home_village;
+        for (const UseRec& u : use_recs)
+            if ((u.kind == "graze" || u.kind == "shieling") && !user.count(u.island)) user[u.island] = u.village;
+        std::set<int> ruin_isl, farm_isl;
+        for (const Ruin& r : ruins) ruin_isl.insert(r.island);
+        for (const Village& v : villages) farm_isl.insert(v.island);
+        for (const Village& v : hamlets) farm_isl.insert(v.island);
+        for (int k = 0; k < n_isl; ++k) {
+            std::string owner = "crown";
+            int vid = -1;
+            if (farm_isl.count(k)) owner = "village";
+            else if (status[k] != "empty" && !ruin_isl.count(k) && user.count(k)) {
+                owner = "magnate";
+                vid = user[k];
+            }
+            Json t = Json::obj();
+            t.set("island", k);
+            t.set("status", status[k]);
+            t.set("owner", owner);
+            t.set("village", vid < 0 ? Json() : Json(vid));
+            t.set("cultivable_km2", pyround(static_cast<double>(cv[k]) * cell_km2, 3));
+            t.set("cultivated_km2", pyround(static_cast<double>(ct[k]) * cell_km2, 3));
+            t.set("fallow_km2", pyround(static_cast<double>(fl[k]) * cell_km2, 3));
+            tenure.push(std::move(t));
+        }
+    }
+
     // ---------- 汇总 ----------
     auto village_json = [&](const Village& r) {
         Json j = Json::obj();
@@ -1668,6 +1951,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         }
         if (r.guo) j.set("guo", true);
         if (r.city) j.set("city", true);
+        if (r.has_workers) j.set("households_workers", r.households_workers);
+        if (r.has_seasonal) j.set("households_seasonal", r.households_seasonal);
         if (!r.workings.empty()) j.set("workings", Json::arr_of(r.workings));
         return j;
     };
@@ -1724,6 +2009,8 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         j.set("name", s.name());
         if (s.has_landing) j.set("landing", s.landing);
         if (s.working >= 0) j.set("working", s.working);
+        j.set("occupancy", s.occupancy);
+        if (s.occupancy != "resident") j.set("home_village", s.home_village < 0 ? Json() : Json(s.home_village));
         sj.push(j);
         hh_s += s.households;
     }
@@ -1748,8 +2035,6 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         for (Json& x : v) a.push(std::move(x));
         return a;
     };
-    S.set("bridgeheads", arr_of_json(bridgeheads));
-    S.set("channels", arr_of_json(channels));
     S.set("cisterns", arr_of_json(cisterns));
     S.set("intakes", arr_of_json(intakes));
     S.set("has_river", has_river);
@@ -1760,6 +2045,31 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     S.set("city", city);
     S.set("clearing", clearing);
     S.set("workings", wsum);
+    S.set("farmland", FL.summary);
+    Json rj = Json::arr();
+    for (const Ruin& r : ruins) {
+        Json j = Json::obj();
+        j.set("tract", r.tract);
+        j.set("island", r.island);
+        j.set("abandoned_years", r.years);
+        j.set("households_before", r.households_before);
+        j.set("fallow_km2", r.fallow_km2);
+        j.set("cell", cell_json(r.ci, r.cj));
+        j.set("km", Json::pair(r.kx, r.ky));
+        j.set("elev_m", r.elev_m);
+        j.set("id", r.id);
+        j.set("name", "ruin:" + std::to_string(r.id));
+        Json note = Json::arr();
+        note.push("ruin");
+        note.push(r.years);
+        note.push(r.households_before);
+        note.push(r.fallow_km2);
+        j.set("note", note);
+        rj.push(std::move(j));
+    }
+    S.set("ruins", rj);
+    S.set("uses", arr_of_json(uses_json));
+    S.set("land_tenure", tenure);
     g.settle = std::move(S);
     g.settle_raster = std::move(sr);
     g.settle_fields = std::move(fields_raster);

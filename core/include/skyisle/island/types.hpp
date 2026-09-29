@@ -94,10 +94,10 @@ struct IslandRec {
     bool has_perennial = false, has_stream = false;
 };
 
-struct Link {
+struct Link {                         // 短渡（飞船航线）；P5 起没有索桥
     int a = 0, b = 0;
     double gap = 0, dh = 0;
-    bool bridge = false, fallback = false;
+    bool fallback = false;
 };
 
 struct TerritoryRec {
@@ -241,7 +241,6 @@ struct Group {
     std::vector<double> rims;
     std::vector<IslandRec> islands;
     std::vector<Link> links;
-    std::vector<std::pair<int, int>> tree;
     std::vector<MaskPos> masks_pos;
     std::vector<Limit> lim;
     TerritoryRec territory;
@@ -255,7 +254,10 @@ struct Group {
     bool has_hydro = false;
     GridD filled, route_h;
     GridD acc_km2;
-    Grid<uint8_t> river, stream, lake, floodplain, landcover, arable;
+    Grid<uint8_t> river, stream, lake, floodplain, landcover, arable;   // arable：行星层额度内的上等地（P5 起不是已垦，资源层避开它）
+    // P5（farmland.cpp）：宜垦（0 / 1 / 2 要修梯田）、上等地画进地表之前原本的地表、适宜度（聚落层排先后）
+    Grid<uint8_t> cultivable, cover_natural;
+    std::vector<double> suit;
     GridD width_m, depth_m, cut_m, slope;
     GridI recv_i, recv_j;
     std::vector<RiverLine> lines;
@@ -287,8 +289,9 @@ struct Group {
     // ---- 聚落（build_settlements）：记录直接成 JSON 的形（代码），栅格另存
     bool has_settle = false;
     Json settle;
-    Grid<uint8_t> settle_raster;     // 1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 6 桥头 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落
+    Grid<uint8_t> settle_raster;     // 1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落 / 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用
     GridI settle_fields;             // 田块号（0 = 无）
+    Grid<uint8_t> cultivated, fallow_years;   // P5：已垦（在种，0 / 1 田 / 2 梯田）、撂荒了几年（0 = 不是撂荒地）
     double settle_pop = 0;
     double sec_settle = 0;
 };

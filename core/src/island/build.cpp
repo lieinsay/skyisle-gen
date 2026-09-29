@@ -321,7 +321,7 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         g.islands[k].r0 -= r_lo;
         g.islands[k].c0 -= c_lo;
     }
-    // 岸线间距 → 索桥 / 短渡 / 导水槽（岛心按 island.json 里四舍五入的 center_km，同 Python 版）
+    // 岸线间距 → 短渡（岛心按 island.json 里四舍五入的 center_km，同 Python 版；P5 起没有索桥与导水槽）
     std::vector<std::array<double, 2>> ctr_cells(n);
     std::vector<double> radii(n);
     for (int k = 0; k < n; ++k) {
@@ -329,7 +329,7 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         radii[k] = *std::max_element(ss.profiles[k].begin(), ss.profiles[k].end());
     }
     const auto gaps = shoreline_gaps(g.masks_pos, res_km, ctr_cells, radii, c.get("layout.ferry_max_km"));
-    links(gaps, g.rims, n, c, g.links, g.tree);
+    links(gaps, g.rims, n, g.links);
     Mask land(g.H, g.W, 0);
     for (size_t k = 0; k < land.size(); ++k) land.v[k] = g.island_id.v[k] >= 0 ? 1 : 0;
     const Mask er = binary_erode(land, c.geti("terrain.cliff_cells"));

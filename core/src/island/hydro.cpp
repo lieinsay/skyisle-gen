@@ -6,6 +6,7 @@
 
 #include "skyisle/flow.hpp"
 #include "skyisle/island/build.hpp"
+#include "skyisle/island/farmland.hpp"
 #include "skyisle/island/river.hpp"
 
 namespace skyisle::island {
@@ -402,6 +403,8 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             if (suit[k] > 0) g.arable.v[k] = slope.v[k] >= terr ? 2 : 1;
         }
     }
+    // P5：上面按行星层额度取的是「上等地」（资源层照旧避开它）；宜垦另记，已垦在聚落层定（farmland.cpp）
+    cultivable_land(g, c, suit, T, soil, wet, near_water);
     for (size_t k = 0; k < N; ++k) {
         if (g.arable.v[k] == 1) g.landcover.v[k] = LC_ARABLE;
         if (g.arable.v[k] == 2) g.landcover.v[k] = LC_TERRACE;

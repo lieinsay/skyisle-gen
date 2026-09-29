@@ -1,4 +1,4 @@
-// 5.1 群内布局（skyisle_gen/island/layout.py）：岛数、Zipf 大小、板块走向、角向半径剖面、放置、台面与起伏、岸距、索桥 / 短渡 / 导水槽。
+// 5.1 群内布局（skyisle_gen/island/layout.py）：岛数、Zipf 大小、板块走向、角向半径剖面、放置、台面与起伏、岸距、短渡（P5 起没有索桥与导水槽）。
 #pragma once
 
 #include <map>
@@ -34,7 +34,6 @@ std::vector<double> float_offsets(Rng& rng, const std::vector<double>& ages, con
 std::map<std::pair<int, int>, double> shoreline_gaps(const std::vector<MaskPos>& masks_pos, double res_km,
                                                      const std::vector<std::array<double, 2>>& centers_cell,
                                                      const std::vector<double>& radii_km, double max_gap_km);
-void links(const std::map<std::pair<int, int>, double>& gaps, const std::vector<double>& rims, int n, const Config& c,
-           std::vector<Link>& out, std::vector<std::pair<int, int>>& tree);
+void links(const std::map<std::pair<int, int>, double>& gaps, const std::vector<double>& rims, int n, std::vector<Link>& out);
 
 }  // namespace skyisle::island

@@ -230,14 +230,10 @@ nb::dict terrain_dict(Group& g) {
         x["b"] = e.b;
         x["gap"] = e.gap;
         x["dh"] = e.dh;
-        x["bridge"] = e.bridge;
         x["fallback"] = e.fallback;
         lk.append(x);
     }
     d["links"] = lk;
-    nb::list tr;
-    for (const auto& p : g.tree) tr.append(nb::make_tuple(p.first, p.second));
-    d["tree"] = tr;
     nb::list mp;
     for (MaskPos& m : g.masks_pos) mp.append(nb::make_tuple(mask_np(Mask(m.mask)), m.r0, m.c0));
     d["masks_pos"] = mp;
@@ -271,6 +267,7 @@ nb::dict hydro_dict(Group& g) {
     d["floodplain"] = mask_np(Mask(g.floodplain));
     d["landcover"] = grid_np(Grid<uint8_t>(g.landcover));
     d["arable"] = grid_np(Grid<uint8_t>(g.arable));
+    if (!g.cultivable.v.empty()) d["cultivable"] = grid_np(Grid<uint8_t>(g.cultivable));
     d["river_width_m"] = f32_np(g.width_m);
     d["river_depth_m"] = f32_np(g.depth_m);
     d["cut_m"] = f32_np(g.cut_m);
@@ -480,6 +477,8 @@ void bind_island(nb::module_& m) {
             d["settle"] = json_py(g.settle);
             d["settle_raster"] = grid_np(Grid<uint8_t>(g.settle_raster));
             d["settle_fields"] = grid_np(GridI(g.settle_fields));
+            d["settle_cultivated"] = grid_np(Grid<uint8_t>(g.cultivated));
+            d["settle_fallow"] = grid_np(Grid<uint8_t>(g.fallow_years));
             d["settle_pop"] = g.settle_pop;
         }
         d["seconds"] = nb::make_tuple(g.sec_total, g.sec_hydro, g.sec_resources, g.sec_climate, g.sec_settle);

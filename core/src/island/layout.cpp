@@ -340,20 +340,17 @@ int n_components(int n, const std::vector<Link>& out, std::vector<int>& comp) {
 }
 }  // namespace
 
-void links(const std::map<std::pair<int, int>, double>& gaps, const std::vector<double>& rims, int n, const Config& c,
-           std::vector<Link>& out, std::vector<std::pair<int, int>>& tree) {
-    const double bmax = c.get("layout.bridge_max_km"), dhmax = c.get("layout.bridge_max_dh_m");
+// 短渡（飞船航线）：岸距 ≤ ferry_max_km 的岛对（gaps 已按它筛过）；保证连通（不够就补最近的短渡，标 fallback）。
+// P5（用户定）：岛与岛之间没有索桥，全靠船；导水槽只沿索桥走，也随之没了
+void links(const std::map<std::pair<int, int>, double>& gaps, const std::vector<double>& rims, int n, std::vector<Link>& out) {
     out.clear();
-    tree.clear();
     for (const auto& kv : gaps) {
         const int i = kv.first.first, j = kv.first.second;
-        const double g = kv.second;
         Link e;
         e.a = i;
         e.b = j;
-        e.gap = g;
+        e.gap = kv.second;
         e.dh = std::fabs(rims[i] - rims[j]);
-        e.bridge = g <= bmax && std::fabs(rims[i] - rims[j]) <= dhmax;
         out.push_back(e);
     }
     std::vector<int> comp;
@@ -377,32 +374,9 @@ void links(const std::map<std::pair<int, int>, double>& gaps, const std::vector<
         e.b = bj;
         e.gap = bg;
         e.dh = std::fabs(rims[bi] - rims[bj]);
-        e.bridge = false;
         e.fallback = true;
         out.push_back(e);
         nc = n_components(n, out, comp);
-    }
-    // 导水槽：Prim 从主岛出发，只走索桥（堆里比的是 island.json 里四舍五入到 3 位的岸距，同 Python 版）
-    std::vector<std::vector<std::pair<double, int>>> adj(n);
-    for (const Link& e : out)
-        if (e.bridge) {
-            const double g3 = pyround(e.gap, 3);
-            adj[e.a].push_back({g3, e.b});
-            adj[e.b].push_back({g3, e.a});
-        }
-    using E = std::tuple<double, int, int>;
-    std::priority_queue<E, std::vector<E>, std::greater<E>> heap;
-    std::vector<uint8_t> seen(n, 0);
-    seen[0] = 1;
-    for (const auto& gj : adj[0]) heap.emplace(gj.first, 0, gj.second);
-    while (!heap.empty()) {
-        const auto [g, i, j] = heap.top();
-        heap.pop();
-        if (seen[j]) continue;
-        seen[j] = 1;
-        tree.emplace_back(i, j);
-        for (const auto& gk : adj[j])
-            if (!seen[gk.second]) heap.emplace(gk.first, j, gk.second);
     }
 }
 
