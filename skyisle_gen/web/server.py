@@ -298,8 +298,9 @@ class Handler(BaseHTTPRequestHandler):
         out = {"rows": int(hq.shape[0]), "cols": int(hq.shape[1]), "step": step,
                "height_u16": base64.b64encode(hq.tobytes()).decode("ascii"),
                "island_id_i16": base64.b64encode(pick(arrs["island_id"]).astype(np.int16).tobytes()).decode("ascii")}
+        # P6b：landcover_natural = 没有人以前的地表（码同 landcover），landuse = 人工改造（0 没动过 … 7 采场，island/waterworks.py 的 LANDUSE_CLASSES）
         for k, dt in (("landcover", np.uint8), ("river", np.uint8), ("stream", np.uint8), ("lake", np.uint8), ("arable", np.uint8), ("cliff", np.uint8),
-                      ("floodplain", np.uint8), ("terrain_zone", np.uint8), ("resource", np.uint8)):
+                      ("floodplain", np.uint8), ("terrain_zone", np.uint8), ("resource", np.uint8), ("landcover_natural", np.uint8), ("landuse", np.uint8)):
             if k in arrs:
                 out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
         if "cultivable" in arrs:      # P5：田的编码与 farmland.png 同——1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒
