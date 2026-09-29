@@ -2,6 +2,10 @@
 
 原则甲：地质是背景，不涉玩法。本模块只读 `s03 plates.npz`（板块 / 边界类型 / 边界核 / 岛龄网格）与
 `islands.npz` 的 age / plate / layered，产出**描述性文本**，不进任何推导；不读 height_m。
+
+说法（2026-09-29，Zhouzhu docs/PLAN-LAND.md L16 / L17、skyisle-gen docs/DISCUSS-LAND-CYCLE.md）：岛上没有火山——岩浆在海下，
+浮石在海底充热、拱起、带着上面的海底岩层挣脱出海；岛出生后顺着风带漂、一路变老、越浮越低。「板块」「汇聚 / 离散 / 走滑」留着，
+意思换成漂流的样子：汇聚 = 往一处漂、嵌合；离散 = 往外散、新岛在这里出生；走滑 = 擦肩而过、被拉长。
 """
 from __future__ import annotations
 
@@ -64,7 +68,7 @@ class Geology:
             if bt == 0:
                 parts.append("处在板块汇聚带：浮石随流汇聚嵌合，岛群密集" + ("、上下堆叠" if self.layered[m].mean() > 0.15 else ""))
             elif bt == 1:
-                parts.append("处在板块离散带：岛群被拉开，多为新岛，空域宽")
+                parts.append("处在板块离散带：岛群被拉开，新岛多从这一带的海底挣脱出海，空域宽")
             else:
                 parts.append("处在板块走滑带：岛群错断成串")
         else:
@@ -81,7 +85,7 @@ class Geology:
                     best = (name, r)
             if best is not None and abs(best[1]) >= 0.6:
                 old_end = best[0] if best[1] > 0 else {"东": "西", "北": "南"}[best[0]]
-                parts.append(f"岛链一头老一头新（老的一头在{old_end}，是热点拖出的链）")
+                parts.append(f"岛链一头老一头新（老的一头在{old_end}：岛出生后顺着风带漂过去、一路变老）")
         med_age = float(np.median(self.age[m]))
         if med_age >= 0.65:
             parts.append("老岛居多，低而缓；满载低飞时偶尔透过云缝瞥见海面上大片惨白的礁")

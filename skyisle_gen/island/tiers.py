@@ -2,7 +2,7 @@
 
 世界设定：飞船取代了车船，能在任意平地停靠——没有码头，交通不绑岸线，集镇的服务范围按直线跨岛算。
 人口口径：总户数只读 ⑨；其中 nonfarm_share 是非农户（前工业社会约一到两成），先给资源造出的专业聚落（矿镇、浮石采石村、窑村、
-烧炭营、温泉地；封顶非农户的 special_cap_frac），余下按服务户数分给集镇（中心地：半径内户数最多的村升镇，镇距 ≥ town_spacing_km，邑治必为镇）。
+烧炭营、温泉地、盐井村；封顶非农户的 special_cap_frac），余下按服务户数分给集镇（中心地：半径内户数最多的村升镇，镇距 ≥ town_spacing_km，邑治必为镇）。
 农户照旧按田块分到村。Σ 村农户 + 散户 + 镇的非农户 + 专业聚落户 = 总户数（SET-pop）。
 
 纯函数：输入数组与记录，返回新记录；开垦直接改 g["landcover"] / g["patch_id"]，开采（village_workings）往 g["resources"]["workings"] 里加采场，
@@ -92,6 +92,16 @@ def special_settlements(g, sc, villages, nonfarm_hh: int, ok_site, km, res_km) -
         if d["kind"] == "hotspring":
             want.append({"kind": "温泉地", "resource": d["id"], "subtype": None, "island": d["island"], "at": d["cell"], "hh": float(sc["hotspring_hh"]),
                          "note": "汤治 / 寺社"})
+    # 盐井村（P3）：每个开了盐井的岩盐区一个，落在盐井旁——汲卤煮盐要常年的人手和柴，盐是头等的货、外运，吃粮靠外运
+    for o in occ:
+        if o["kind"] != "salt":
+            continue
+        wells = [w for w in R["workings"] if w["occurrence"] == o["id"]]
+        if not wells:
+            continue
+        hh = min(float(sc["salt_hh_max"]), float(sc["salt_hh_per_km2"]) * o["area_km2"] * GRADE_W.get(o["grade"], 1.0))
+        want.append({"kind": "盐井村", "resource": None, "occurrence": o["id"], "subtype": o["subtype"], "island": o["island"], "at": wells[0]["cell"],
+                     "hh": hh, "note": f"{o['subtype']} {o['area_km2']:.1f} km²（{o['grade']}品），汲卤煮盐外运，吃粮靠外运"})
     if not want:
         return []
     fallback = (island_id >= 0) & ~g["cliff"] & ~g["lake"] & ~(g["river"] > 0)
@@ -111,7 +121,7 @@ def special_settlements(g, sc, villages, nonfarm_hh: int, ok_site, km, res_km) -
                     "island": w["island"], "cell": cell, "km": km(*cell), "households": hh, "note": w["note"]})
     for s in out:
         s["name"] = f"{s['kind']}{s['id']:02d}"
-        if s["kind"] in ("矿镇", "矿村"):
+        if s["kind"] in ("矿镇", "矿村", "盐井村"):
             for wk in R["workings"]:
                 if wk["occurrence"] == s["occurrence"]:
                     wk["special"] = s["id"]

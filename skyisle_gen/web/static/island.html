@@ -88,6 +88,7 @@ a{color:var(--acc2)}
       <option value="gravel">赋存：砂砾</option>
       <option value="placer">赋存：砂金</option>
       <option value="sulfur">赋存：硫磺</option>
+      <option value="salt">赋存：岩盐</option>
     </select></div>
     <label class="chk"><input type="checkbox" id="ovWater" checked> 河 / 溪涧 / 湖</label>
     <label class="chk" title="河道按中心线画成平滑曲线，线宽 = 真实河宽 × 缩放（小 / 中 / 大河最细 1.8 / 2.4 / 3 px）；关掉则按栅格逐格涂色"><input type="checkbox" id="ovVec" checked> 河道矢量（平滑、按河宽）</label>
@@ -99,8 +100,8 @@ a{color:var(--acc2)}
     <label class="chk"><input type="checkbox" id="ovContour"> 等高线（100 m）</label>
     <label class="chk" title="随日期变化：积雪与雪线、植被枯荣与作物、溪涧断流 / 河道涨水漫滩 / 结冰、云海漫顶"><input type="checkbox" id="ovLive" checked> 季相与水情（随日期变）</label>
     <label class="chk" title="雨丝 / 雪花 / 风暴 / 多云 / 云雾 / 风的粒子"><input type="checkbox" id="ovFx" checked> 天气特效</label>
-    <label class="chk" title="村（圆的大小 = 户数）、镇（橙圈，管几个村）、专业聚落（紫菱：矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地）、散户、泊场（拉近才画）/ 桥头 / 蓄水池"><input type="checkbox" id="ovSettle" checked> 聚落</label>
-    <label class="chk" title="采场（矿坑 ■ / 硫磺坑 ✕ / 淘金点 ● / 采石场 ◆ / 土坑、采砂场 ·）、点（洞穴 ▲ / 泉眼 ○ / 温泉 ✱）、片（泥炭 / 鸟粪 / 浮石露头）；拉近后标出赋存区。林木与各类赋存只在「资源分布」底图上"><input type="checkbox" id="ovRes"> 资源点位（采场 / 点 / 片）</label>
+    <label class="chk" title="村（圆的大小 = 户数）、镇（橙圈，管几个村）、专业聚落（紫菱：矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地 / 盐井村）、散户、泊场（拉近才画）/ 桥头 / 蓄水池"><input type="checkbox" id="ovSettle" checked> 聚落</label>
+    <label class="chk" title="采场（矿坑 ■ / 硫磺坑 ✕ / 盐井 ■ / 淘金点 ● / 采石场 ◆ / 土坑、采砂场 ·）、点（洞穴 ▲ / 泉眼 ○ / 温泉 ✱ / 盐泉 ○ / 贝壳化石 ◆）、片（泥炭 / 鸟粪 / 浮石露头）；拉近后标出赋存区。林木与各类赋存只在「资源分布」底图上"><input type="checkbox" id="ovRes"> 资源点位（采场 / 点 / 片）</label>
     <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="1.5"><span id="exagV" class="small">1.5</span></div>
     <div id="legend" class="legend"></div>
   </div>
@@ -246,7 +247,7 @@ function renderSide(){
   $('resSum').innerHTML = RS ? `<div>${Object.entries(RS.zones.share).filter(([k, v]) => v >= 0.002).map(([k, v]) => `<span class="pill"><span class="sw" style="background:rgb(${RS.zones.palette[RS.zones.classes.indexOf(k)].join(',')})"></span>${k} ${fmt(v * 100, 0)}%</span>`).join('')}</div>
     <div style="margin-top:4px">${Object.entries(RS.counts).map(([k, v]) => `<span class="pill" title="${({point: '点', patch: '片', field: '散：赋存区数'})[RS.resources.forms ? RS.resources.forms[k] : ''] || ''}"><span class="sw" style="background:rgb(${RS.resources.palette[RS.resources.classes.indexOf(k)].join(',')})"></span>${k} ${v}</span>`).join('')}</div>
     ${RS.workings_counts ? `<div style="margin-top:4px">采场：${Object.entries(RS.workings_counts).map(([k, v]) => `${k} ${v}`).join(' · ') || '无'}</div>` : ''}
-    <div style="margin-top:4px">最近板块边界：${RS.geology.boundary_type}（核 ${fmt(RS.geology.boundary_kernel, 2)}）${RS.geology.layered ? ' · 叠层' : ''} · 老岛岩性 ${RS.geology.old_island_lithology} · 露天矿倍率 ×${fmt(RS.geology.ore_multiplier, 2)}</div>` : '（旧产物没有资源层：重新生成）';
+    <div style="margin-top:4px">最近板块边界：${RS.geology.boundary_type}（核 ${fmt(RS.geology.boundary_kernel, 2)}）${RS.geology.layered ? ' · 叠层' : ''} · 石料岩性按剥蚀深浅 ${RS.geology.layers ? RS.geology.layers.names.join(' / ') : (RS.geology.old_island_lithology || '')} · 露天矿倍率 ×${fmt(RS.geology.ore_multiplier, 2)}</div>` : '（旧产物没有资源层：重新生成）';
   $('islandList').innerHTML = J.islands.map(i => `<button class="mini" data-i="${i.id}" title="${i.area_km2} km² · 峰 ${i.peak_m} m · 台面 ${i.surface_m ?? '—'} m · 岸缘 ${i.rim_m} m · ${i.age_zh}${i.n_lakes ? ' · 湖 ' + i.n_lakes : ''}${i.has_perennial_river ? ' · 有河' : ''}">${i.id}</button>`).join('');
   $('islandList').querySelectorAll('button').forEach(b => b.onclick = () => zoomIsland(+b.dataset.i));
   const f = `/api/island/preview?run=${run}&node=${node}`;
@@ -560,7 +561,7 @@ function draw(){
 
 // ------------------------------------------------------------ 聚落叠加层（settlements.json）
 // 资源点位：点与片（deposits，林木除外）、采场（workings，按资源类取色）、拉近后标赋存区（occurrences：稀的都标，常的只标 ≥ 1 km² 的）
-const RES_MARK = { ore: 's', stone: 'd', cave: 't', spring: 'o', hotspring: '*', sulfur: 'x', placer: 'p', gravel: '.', clay: '.', peat: '.', guano: '.', floatstone: 'h' };
+const RES_MARK = { ore: 's', stone: 'd', cave: 't', spring: 'o', hotspring: '*', sulfur: 'x', salt: 's', saltspring: 'o', fossil: 'd', placer: 'p', gravel: '.', clay: '.', peat: '.', guano: '.', floatstone: 'h' };
 const ZOOM_ONLY = new Set(['stone', 'floatstone', 'spring']);   // 数以百计的小坑 / 露头：拉近才画点（远看靠「资源分布」底图的面）
 function drawResources(ctx){
   const RS = D.resources; const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];
@@ -568,7 +569,7 @@ function drawResources(ctx){
   const kzh = k => RS.fields.names[RS.fields.kinds.indexOf(k)];      // 资源键 → 中文类名（取色用）
   const zoomed = view.s * (10 / R.step) > 14;
   if (zoomed) for (const o of RS.occurrences || []) {
-    const rare = ['ore', 'sulfur', 'placer'].includes(o.kind); if (!rare && o.area_km2 < 1) continue; const [x, y] = cellPos(o.cell);
+    const rare = ['ore', 'sulfur', 'placer', 'salt'].includes(o.kind); if (!rare && o.area_km2 < 1) continue; const [x, y] = cellPos(o.cell);
     ctx.fillStyle = rare ? '#fff' : 'rgba(230,230,230,0.8)'; ctx.font = rare ? '10px sans-serif' : '9px sans-serif'; ctx.textAlign = 'left';
     ctx.fillText(`${o.kind_zh}·${o.subtype}（${fmt(o.area_km2, o.area_km2 < 10 ? 1 : 0)} km²${o.length_km >= 1 ? '，长 ' + fmt(o.length_km, 1) + ' km' : ''}，${o.grade}品${o.n_workings ? '，' + o.n_workings + ' 处采场' : ''}）`, x + 7, y - 5); }
   for (const w of RS.workings || []) {

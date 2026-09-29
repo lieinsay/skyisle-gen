@@ -84,11 +84,17 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             "全有 / ≥ 0.95", ok_wd and below >= 0.95)
     R = g.get("resources")
     if R is not None:
-        from .resources import FIELD_KINDS, RES_INDEX, rock_site_mask
+        from .grid import binary_dilate
+        from .resources import FIELD_KINDS, LITH_LAYERS, ORE_ORIGIN, RES_INDEX, rock_site_mask
         bad_site, bad_geo = [], []
         ages = {i["id"]: i["age_zh"] for i in J["islands"]}
-        lith = R["geology"]["old_island_lithology"]
         water = (g["river"] > 0) | g["lake"]
+        fs_ids = [d["id"] for d in R["deposits"] if d["kind"] == "floatstone"]
+        near_fs = binary_dilate(np.isin(g["patch_id"], fs_ids), 1) if fs_ids else np.zeros(water.shape, dtype=bool)
+        RFg = g["res_field"]
+        fk = {k: i for i, k in enumerate(R["fields"]["kinds"])}
+        occ_by_id = {o["id"]: o for o in R["occurrences"]}
+        lab_stone = g["occ_lab"]["stone"] if "occ_lab" in g else None
         for d in R["deposits"]:
             if d.get("cleared"):
                 continue                        # 整片被村周开垦掉的林场
@@ -97,13 +103,22 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             marked = (g["patch_id"][i, j_] == d["id"]) if d["form"] == "patch" else (g["resource"][i, j_] == RES_INDEX[d["kind"]])
             if g["island_id"][i, j_] != d["island"] or water[i, j_] or (g["cliff"][i, j_] and not on_cliff_ok) or not marked:
                 bad_site.append(d["id"])
+        # P3（没有火山）：不许有熔岩管 / 火山口；骨架空洞开在浮石露头旁；温泉、硫磺只在新岛；溶洞只在老岛；石料岩性是三层之一；
+        # 金属矿是海底带上来的那几种；盐泉在岩盐赋存上；贝壳化石在海相石灰岩的石料赋存区里
         for d in R["deposits"] + R["occurrences"]:
             a = ages.get(d["island"])
             sub = d.get("subtype")
-            if ((sub == "熔岩管" and a != "新岛") or (str(sub).startswith("熔岩管") and a == "老岛")
-                    or (sub in ("溶洞", "落水洞", "地下河") and (a != "老岛" or lith != "石灰岩"))
-                    or (d["kind"] == "sulfur" and a != "新岛") or (d["kind"] == "hotspring" and a == "老岛")
-                    or (d["kind"] == "stone" and sub != {"新岛": "玄武岩", "中年": "安山岩 / 凝灰岩", "老岛": lith}.get(a))):
+            i, j_ = d["cell"]
+            text = f"{sub or ''}{d.get('note') or ''}"
+            if (("熔岩" in text or "火山" in text)
+                    or (sub == "骨架空洞" and not near_fs[i, j_])
+                    or (sub in ("溶洞", "落水洞", "地下河") and a != "老岛")
+                    or (d["kind"] in ("sulfur", "hotspring") and a != "新岛")
+                    or (d["kind"] == "stone" and sub not in LITH_LAYERS)
+                    or (d["kind"] == "ore" and sub not in ORE_ORIGIN)
+                    or (d["kind"] == "saltspring" and RFg[fk["salt"]][i, j_] < int(round(R["fields"]["thr"]["salt"] * 255.0)) - 1)
+                    or (d["kind"] == "fossil" and (lab_stone is None or lab_stone[i, j_] < 0
+                                                   or occ_by_id[int(lab_stone[i, j_])]["subtype"] != LITH_LAYERS[0]))):
                 bad_geo.append(f"{d['kind']}:{d['id']}")
         add("RES-site", "点与片在所属岛的陆地上、不在水面；除崖洞 / 浮石 / 鸟粪外不在崖缘；片的代表格在自己的 patch_id 上、点在主导栅格上",
             {"bad": bad_site[:10], "n": len(R["deposits"])}, "bad = 0", not bad_site)
@@ -129,7 +144,9 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
                 bad_w.append(w["id"])
         add("RES-work", "采场（矿坑 / 硫磺坑 / 淘金点 / 采石场 / 土坑 / 采砂场）不在耕地、林地、水面、崖缘上，落在本类的赋存场里、挂着同类赋存区",
             {"bad": bad_w[:10], "n": len(R["workings"])}, "bad = 0", not bad_w)
-        add("RES-geo", "资源与地质背景一致（完整熔岩管 / 硫磺只在新岛、塌陷熔岩管不在老岛，溶洞只在石灰岩老岛，老岛无温泉，石料岩性随岛龄）", {"bad": bad_geo[:10]}, "bad = 0", not bad_geo)
+        add("RES-geo", "资源与地质背景一致（没有火山：无熔岩管 / 火山口，骨架空洞开在浮石露头旁；温泉、硫磺只在新岛，溶洞只在老岛；"
+                       "石料岩性为海相石灰岩 / 辉长岩 / 蛇纹岩，金属矿是海底带上来的那几种；盐泉在岩盐赋存上，贝壳化石在海相石灰岩里）",
+            {"bad": bad_geo[:10]}, "bad = 0", not bad_geo)
         nq = sum(1 for o in R["occurrences"] if o["kind"] == "stone" and o["island"] == 0)
         add("RES-quarry", "主岛至少一处石料赋存区（有石料盖城）", nq, "≥ 1", nq >= 1, hard=False)
     if C is not None:

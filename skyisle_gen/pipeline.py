@@ -43,7 +43,7 @@ STAGE_VERSIONS[5] = "5"  # perm_no_g；D 的 Φ 域与 s03 对齐；Φ 改读局
 STAGE_VERSIONS[6] = "5"  # betweenness_sources；cost_no_g；源权重改用集雨容量；读 ④ 扰动风 + 可靠局地风（第三批 3）
 STAGE_VERSIONS[7] = "5"  # 适宜度含岛群陆地规模项；中心窗读局部带界（第三批 3）；次级极大每圈保底 secondary_per_circle；中心窗按纬度区间 + 谷物冬温门槛（骨架第二版）
 STAGE_VERSIONS[9] = "2"  # ⑨ 政治层（第四批 R7）：人口、诸邦、采邑、名分/附庸、变法与兼并史；附庸判定按邦号查都城间距离（原先拿节点号查，附庸几乎为零）
-STAGE_VERSIONS[10] = "5"  # ⑩ 输出（原 ⑨）：九格表 ⑤⑥⑧ 改写为邦级（第四批 R7）；九格表干旱口径可配（骨架第二版）
+STAGE_VERSIONS[10] = "6"  # ⑩ 输出（原 ⑨）：九格表 ⑤⑥⑧ 改写为邦级（第四批 R7）；九格表干旱口径可配（骨架第二版）；地质说法换来历（没有火山，PLAN-LAND P3）
 
 
 class Context:

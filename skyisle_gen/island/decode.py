@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .resources import RES_FORM, RES_INDEX, RES_NAMES, WORK_ZH, ZONE_NAMES, _shape
+from .resources import (NOTE_FOSSIL, NOTE_HOTSPRING, NOTE_SALT, NOTE_SALTSPRING, NOTE_SULFUR, NOTE_VOID, ORE_NOTE, RES_FORM, RES_INDEX, RES_NAMES,
+                        WORK_ZH, ZONE_NAMES, _shape)
 
 ZONE_KEYS = ["void", "alpine", "mountain", "hill", "plain", "valley", "cliff", "water"]
 ZONE_ZH = dict(zip(ZONE_KEYS, ZONE_NAMES))
@@ -17,20 +18,22 @@ AGE_ZH = {"young": "新岛", "mid": "中年", "old": "老岛"}
 SUBTYPE_ZH = {
     "conifer": "针叶林", "mixed": "针阔混交林", "broadleaf": "阔叶林", "peat": "泥炭", "reed": "芦苇荡",
     "cliff_face": "崖面露头", "gorge": "峡谷露头",
-    "lava_tube": "熔岩管", "lava_tube_collapsed": "熔岩管（塌陷天窗）", "gorge_cave": "峡谷岩洞", "fracture_cave": "裂隙洞",
+    "skeleton_void": "骨架空洞", "gorge_cave": "峡谷岩洞", "fracture_cave": "裂隙洞",
     "karst_cave": "溶洞", "sinkhole": "落水洞", "underground_river": "地下河", "cliff_cave": "崖洞", "underside_cave": "底面洞",
     "waterfall_cave": "瀑布后洞",
-    "gold": "金", "iron": "铁", "leadzinc": "铅锌", "copper": "铜", "tin": "锡", "tintungsten": "锡钨", "manganese": "锰",
-    "vent": "火山口 / 喷气孔", "basalt": "玄武岩", "andesite": "安山岩 / 凝灰岩", "limestone": "石灰岩", "sandstone": "砂岩",
-    "lake_clay": "河湖黏土", "stream_clay": "溪边黏土", "river_gravel": "河滩砂砾", "placer_gold": "砂金",
+    "goldsilver": "金银", "iron": "铁", "leadzinc": "铅锌", "copper": "铜", "tin": "锡", "chromium": "铬", "nickel": "镍", "manganese": "锰",
+    "hydrothermal": "热泉硫磺", "marine_limestone": "海相石灰岩", "gabbro": "辉长岩", "serpentinite": "蛇纹岩",
+    "lake_clay": "河湖黏土", "stream_clay": "溪边黏土", "river_gravel": "河滩砂砾", "placer_gold": "砂金", "salt_dome": "盐丘",
 }
 NOTE_ZH = {
     "floatstone_body": "岛体本身的浮石：可开采，采掉的量相对岛体微不足道，不影响浮空",
     "cliff_cave": "开在岸崖上：从云带上方悬索进出",
     "underside_cave": "入口在崖下的岛底，只能悬索或飞舟进出",
     "timber_cleared": "已开垦殆尽（村周草坡 / 薪炭林）",
-    "ore_belt": "矿化带（顺板块走向）；只画在岩类可放区里，林下 / 田下的不算（前工业时代找不到、也开不了）",
-    "placer_upstream": "上游有金 / 铜矿化带：河砂可淘金",
+    "ore_sulfide": ORE_NOTE["热泉硫化物"], "ore_serpentinite": ORE_NOTE["蛇纹岩"], "ore_nodule": ORE_NOTE["锰结核"],
+    "placer_upstream": "上游有金银 / 铜矿化带（热泉硫化物）：河砂可淘金",
+    "hotspring_young": NOTE_HOTSPRING, "sulfur_hydrothermal": NOTE_SULFUR, "skeleton_void": NOTE_VOID,
+    "salt_sediment": NOTE_SALT, "salt_spring": NOTE_SALTSPRING, "fossil_shell": NOTE_FOSSIL,
     "placer_no_village": "附近没有村：季节性的外来淘金客",
 }
 # 四季
@@ -46,7 +49,7 @@ CLIMATE_NOTE = ("岛上气温（temp_c、逐日 temp_c）是台面 temp_ref_heig
                 "precip_mm_annual_rate 是折成年当量的强度")
 # 聚落
 SPECIAL_ZH = {"ore_town": "矿镇", "ore_village": "矿村", "floatstone_village": "浮石采石村", "kiln_village": "窑村",
-              "charcoal_camp": "烧炭营", "hotspring": "温泉地"}
+              "charcoal_camp": "烧炭营", "hotspring": "温泉地", "salt_village": "盐井村"}
 WATER_ZH = {"waterway": "河湖溪涧", "cistern": "蓄水池", "intake": "取水点"}
 HOME_ZH = {"seat_side": "邑治旁", "riverside": "河湖僻处", "highland": "高台", "outpost_isle": "小岛前哨"}
 HOME_NOTE = {"seat_side": "人多、近航线：邑治与主泊场（仓场）之间的一块地", "riverside": "离村三公里外、临水的僻静处",
@@ -118,7 +121,7 @@ def resources(g: dict, node: int, c: dict, R: dict) -> dict:
     works = [working(w) for w in R["workings"]]
     thr = {k: float(rc["occ_thr"][k]) for k in FIELD_KINDS}
     return resource_record(node, R["terrain_zone"], land, rc, int(R["r_cells"]), thr, meta["boundary_type"], float(meta["boundary_kernel"]),
-                           bool(meta["layered"]), bool(R["old_limestone"]), float(R["geo_ore"]), float(R["fs_rate"]), deps, occs, works)
+                           bool(meta["layered"]), float(R["geo_ore"]), float(R["fs_rate"]), deps, occs, works)
 
 
 def resources_after_settle(Rg: dict, R: dict, W: int, res_km: float) -> None:
@@ -182,6 +185,8 @@ def _special_note(n: list) -> str:
         return f"{SUBTYPE_ZH[n[1]]} {n[2]:.0f} km²，离最近的村 {n[3]:.1f} km（季节性）"
     if k == "hotspring":
         return "汤治 / 寺社"
+    if k == "salt":
+        return f"{SUBTYPE_ZH[n[1]]} {n[2]:.1f} km²（{GRADE_ZH[n[3]]}品），汲卤煮盐外运，吃粮靠外运"
     raise ValueError(k)
 
 

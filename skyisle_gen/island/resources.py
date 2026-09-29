@@ -1,16 +1,21 @@
-"""5.3c 地形区与资源分布：山区 / 丘陵 / 台地 / 河谷的区划，和三种形态的资源（DESIGN-NOTES 四点十六 / 四点十七 / 四点二十一）。
+"""5.3c 地形区与资源分布：山区 / 丘陵 / 台地 / 河谷的区划，和三种形态的资源（DESIGN-NOTES 四点十六 / 四点十七 / 四点二十一 / 四点三十四）。
 
 全部从已生成的地形、水系、地表与节点的地质背景（岛龄、板块边界类型与远近、叠层）推出，不读人口、不回灌（第三层）。
 随机数只走 _rng(node, "resources:…")。资源按形态分三种说法：
-- 点（泉眼、温泉、洞穴）：位置就是资源，只占一格；记在 deposits。
+- 点（泉眼、温泉、洞穴、盐泉、贝壳化石）：位置就是资源，只占一格；记在 deposits。
 - 片（林木、泥炭 / 芦苇、浮石露头、鸟粪石）：边界清楚的一片地就是资源；记在 deposits，占的格写进 patch_id（片与片、片与点互斥）。
-- 散（金属矿、石料、黏土、砂砾、砂金、硫磺）：分三层——
+- 散（金属矿、石料、黏土、砂砾、砂金、硫磺、岩盐）：分三层——
   赋存场（res_field：每类每格 0–1 品位，各类可叠在同一格）→ 赋存区（occurrences：品位 ≥ occ_thr 的连通块，可命名、可叙述）→
-  采场（workings：人在哪挖）。稀缺的人就矿：矿坑、硫磺坑在这里按品位挑；常用的就近取：采石场、土坑、采砂场、淘金点在聚落之后按村挑（tiers.py）。
+  采场（workings：人在哪挖）。稀缺的人就矿：矿坑、硫磺坑、盐井在这里按品位挑；常用的就近取：采石场、土坑、采砂场、淘金点在聚落之后按村挑（tiers.py）。
   岩类（金属矿、石料、硫磺）只在「岩类可放区」rock_site：山地、高山、裸岩 / 高山草甸，或丘陵且坡 ≥ rock_hill_slope_deg；
-  林坡算（采场那格改裸岩），平地的林、耕地、湿地、漫滩不算。沉积类（黏土、砂砾、砂金）的赋存可以压在田下，坑不上田不上林（2026-09-26 拍板）。
+  林坡算（采场那格改裸岩），平地的林、耕地、湿地、漫滩不算。沉积类（黏土、砂砾、砂金、岩盐）的赋存可以压在田下，坑不上田不上林（2026-09-26 拍板）。
 
-产物：terrain_zone（uint8，见 ZONE_NAMES）、res_field（uint8 [6, H, W]，品位 × 255，层序 FIELD_KINDS）、patch_id（int32，−1 = 无）、
+没有火山（P3，Zhouzhu docs/PLAN-LAND.md L16 / L17）：岩浆在海下，岛是从海底挣脱出来的拱，顶上带着海底的岩层一起升上来。
+于是矿是海底带上来的（热泉硫化物：铜、铅锌、金银、铁帽、少量锡；蛇纹岩：铬、镍；锰结核），硫磺是海底热泉沉积的，温泉只在刚出海的新岛（余热），
+熔岩管换成浮石骨架里的空洞（开在浮石露头旁），火山口删掉；海底的沉积层带来海相石灰岩（石料的一种岩性）、贝壳化石、岩盐与盐泉。
+岩层按剥蚀指数 e =（高出岸缘到峰高的比例）+ 岛龄偏移：e < layer_sediment_max 是沉积盖层，≥ layer_serpentinite_min 是蛇纹岩，中间是辉长岩。
+
+产物：terrain_zone（uint8，见 ZONE_NAMES）、res_field（uint8 [7, H, W]，品位 × 255，层序 FIELD_KINDS）、patch_id（int32，−1 = 无）、
 resource（uint8，见 RES_NAMES：显示用的「主导」类，按 DOMINANT_ORDER 后画盖先画）进 terrain.npz；
 resources.json 列出点与片（deposits）、赋存区（occurrences）、采场（workings）；resources.png 主导类索引色；preview_resources.png 总览。
 """
@@ -43,22 +48,45 @@ RES_KINDS = [
     ("sulfur", "硫磺", (230, 230, 60), "field"),
     ("cave", "洞穴", (40, 40, 40), "point"),
     ("guano", "鸟粪石", (240, 240, 210), "patch"),
+    # P3（没有火山）：海底的沉积层跟着岛升上来——追加在末尾，前 13 类的编码不变
+    ("salt", "岩盐", (215, 235, 245), "field"),
+    ("saltspring", "盐泉", (70, 200, 190), "point"),
+    ("fossil", "贝壳化石", (235, 180, 120), "point"),
 ]
 RES_NAMES = ["无"] + [k[1] for k in RES_KINDS]
 RES_PALETTE = [(0, 0, 0)] + [k[2] for k in RES_KINDS]
 RES_INDEX = {k[0]: i + 1 for i, k in enumerate(RES_KINDS)}
 RES_FORM = {k[0]: k[3] for k in RES_KINDS}
-FIELD_KINDS = ["ore", "sulfur", "placer", "clay", "gravel", "stone"]       # res_field 的层序
+FIELD_KINDS = ["ore", "sulfur", "placer", "clay", "gravel", "stone", "salt"]       # res_field 的层序（岩盐是 P3 加的第 7 层）
 ROCK_KINDS = ("ore", "sulfur", "stone")                                      # 岩类：只在 rock_site 里
-WORK_ZH = {"ore": "矿坑", "sulfur": "硫磺坑", "placer": "淘金点", "stone": "采石场", "clay": "土坑", "gravel": "采砂场"}
+WORK_ZH = {"ore": "矿坑", "sulfur": "硫磺坑", "placer": "淘金点", "stone": "采石场", "clay": "土坑", "gravel": "采砂场", "salt": "盐井"}
 # 主导栅格（显示用）的画法顺序：后画的盖先画的——稀的盖常的，点最后
-DOMINANT_ORDER = ["timber", "stone", "gravel", "clay", "peat", "guano", "floatstone", "placer", "sulfur", "ore", "spring", "hotspring", "cave"]
+DOMINANT_ORDER = ["timber", "stone", "gravel", "clay", "peat", "guano", "floatstone", "placer", "salt", "sulfur", "ore",
+                  "spring", "hotspring", "saltspring", "fossil", "cave"]
 
-# 金属矿的矿种权重（按最近的板块边界类型）；老岛加锡钨，新岛加硫化铜
-ORE_WEIGHTS = {"汇聚": {"铜": 0.35, "铁": 0.25, "铅锌": 0.25, "金": 0.15},
-               "离散": {"铁": 0.5, "铜": 0.3, "锰": 0.2},
-               "走滑": {"铁": 0.4, "铜": 0.25, "锡": 0.2, "铅锌": 0.15}}
-PLACER_METALS = ("金", "铜")        # 这两种矿化带会往下游冲出砂金（斑岩铜常伴金）
+# 金属矿的矿种权重（P3：都是岛从海底带上来的）。按最近的板块边界类型——在新说法里是漂流的样子：
+# 汇聚 = 嵌合（接缝把深处的蛇纹岩挤上来，铬、镍多）、离散 = 在洋中脊边上出生（热泉区新鲜、有锰结核）、走滑 = 转换断层的破碎带（蛇纹岩多）；
+# 新岛顶上还是海底的表层（锰结核 +0.15），老岛风化得久（红土镍 +0.15、铬 +0.05）。
+# 来历：热泉硫化物 = 铜、铅锌、金银、铁（硫化物风化出的铁帽）、锡（少数硫化物矿带锡）；蛇纹岩 = 铬、镍；锰结核 = 锰。锡钨（要花岗岩）删掉
+ORE_WEIGHTS = {"汇聚": {"铜": 0.25, "铅锌": 0.15, "金银": 0.1, "铁": 0.1, "锡": 0.05, "铬": 0.2, "镍": 0.15},
+               "离散": {"铜": 0.3, "铅锌": 0.2, "金银": 0.15, "铁": 0.1, "锡": 0.05, "锰": 0.2},
+               "走滑": {"铜": 0.2, "铅锌": 0.1, "金银": 0.05, "铁": 0.15, "锡": 0.05, "铬": 0.25, "镍": 0.2}}
+ORE_ORIGIN = {"铜": "热泉硫化物", "铅锌": "热泉硫化物", "金银": "热泉硫化物", "铁": "热泉硫化物", "锡": "热泉硫化物",
+              "铬": "蛇纹岩", "镍": "蛇纹岩", "锰": "锰结核"}
+ORE_NOTE = {"热泉硫化物": "热泉硫化物矿化带：海底热泉（黑烟囱）一边冒一边沉积的块状硫化物，随岛从海底带上来（顺板块走向）；"
+                     "只画在岩类可放区里，林下 / 田下的不算（前工业时代找不到、也开不了）",
+            "蛇纹岩": "蛇纹岩带：海底下的地幔岩随岛带上来、蚀变成蛇纹岩，带着铬铁矿与镍（顺板块走向）；只画在岩类可放区里，林下 / 田下的不算",
+            "锰结核": "锰结核层：深海底铺着的一层结核，随岛带上天（顺板块走向）；只画在岩类可放区里，林下 / 田下的不算"}
+PLACER_METALS = ("金银", "铜")        # 这两种矿化带会往下游冲出砂金（热泉硫化物常伴金）
+# 石料的岩性（按剥蚀指数从浅到深）：沉积盖层 / 海底地壳 / 地幔岩
+LITH_LAYERS = ("海相石灰岩", "辉长岩", "蛇纹岩")
+# 备注（cpp 后端的代码见 decode.NOTE_ZH，两边文字一样）
+NOTE_HOTSPRING = "刚出海的新岛从海底带上来的余热：几万年就凉了，老一点的岛上没有"
+NOTE_SULFUR = "海底热泉沉积的自然硫，随岛带上来；岛刚出海、还没风化掉，老一点的岛上早已氧化流失"
+NOTE_VOID = "浮石骨架里天然的空洞：开在浮石露头旁，从这里钻进岛体"
+NOTE_SALT = "海底沉积层里夹的盐层跟着岛升上来，拱成盐丘"
+NOTE_SALTSPRING = "溪水流过地下的盐层冒出的咸泉：熬它就出盐"
+NOTE_FOSSIL = "海相石灰岩里的贝壳化石层：海底的沉积跟着岛一起升上天"
 
 
 def _km(J, i, j):
@@ -254,13 +282,15 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
     noise_fs = FractalNoise(_rng(ctx, node, "resources:floatstone"), Xk[0], Yk[-1], Xk[-1], Yk[0],
                             feature_km=float(rc["floatstone_patch_km"]), octaves=3, persistence=0.5).sample(XX, YY)
 
-    # 群的老岛岩性：石灰岩（有溶洞）或砂岩；一群一个，确定性
-    rng_lith = _rng(ctx, node, "resources:lith")
-    old_limestone = bool(rng_lith.random() < float(rc["old_limestone_p"]))
+    # 岩层（P3，没有火山）：岛是从海底挣脱出来的拱，顶上带着海底的沉积层；越往岛的高处、岛越老，剥蚀得越深、露出的层越深。
+    # 剥蚀指数 e = 高出岸缘到峰高的比例 + 岛龄偏移：e < layer_sediment_max 是沉积盖层（海相石灰岩、岩盐、溶洞），≥ layer_serpentinite_min 是蛇纹岩，中间是辉长岩
+    sed_max, serp_min = float(rc["layer_sediment_max"]), float(rc["layer_serpentinite_min"])
+    age_shift = {"新岛": float(rc["exhume_shift_young"]), "中年": 0.0, "老岛": float(rc["exhume_shift_old"])}
     ages = [isl["age_zh"] for isl in J["islands"]]
 
-    def lith(age_zh: str) -> str:
-        return {"新岛": "玄武岩", "中年": "安山岩 / 凝灰岩", "老岛": "石灰岩" if old_limestone else "砂岩"}[age_zh]
+    def lith(ii, jj) -> str:
+        e = float(peak_rel[ii, jj].mean()) + age_shift[ages[int(island_id[ii[0], jj[0]])]]
+        return LITH_LAYERS[0] if e < sed_max else (LITH_LAYERS[2] if e >= serp_min else LITH_LAYERS[1])
 
     def add_deposit(kind, ii, jj, i, j, sub, q, note=None, extra=None):
         area = ii.size * cell_km2
@@ -355,6 +385,7 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
     F["clay"] = np.where(clay_ok & strong, 0.7 + 0.3 * patchy, np.where(clay_ok & near_stream, 0.35 + 0.25 * patchy, 0.0))
     # 砂砾：常年河 / 大溪边的缓坡滩地，品位随河的大小（汇流 10 km² → 0.6，1000 km² → 1）
     chan = river | (stream & (acc >= float(rc["gravel_acc_km2"])))
+    wet_edge = binary_dilate(stream | river, 1)          # 溪涧 / 河道本格及八邻（盐泉）
     bank = int(rc["gravel_bank_cells"])
     bars = binary_dilate(chan, bank) & ~chan & soft & ~wet & (slope < float(rc["gravel_slope_max_deg"]))
     acc_bar = _spread_max(np.where(chan, acc, 0.0), bank)
@@ -398,13 +429,14 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
         # 泥炭（凉湿）/ 芦苇荡（暖）（片）：湿地
         place("peat", m & wet, 0.3 + 0.7 * patchy, lam("peat"), float(rc["peat_km2"]), float(rc["patch_sep_km"]),
               sub_fn=lambda i, j, r: "泥炭" if T[i, j] < float(rc["peat_temp_max_c"]) else "芦苇荡", rng=rng)
-        # 金属矿（散）：顺板块走向拉长的矿化带 = 椭圆核 × 斑块噪声，裁到岩类可放区；带内按品位点矿坑
+        # 金属矿（散）：海底带上来的矿化带，顺板块走向拉长 = 椭圆核 × 斑块噪声，裁到岩类可放区；带内按品位点矿坑
         cand = m & rock_site & (slope <= float(rc["ore_slope_max_deg"]))
         w_ore = dict(ORE_WEIGHTS.get(btype, ORE_WEIGHTS["走滑"]))
-        if age_zh == "老岛":
-            w_ore["锡钨"] = 0.2
         if age_zh == "新岛":
-            w_ore["铜"] = w_ore.get("铜", 0) + 0.15
+            w_ore["锰"] = w_ore.get("锰", 0) + 0.15
+        if age_zh == "老岛":
+            w_ore["镍"] = w_ore.get("镍", 0) + 0.15
+            w_ore["铬"] = w_ore.get("铬", 0) + 0.05
         age_mult = {"新岛": 0.6, "中年": 1.0, "老岛": 1.2}[age_zh]
         if big and cand.any():
             score = np.where(cand, patchy * np.clip(relief / (2.0 * float(rc["mountain_relief_m"])), 0.1, 1.0), 0.0)
@@ -426,7 +458,7 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
                     continue
                 sub = _pick(rng, w_ore)
                 bi, bj = wi[belt], wj[belt]
-                o = add_occ("ore", bi, bj, gw[belt], sub, note="矿化带（顺板块走向）；只画在岩类可放区里，林下 / 田下的不算（前工业时代找不到、也开不了）")
+                o = add_occ("ore", bi, bj, gw[belt], sub, note=ORE_NOTE[ORE_ORIGIN[sub]])
                 F["ore"][r0:r1, c0:c1] = np.maximum(F["ore"][r0:r1, c0:c1], gw)
                 if sub in PLACER_METALS:
                     gold_src[r0:r1, c0:c1] = np.maximum(gold_src[r0:r1, c0:c1], gw)
@@ -441,7 +473,8 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
                         break
                 for (a, b) in chosen:
                     add_work("ore", o, a, b)
-        # 浮石露头（片）：崖面 + 深切峡谷壁；露头率 × 岛龄（新岛 1.2 / 中年 1 / 老岛 0.6），按斑块噪声取格，连通段各算一处
+        # 浮石露头（片）：崖面 + 深切峡谷壁；露头率 × 岛龄（新岛 1.2 / 中年 1 / 老岛 0.6），按斑块噪声取格，连通段各算一处。本岛露头的格记进 fs_here（骨架空洞开在露头旁）
+        fs_here = np.zeros((H, W), dtype=bool)
         f_exp = float(np.clip(fs_rate * {"新岛": 1.2, "中年": 1.0, "老岛": 0.6}[age_zh], 0.02, 0.95))
         fs_cand_c = m & cliff & ~water
         fs_cand_g = mk & (cut >= float(rc["gorge_cut_m"])) & (slope >= float(rc["gorge_slope_deg"]))
@@ -458,14 +491,15 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
                     continue
                 ci = int(np.argmin((ii - ii.mean()) ** 2 + (jj - jj.mean()) ** 2))
                 taken[ii, jj] = True
+                fs_here[ii, jj] = True
                 add_deposit("floatstone", ii, jj, int(ii[ci]), int(jj[ci]), sub_fs, float(np.clip(0.5 + 0.5 * noise_fs[ii, jj].mean(), 0, 1)),
                             note="岛体本身的浮石：可开采，采掉的量相对岛体微不足道，不影响浮空")
-        # 温泉（点）/ 硫磺（散）：新岛（火山余热）；中年岛偶有温泉
-        if age_zh != "老岛":
-            hot = {"新岛": 1.0, "中年": float(rc["mid_hot_mult"])}[age_zh]
+        # 温泉（点）/ 硫磺（散）：只在新岛——岛从海底带上来的余热，几万年就凉了；硫磺是海底热泉沉积的自然硫，老一点的岛上早已氧化流失
+        if age_zh == "新岛":
             cand = mk & (peak_rel >= 0.15) & (slope < 25)
-            place("hotspring", cand & (stream | binary_dilate(stream, 1)), patchy + 0.3 * peak_rel, lam("hotspring", hot), 0, float(rc["spring_sep_km"]), rng=rng)
-            if age_zh == "新岛" and big:
+            place("hotspring", cand & (stream | binary_dilate(stream, 1)), patchy + 0.3 * peak_rel, lam("hotspring"), 0, float(rc["spring_sep_km"]),
+                  note=NOTE_HOTSPRING, rng=rng)
+            if big:
                 cand = m & rock_site & (peak_rel >= float(rc["sulfur_peak_frac"]))
                 for (i, j) in _seeds(np.where(cand, patchy * peak_rel, 0.0), lam("sulfur"), float(rc["patch_sep_km"]) / res_km):
                     r_km = math.sqrt(float(rc["sulfur_km2"]) * float(rng.lognormal(0.0, 0.6)) / math.pi)
@@ -477,23 +511,23 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
                     zm = gw >= thr["sulfur"]
                     if zm.sum() < min_cells:
                         continue
-                    o = add_occ("sulfur", wi[zm], wj[zm], gw[zm], "火山口 / 喷气孔")
+                    o = add_occ("sulfur", wi[zm], wj[zm], gw[zm], "热泉硫磺", note=NOTE_SULFUR)
                     F["sulfur"][r0:r1, c0:c1] = np.maximum(F["sulfur"][r0:r1, c0:c1], gw)
                     add_work("sulfur", o, *o["cell"])
-        # 洞穴（点）：熔岩管（新岛缓坡）/ 溶洞（石灰岩老岛的台地与落水洞）/ 崖洞（岸崖，所有岛）
-        # 熔岩管：新岛多，中年岛仍在但多处塌成天窗（现实：几万年的岩流里还有十几 km 的管，上百万年才塌尽），老岛没有
-        lt = {"新岛": 1.0, "中年": float(rc["lava_tube_mid_mult"]), "老岛": 0.0}[age_zh]
-        if lt > 0:
-            cand = mk & (slope >= 3) & (slope <= 18) & (peak_rel >= 0.25) & (peak_rel <= 0.8)
-            place("cave", cand, patchy, lam("lava_tube", lt), 0, float(rc["cave_sep_km"]),
-                  sub_fn=lambda i, j, r: "熔岩管" if age_zh == "新岛" else "熔岩管（塌陷天窗）", rng=rng)
+        # 洞穴（点）：骨架空洞（浮石露头旁）/ 溶洞（老岛的沉积盖层）/ 崖洞（岸崖，所有岛）……
+        # 骨架空洞（P3，取代熔岩管）：浮石骨架里天然的空洞，从露头处钻进岛体——开在本岛浮石露头旁一格（崖面、峡谷壁），个数按露头面积
+        if fs_here.any():
+            fs_km2 = float(fs_here.sum()) * cell_km2
+            place("cave", m & ~water & binary_dilate(fs_here, 1), patchy, rng.poisson(max(0.0, float(rc["skeleton_void_per_km2"]) * fs_km2)), 0,
+                  float(rc["cave_sep_km"]), sub_fn=lambda i, j, r: "骨架空洞", note=NOTE_VOID, rng=rng)
         # 峡谷岩洞：下切的谷壁；裂隙洞：山地，近板块边界多
         place("cave", mk & (cut >= float(rc["gorge_cut_m"])) & (slope >= float(rc["gorge_slope_deg"])), patchy, lam("gorge_cave"), 0,
               float(rc["cave_sep_km"]), sub_fn=lambda i, j, r: "峡谷岩洞", rng=rng)
         place("cave", mk & ((zone == 1) | (zone == 2)) & (slope >= 15), patchy, lam("fracture_cave", 1.0 + 2.0 * kern), 0,
               float(rc["cave_sep_km"]), sub_fn=lambda i, j, r: "裂隙洞", rng=rng)
-        if age_zh == "老岛" and old_limestone:
-            cand = mk & (slope <= 15) & ((acc >= 0.3) | (zone == 2) | (zone == 3))
+        # 溶洞 / 落水洞 / 地下河：老岛上还留着沉积盖层（海相石灰岩）的地方——溶蚀要年头
+        if age_zh == "老岛":
+            cand = mk & (slope <= 15) & ((acc >= 0.3) | (zone == 2) | (zone == 3)) & (peak_rel + age_shift["老岛"] < sed_max)
             place("cave", cand, patchy, lam("karst"), 0, float(rc["cave_sep_km"]), sub_fn=lambda i, j, r: r.choice(["溶洞", "落水洞", "地下河"]), rng=rng)
         rim_cells = m & cliff & ~water
         if rim_cells.any():
@@ -519,21 +553,62 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
             # 鸟粪石（片）：小岛崖顶（海鸟 / 飞兽聚居）
             if A <= float(rc["guano_max_island_km2"]) and rng.random() < float(rc["guano_p"]):
                 place("guano", m & binary_dilate(cliff, 2) & ~water, patchy + 0.2, 1, min(0.3 * A, float(rc["guano_km2"])), 1.0, rng=rng)
+        # 岩盐（散）/ 盐泉（点）/ 盐井（采场）（P3）：海底沉积层里夹的盐层跟着岛升上来，只在还留着沉积盖层的地方（剥蚀指数 < layer_sediment_max）。
+        # 盐丘 = 圆核 × 斑块噪声，个数按本岛沉积盖层的面积；有溪涧 / 河流过的，挨着水的格里品位最高的一格冒盐泉；
+        # 盐井开在盐泉上（盐泉不在田、林上时），否则开在品位最高的非田非林格（都没有就不开）
+        if big:
+            cand = mk & (peak_rel + age_shift[age_zh] < sed_max)
+            A_sed = float(cand.sum()) * cell_km2
+            ns = rng.poisson(max(0.0, float(dens["salt"]) * A_sed / 100.0))
+            for (i, j) in _seeds(np.where(cand, patchy, 0.0), ns, float(rc["salt_sep_km"]) / res_km):
+                r_km = math.sqrt(float(rc["salt_km2"]) * float(rng.lognormal(0.0, 0.6)) / math.pi)
+                R = int(math.ceil(r_km / res_km)) + 1
+                r0, r1, c0, c1 = max(0, i - R), min(H, i + R + 1), max(0, j - R), min(W, j + R + 1)
+                wi, wj = np.mgrid[r0:r1, c0:c1]
+                gw = np.clip(1.0 - (np.hypot(wi - i, wj - j) * res_km / r_km) ** 2, 0.0, 1.0) * (0.7 + 0.3 * patchy[r0:r1, c0:c1])
+                gw = np.where(cand[r0:r1, c0:c1], gw, 0.0)
+                zm = gw >= thr["salt"]
+                if zm.sum() < min_cells:
+                    continue
+                zi, zj, zg = wi[zm], wj[zm], gw[zm]
+                o = add_occ("salt", zi, zj, zg, "盐丘", note=NOTE_SALT)
+                F["salt"][r0:r1, c0:c1] = np.maximum(F["salt"][r0:r1, c0:c1], gw)
+                ok_sp = ~taken[zi, zj] & wet_edge[zi, zj]
+                sp = int(np.flatnonzero(ok_sp)[np.argmax(zg[ok_sp])]) if ok_sp.any() else -1
+                if sp >= 0:
+                    taken[zi[sp], zj[sp]] = True
+                    add_deposit("saltspring", zi[sp:sp + 1], zj[sp:sp + 1], int(zi[sp]), int(zj[sp]), None, float(zg[sp]), NOTE_SALTSPRING)
+                ok_w = ~arable[zi, zj] & (cover[zi, zj] != LC_FOREST)
+                if sp >= 0 and ok_w[sp]:
+                    wl = sp
+                else:
+                    wl = int(np.flatnonzero(ok_w)[np.argmax(zg[ok_w])]) if ok_w.any() else -1
+                if wl >= 0:
+                    add_work("salt", o, int(zi[wl]), int(zj[wl]))
 
-    # ---------- 散：砂金（上游金 / 铜矿化带的平均品位，带给河边滩地）、石料 / 黏土 / 砂砾的赋存区 ----------
+    # ---------- 散：砂金（上游金银 / 铜矿化带的平均品位，带给河边滩地）、石料 / 黏土 / 砂砾的赋存区 ----------
     if gold_src.any():
         ok = land & np.isfinite(g["route_h"])
         from .terrain import accumulate
         up = accumulate(g["route_h"], ok, g["recv_i"], g["recv_j"], weight=gold_src) * cell_km2
         mean_up = np.where(chan, up / np.maximum(acc, cell_km2), 0.0)
         F["placer"] = F["gravel"] * np.clip(float(rc["placer_gain"]) * _spread_max(mean_up, bank), 0.0, 1.0)
-    field_occurrences("stone", lambda ii, jj: lith(ages[int(island_id[ii[0], jj[0]])]))
+    # 石料的岩性按剥蚀指数（区内各格「高出岸缘到峰高的比例」的均值 + 岛龄偏移）：沉积盖层 = 海相石灰岩，最深 = 蛇纹岩，中间 = 辉长岩
+    field_occurrences("stone", lith)
     field_occurrences("clay", lambda ii, jj: "河湖黏土" if strong[ii, jj].mean() >= 0.5 else "溪边黏土")
     field_occurrences("gravel", lambda ii, jj: "河滩砂砾")
-    field_occurrences("placer", lambda ii, jj: "砂金", note="上游有金 / 铜矿化带：河砂可淘金")
+    field_occurrences("placer", lambda ii, jj: "砂金", note="上游有金银 / 铜矿化带（热泉硫化物）：河砂可淘金")
+    # 贝壳化石（点，P3）：海相石灰岩的石料赋存区里——海底的沉积跟着岛升上来，石灰岩里有海里的贝壳。每区个数 = 泊松(fossil_per_km2 × 面积)，
+    # 按品位（露得好）取种子、彼此 ≥ fossil_sep_km；一群一条随机流 resources:fossil，按赋存区编号的次序抽
+    rng_f = _rng(ctx, node, "resources:fossil")
+    for o in [o for o in occurrences if o["kind"] == "stone" and o["subtype"] == LITH_LAYERS[0]]:
+        n_f = int(rng_f.poisson(max(0.0, float(rc["fossil_per_km2"]) * o["area_km2"])))
+        if n_f <= 0:
+            continue
+        place("fossil", occ_lab["stone"] == o["id"], F["stone"], n_f, 0, float(rc["fossil_sep_km"]), note=NOTE_FOSSIL, rng=rng_f)
     g.update({"patch_id": patch_id, "occ_lab": occ_lab,
               "res_field": np.stack([np.round(np.clip(F[k], 0.0, 1.0) * 255.0).astype(np.uint8) for k in FIELD_KINDS])})
-    R = resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, old_limestone, geo_ore, fs_rate, deposits, occurrences, workings)
+    R = resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, geo_ore, fs_rate, deposits, occurrences, workings)
     g["resources"] = R
     for w in workings:                            # 岩类采场开在林坡 / 灌丛上：那格改裸岩
         if w["kind"] in ROCK_KINDS:
@@ -543,7 +618,7 @@ def build_resources(ctx, node: int, c: dict, g: dict, log=print) -> None:
         + f"；点与片 {len(deposits)} 处，赋存区 {len(occurrences)}，采场 {len(workings)}（林木外占陆地 {R['non_timber_share'] * 100:.1f}%）：" + "，".join(f"{k} {v}" for k, v in R["counts"].items()))
 
 
-def resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, old_limestone, geo_ore, fs_rate, deposits, occurrences, workings) -> dict:
+def resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, geo_ore, fs_rate, deposits, occurrences, workings) -> dict:
     """resources.json 的整体（除 sync_resources 补的计数）：两个后端共用（cpp 后端的记录由 decode.py 译回同形）。"""
     return {"node": node, "zones": {"classes": ZONE_NAMES, "palette": ZONE_PALETTE,
                                     "share": {ZONE_NAMES[i]: round(float(((zone == i) & land).sum()) / max(1, int(land.sum())), 4) for i in range(1, len(ZONE_NAMES))},
@@ -554,10 +629,15 @@ def resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, ol
             "fields": {"kinds": FIELD_KINDS, "names": [RES_NAMES[RES_INDEX[k]] for k in FIELD_KINDS], "thr": thr,
                        "rock_kinds": list(ROCK_KINDS), "rock_hill_slope_deg": float(rc["rock_hill_slope_deg"]),
                        "rule": f"res_field = 品位 × 255。岩类（金属矿 / 石料 / 硫磺）只在岩类可放区：山地、高山、裸岩 / 高山草甸，或丘陵且坡 ≥ {rc['rock_hill_slope_deg']}°"
-                               "（林坡算，平地林、耕地、湿地、漫滩不算）；沉积类（黏土 / 砂砾 / 砂金）可压在田下。赋存区 = 品位 ≥ thr 的连通块（矿化带 / 硫磺按各自的核）"},
-            "geology": {"boundary_type": btype, "boundary_kernel": kern, "layered": layered, "old_island_lithology": "石灰岩" if old_limestone else "砂岩",
+                               "（林坡算，平地林、耕地、湿地、漫滩不算）；沉积类（黏土 / 砂砾 / 砂金 / 岩盐）可压在田下。赋存区 = 品位 ≥ thr 的连通块（矿化带 / 硫磺 / 盐丘按各自的核）"},
+            "geology": {"boundary_type": btype, "boundary_kernel": kern, "layered": layered,
                         "ore_multiplier": round(geo_ore, 3), "floatstone_expose_rate": round(fs_rate, 3),
-                        "floatstone": "岛体本身就是浮石；可开采，采掉的量相对岛体微不足道，不影响浮空"},
+                        "floatstone": "岛体本身就是浮石；可开采，采掉的量相对岛体微不足道，不影响浮空",
+                        "origin": "岩浆只在海下、岛上不喷发：岛是从海底挣脱出来的拱，顶上带着海底的岩层一起升上来——矿、硫磺、盐、石灰岩与贝壳化石都是海底带上来的，温泉只在刚出海的新岛",
+                        "layers": {"names": list(LITH_LAYERS), "sediment_max": float(rc["layer_sediment_max"]), "serpentinite_min": float(rc["layer_serpentinite_min"]),
+                                   "age_shift": {"新岛": float(rc["exhume_shift_young"]), "中年": 0.0, "老岛": float(rc["exhume_shift_old"])},
+                                   "rule": f"剥蚀指数 e = 高出岸缘到峰高的比例 + 岛龄偏移：e < {rc['layer_sediment_max']} 是沉积盖层（海相石灰岩、岩盐、溶洞），"
+                                           f"≥ {rc['layer_serpentinite_min']} 是蛇纹岩（铬、镍），中间是辉长岩；石料赋存区按区内均值定岩性"}},
             "deposits": deposits, "occurrences": occurrences, "workings": workings,
             "note": "第三层叙事 / 场景素材，不进管线；cell = 群栅格 [行, 列]，km = 相对群心（x 东 y 北）。deposits = 点与片，occurrences = 散的赋存区（cell = 品位峰值格，"
                     "axis_deg = 走向，自东逆时针），workings = 采场（villages / special = 用它的村 / 专业聚落）；grade 是本类里的相对品位"}
@@ -642,7 +722,7 @@ def resource_summary(g: dict) -> None:
     R["non_timber_share"] = round(float(((res > 0) & (res != RES_INDEX["timber"])).sum()) / n_land, 4)
     cover = g["landcover"]
     J["landcover"]["share"] = {LANDCOVER_CLASSES[i]: round(float(((cover == i) & land).sum()) / n_land, 4) for i in range(1, 12)}
-    J["resources"] = {"zones_share": R["zones"]["share"], "counts": counts, "workings": wc, "old_island_lithology": R["geology"]["old_island_lithology"]}
+    J["resources"] = {"zones_share": R["zones"]["share"], "counts": counts, "workings": wc}
 
 
 def write_resources(out: Path, g: dict) -> None:
@@ -683,7 +763,7 @@ def write_preview_resources(out: Path, g: dict) -> Path:
     rp = np.array(RES_PALETTE, dtype=float) / 255.0
     rr = g["resource"][sub]
     base = shade[sub].copy()
-    pts_codes = [RES_INDEX[k] for k in ("spring", "cave", "hotspring")]
+    pts_codes = [RES_INDEX[k] for k in ("spring", "cave", "hotspring", "saltspring", "fossil")]
     faint = np.isin(rr, [RES_INDEX["timber"], RES_INDEX["stone"]])        # 林木、石料铺得最广：淡淡一层，不盖住别的
     patch = (rr > 0) & ~np.isin(rr, pts_codes) & ~faint
     base[faint] = 0.7 * base[faint] + 0.3 * rp[rr[faint]]
@@ -692,13 +772,13 @@ def write_preview_resources(out: Path, g: dict) -> Path:
     base[g["lake"][sub]] = (0.12, 0.25, 0.7)
     sext = [x0 + b0 * res_m / 1000.0, x0 + b1 * res_m / 1000.0, y0 - a1 * res_m / 1000.0, y0 - a0 * res_m / 1000.0]
     axes[1].imshow(base, extent=sext, origin="upper", interpolation="nearest")
-    wmarks = {"ore": ("s", 26), "sulfur": ("X", 30), "placer": ("P", 30), "stone": ("D", 14), "clay": (".", 20), "gravel": (".", 20)}
+    wmarks = {"ore": ("s", 26), "sulfur": ("X", 30), "salt": ("H", 34), "placer": ("P", 30), "stone": ("D", 14), "clay": (".", 20), "gravel": (".", 20)}
     for key, (mk_, sz) in wmarks.items():
         pts = [w["km"] for w in R["workings"] if w["kind"] == key and w["island"] == 0]
         if pts:
             p = np.array(pts)
             axes[1].scatter(p[:, 0], p[:, 1], marker=mk_, s=sz, c=[tuple(rp[RES_INDEX[key]])], edgecolors="black", linewidths=0.4, zorder=6)
-    pmarks = {"spring": ("o", 14), "cave": ("^", 34), "hotspring": ("*", 60)}
+    pmarks = {"spring": ("o", 14), "cave": ("^", 34), "hotspring": ("*", 60), "saltspring": ("p", 40), "fossil": ("v", 24)}
     for key, (mk_, sz) in pmarks.items():
         pts = [d["km"] for d in R["deposits"] if d["kind"] == key and d["island"] == 0]
         if pts:
@@ -712,7 +792,7 @@ def write_preview_resources(out: Path, g: dict) -> Path:
     axes[1].legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.75)
     geo = R["geology"]
     axes[1].set_title(f"主岛资源（底色 = 主导类，符号 = 采场与点；图例为全群计数）· 最近板块边界：{geo['boundary_type']}（核 {geo['boundary_kernel']:.2f}）"
-                      f"{' · 叠层' if geo['layered'] else ''} · 老岛岩性 {geo['old_island_lithology']}", fontsize=10)
+                      f"{' · 叠层' if geo['layered'] else ''} · 石料岩性按剥蚀深浅：{' / '.join(geo['layers']['names'])}", fontsize=10)
     for ax in axes:
         ax.set_xlabel("km 东")
         ax.set_aspect("equal")

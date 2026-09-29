@@ -198,7 +198,7 @@ def surface_heights(rng, n: int, height_m: float, layered: bool, c: dict) -> np.
 def relief_targets(rng, sizes: np.ndarray, ages: np.ndarray, c: dict) -> np.ndarray:
     """各岛目标起伏（岸缘 → 峰，m）：参考起伏按岛龄在 relief_young_m（岛龄 0）与 relief_old_m（岛龄 1）之间对数插值，
     × (面积 / 1000 km²)^relief_area_exp × 对数正态(relief_sigma)，夹 [relief_min_m, relief_max_m]。
-    锚点是现实的岛：1000 km² 上下的新火山岛 2000 m 级（特内里费、济州、马德拉），中年岛 1000 m 级（瓦胡、罗得），老岛几百米（毛里求斯、巴巴多斯）。"""
+    锚点只借现实的岛的高度：1000 km² 上下的新岛 2000 m 级（特内里费、济州、马德拉），中年岛 1000 m 级（瓦胡、罗得），老岛几百米（毛里求斯、巴巴多斯）。"""
     a = np.clip(np.asarray(ages, dtype=np.float64), 0.0, 1.0)
     ly, lo = math.log(float(c["relief_young_m"])), math.log(float(c["relief_old_m"]))
     ref = np.exp(ly + a * (lo - ly))
