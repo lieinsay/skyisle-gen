@@ -14,6 +14,9 @@ from ..config import _deep_merge, apply_sets
 from . import TOWN_DIR
 
 STYLE_DIR = TOWN_DIR / "styles"
+# 形态算子（PLAN-TOWN 6.2）与默认的中文名；风格可在 [village.operator_names] 里改叫法（子预设）
+OPERATORS = {"fishbone": "鱼骨街村", "organic": "团块生长", "street_village": "街村", "hufen": "林地排村", "waterfront": "滨水",
+             "dispersed": "散居", "green": "围绿", "comb": "梳式", "contour": "等高线", "enclosure": "围合单体"}
 FUNCTIONS_FILE = TOWN_DIR / "functions.toml"
 
 
@@ -70,9 +73,9 @@ def _check(st: dict, f: Path) -> None:
         if fn.get("enabled") and fn.get("mode") == "compound" and fn.get("template") not in tpls:
             raise ValueError(f"功能 {k} 引用的模板 {fn.get('template')} 不存在")
     ops = st.get("village", {}).get("operators", {})
-    bad = [k for k, w in ops.items() if w > 0 and k not in ("fishbone", "organic")]
+    bad = [k for k, w in ops.items() if w > 0 and k not in OPERATORS]
     if bad:
-        raise ValueError(f"风格 {f.name} 的形态算子 {bad} 还没有实现（第二步有 fishbone / organic）")
+        raise ValueError(f"风格 {f.name} 的形态算子 {bad} 不认识（有：{'、'.join(OPERATORS)}）")
 
     def walk(x, path):
         if isinstance(x, dict):
@@ -90,15 +93,27 @@ def style_names(st: dict) -> dict:
             "functions": {k: v.get("name", k) for k, v in st["functions"].items()}}
 
 
+def _join_ops(d: dict) -> dict:
+    """字符串列表（ops = ["contour"]）展平时会被跳过：拼成逗号串交给 C++。"""
+    if isinstance(d.get("ops"), list):
+        d = {**d, "ops": ",".join(d["ops"])}
+    return d
+
+
+def operator_name(st: dict, op: str) -> str:
+    """形态算子在这个风格里的叫法（子预设），没写就用默认中文名。"""
+    return (st.get("village", {}).get("operator_names", {}) or {}).get(op) or OPERATORS.get(op, op)
+
+
 def style_flat(st: dict) -> dict:
     """展平给 C++：模板字典 → compound.template 数组（带 id），启用的功能 → func 数组（带 id）；前缀 style.。"""
     from ..engine import flatten
     s = {k: v for k, v in st.items() if k not in ("functions", "meta")}
     comp = dict(s.get("compound", {}))
     tpls = comp.pop("templates", {})
-    comp["template"] = [{"id": k, **v} for k, v in tpls.items()]
+    comp["template"] = [_join_ops({"id": k, **v}) for k, v in tpls.items()]
     s["compound"] = comp
-    s["func"] = [{"id": k, **v} for k, v in st["functions"].items() if v.get("enabled")]
+    s["func"] = [_join_ops({"id": k, **v}) for k, v in st["functions"].items() if v.get("enabled")]
     s["meta"] = {"id": st["meta"]["id"]}
     return flatten(s, prefix="style.")
 

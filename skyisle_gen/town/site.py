@@ -123,8 +123,9 @@ def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
     return {"landings": landings, "exits": exits}
 
 
-def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, half_m: float | None = None) -> tuple[dict, dict]:
-    """岛群 node 里名叫 name 的聚落所在的一块地：返回 (Site, meta)。"""
+def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, half_m: float | None = None,
+                    half_factor: float = 1.0) -> tuple[dict, dict]:
+    """岛群 node 里名叫 name 的聚落所在的一块地：返回 (Site, meta)。half_factor：风格要的窗口放大（散居要更大的地；地面只按坐标取，放大只是多裁一圈）。"""
     gdir = _group_dir(ctx, node)
     S = json.loads((gdir / "settlements.json").read_text(encoding="utf-8"))
     J = json.loads((gdir / "island.json").read_text(encoding="utf-8"))
@@ -140,7 +141,7 @@ def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, hal
     site = find_site(S, name)
     scale = scale or default_scale(site["kind"])
     hh = int(site["households"])
-    half = float(half_m) if half_m else window_half_m(scale, hh, cfg)
+    half = float(half_m) if half_m else window_half_m(scale, hh, cfg) * float(half_factor)
     res = res_m(scale, cfg)
     ras = J["raster"]
     cres = float(ras["res_m"])
@@ -191,9 +192,9 @@ def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, hal
 
 # ---------------------------------------------------------------- 合成地形与外部高程图
 def site_synth(terrain: str, scale: str, households: int, cfg: dict, seed: int = 1, lat_deg: float | None = None,
-               half_m: float | None = None) -> tuple[dict, dict]:
+               half_m: float | None = None, half_factor: float = 1.0) -> tuple[dict, dict]:
     kind = terrain_id(terrain)
-    half = float(half_m) if half_m else window_half_m(scale, households, cfg)
+    half = float(half_m) if half_m else window_half_m(scale, households, cfg) * float(half_factor)
     res = res_m(scale, cfg)
     lat = float(cfg["synth"]["lat_deg"] if lat_deg is None else lat_deg)
     sd = core().town_site_synth(kind, half, res, lat, ground_seed(seed, f"town:synth:{kind}"), flat(cfg))

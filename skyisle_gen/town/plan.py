@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import TOWN_STREAM, core
-from .style import style_flat
+from .style import operator_name, style_flat
 
 ROAD_CLASSES = ["trunk", "main", "street", "lane", "path"]
 ROAD_ZH = {"trunk": "出村大路", "main": "主街", "street": "街", "lane": "巷", "path": "田间道"}
@@ -46,6 +46,7 @@ def make_plan(sd: dict, meta: dict, st: dict, operator: str | None = None) -> di
         raise SystemExit(f"风格 {st['meta']['name']} 没有形态算子 {operator}（有：{'、'.join(st['village']['operators'])}）")
     req = plan_request(meta, st, operator)
     P = core().town_plan(sd, req, style_flat(st))
+    P["op_name"] = "单个宅院" if P["op"] == "single" else operator_name(st, P["op"])
     P["request"] = {k: v for k, v in req.items() if k != "seed"} | {"seed": str(req["seed"])}
     return P
 

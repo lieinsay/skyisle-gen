@@ -34,25 +34,50 @@ POND_COLOR, POND_EDGE = "#5c8fc9", "#3d6ea8"
 THRESH_COLOR, THRESH_EDGE = "#e6d49e", "#b09a5c"
 LANDING_COLOR, LANDING_EDGE = "#cfc7b4", "#7d7563"
 WELL_COLOR, TREE_COLOR = "#2f6db5", "#3f7d3a"
+MOAT_COLOR, CHANNEL_COLOR, ARCH_COLOR = "#4a7fc0", "#5b93cf", "#7a2e22"
+# 面状地物：kind → (填色, 边色, 图层, 不透明度, 图例名)。园、坑在院子上面，其余在路下面
+AREA = {
+    "furlong": ("#d8c276", "#a88f45", 2.4, 0.45, "条田（敞田）"),
+    "strip": ("#e2d49a", "#9c8a52", 2.5, 0.35, "条地"),
+    "grove": ("#4f7f45", "#35602f", 2.7, 0.55, "林带"),
+    "green": ("#b6cf86", "#86a45a", 2.8, 0.95, "公地 / 村绿"),
+    "square": ("#e4d8bd", "#b3a384", 2.9, 0.95, "广场"),
+    "threshing": (THRESH_COLOR, THRESH_EDGE, 3.0, 1.0, "场院"),
+    "landing": (LANDING_COLOR, LANDING_EDGE, 3.0, 1.0, "泊场"),
+    "pond": (POND_COLOR, POND_EDGE, 3.0, 1.0, "塘"),
+    "steps": ("#9d958a", "#5f584f", 6.8, 1.0, "河埠头"),
+    "garden": ("#c9d99b", "#9fb46a", 7.2, 0.9, "园（croft）"),
+    "pit": ("#8e7757", "#5d4a35", 7.3, 1.0, "地坑院的坑"),
+}
+
+
+BUILDING_KINDS = [   # (判别, 颜色, 图例名)：按次序取第一个对上的
+    (lambda f, r, roof: f == "gate" or r in ("gatehouse", "gate"), "#2e241c", "门楼 / 大门"),
+    (lambda f, r, roof: f in ("worship", "inn"), "#9c2f25", "庙 / 祠 / 教堂"),
+    (lambda f, r, roof: f in ("shrine", "pond_temple", "castle", "manor", "shuikou"), "#b8433a", "小庙 / 城堡 / 庄园"),
+    (lambda f, r, roof: f == "landing_shed", "#4f6277", "泊场货棚"),
+    (lambda f, r, roof: roof == "cave", "#a0784c", "窑"),
+    (lambda f, r, roof: r == "detached" or f in ("bath", "smithy"), "#8c4a2f", "院外单栋（浴房、铁匠）"),
+    (lambda f, r, roof: f == "shop", "#6e5a7a", "店屋"),
+    (lambda f, r, roof: r in ("ring", "side_row"), "#6a5646", "环楼 / 横屋"),
+    (lambda f, r, roof: r == "main", "#4a3b30", "正房 / 主屋"),
+    (lambda f, r, roof: f in ("barn", "byre"), "#7d6a50", "谷仓 / 畜舍"),
+    (lambda f, r, roof: f == "kitchen", "#80695a", "灶房"),
+    (lambda f, r, roof: f == "store" or r == "front", "#8b7763", "倒座 / 杂屋"),
+]
+OTHER_BUILDING = ("#6a5646", "厢房 / 住房")
+
+
+def _building_kind(b: dict) -> tuple[str, str]:
+    f, r, roof = b.get("func", ""), b.get("role", ""), b.get("roof", "")
+    for test, col, name in BUILDING_KINDS:
+        if test(f, r, roof):
+            return col, name
+    return OTHER_BUILDING
 
 
 def building_color(b: dict) -> str:
-    f, r = b.get("func", ""), b.get("role", "")
-    if f in ("gate",) or r in ("gatehouse", "gate"):
-        return "#2e241c"
-    if f == "worship":
-        return "#9c2f25"
-    if f in ("shrine", "pond_temple"):
-        return "#b8433a"
-    if f == "landing_shed":
-        return "#4f6277"
-    if r == "main":
-        return "#4a3b30"
-    if f == "kitchen":
-        return "#80695a"
-    if f == "store" or r == "front":
-        return "#8b7763"
-    return "#6a5646"
+    return _building_kind(b)[0]
 
 
 def _stride(H: int, W: int, max_px: int) -> int:
@@ -112,7 +137,7 @@ def _title(meta: dict, P: dict | None, style_name: str | None) -> str:
     else:
         head = f"高程图 {Path(meta.get('file', '')).name}（{scale}，{hh} 户）"
     if style_name:
-        op = {"fishbone": "鱼骨街村", "organic": "团块生长", "single": "单个宅院"}.get(P.get("op", ""), P.get("op", "")) if P else ""
+        op = (P.get("op_name") or P.get("op", "")) if P else ""
         return head + f" · {style_name}" + (f"（{op}）" if op else "")
     return head + " · 地面"
 
@@ -122,8 +147,10 @@ def plan_extent(P: dict, margin: float = 40.0) -> tuple[float, float, float, flo
     for c in P["compounds"]:
         pts.append(c["plot"]["c"])
     for f in P["features"]:
-        if f["kind"] in ("pond", "threshing", "landing"):
+        if f["kind"] in ("pond", "threshing", "landing", "green", "square"):
             pts.append(f["p"])
+        elif f["kind"] == "moat":
+            pts.extend(f["poly"])
     if not pts:
         return None
     a = np.asarray(pts, dtype=np.float64)
@@ -143,17 +170,17 @@ def _obb_poly(c, facing_deg, w, d) -> np.ndarray:
 def draw_plan(ax, P: dict, pt_per_m: float, labels: bool = True, label_size: float = 7.0) -> None:
     """在已设好范围的坐标轴上画方案（平面坐标 m）。pt_per_m：一米合多少磅（路宽按真宽画）。"""
     feats = P["features"]
-    # 场、泊场、塘在路下面
-    patches, fc, ec = [], [], []
-    for f in feats:
-        if f["kind"] == "threshing":
-            patches.append(Polygon(f["poly"], closed=True)), fc.append(THRESH_COLOR), ec.append(THRESH_EDGE)
-        elif f["kind"] == "landing":
-            patches.append(Polygon(f["poly"], closed=True)), fc.append(LANDING_COLOR), ec.append(LANDING_EDGE)
-        elif f["kind"] == "pond":
-            patches.append(Polygon(f["poly"], closed=True)), fc.append(POND_COLOR), ec.append(POND_EDGE)
-    if patches:
-        ax.add_collection(PatchCollection(patches, facecolors=fc, edgecolors=ec, linewidths=0.6, zorder=3))
+    # 面状地物：条田、条地、林、公地、广场、场、泊场、塘在路下面；河埠头、园、坑在院子上面
+    for kind, (fill, edge, z, alpha, _) in AREA.items():
+        polys = [Polygon(f["poly"], closed=True) for f in feats if f["kind"] == kind and len(f["poly"]) >= 3]
+        if polys:
+            ax.add_collection(PatchCollection(polys, facecolors=fill, edgecolors=edge, linewidths=0.6, alpha=alpha, zorder=z))
+    # 環濠（闭合中线 + 宽）、水圳（折线 + 宽）
+    for kind, col, z in (("moat", MOAT_COLOR, 3.5), ("channel", CHANNEL_COLOR, 5.5)):
+        fs = [f for f in feats if f["kind"] == kind and len(f["poly"]) >= 2]
+        if fs:
+            ax.add_collection(LineCollection([np.asarray(f["poly"]) for f in fs], linewidths=[max(0.6, f["r"] * pt_per_m) for f in fs],
+                                             colors=col, capstyle="round", joinstyle="round", zorder=z))
     # 路：外框深一点再填色
     roads = sorted(P["roads"], key=lambda r: -r["cls"])
     for casing in (True, False):
@@ -189,6 +216,10 @@ def draw_plan(ax, P: dict, pt_per_m: float, labels: bool = True, label_size: flo
     trees = [Circle(f["p"], f["r"]) for f in feats if f["kind"] == "tree"]
     if trees:
         ax.add_collection(PatchCollection(trees, facecolors=TREE_COLOR, edgecolors="white", linewidths=0.4, alpha=0.8, zorder=6.5))
+    # 牌坊：横跨路的一道
+    arches = [_arch_seg(f) for f in feats if f["kind"] == "arch"]
+    if arches:
+        ax.add_collection(LineCollection(arches, linewidths=max(1.2, 1.2 * pt_per_m), colors=ARCH_COLOR, capstyle="butt", zorder=9.5))
     wells = [Circle(f["p"], max(1.2, f["r"])) for f in feats if f["kind"] == "well"]
     if wells:
         ax.add_collection(PatchCollection(wells, facecolors=WELL_COLOR, edgecolors="white", linewidths=0.4, alpha=0.9, zorder=10))
@@ -199,11 +230,26 @@ def draw_plan(ax, P: dict, pt_per_m: float, labels: bool = True, label_size: flo
                 bbox={"fc": "white", "ec": "none", "alpha": 0.75, "pad": 0.8})
 
 
+def _arch_seg(f: dict) -> np.ndarray:
+    """牌坊：跨在路上的一道（朝向是路的走向，横着跨）。"""
+    fr = math.radians(f.get("facing_deg", 0.0))
+    rv = np.array([math.cos(fr), -math.sin(fr)]) * (0.5 * max(3.0, f["r"]))
+    p = np.asarray(f["p"], dtype=np.float64)
+    return np.array([p - rv, p + rv])
+
+
 def _labels(P: dict) -> list:
     """要标名字的东西：[(名, 位置, 往上挪几米)]。路边小庙、货棚这样的小房标在房子上方，不然字把房子盖住。"""
     out = [(c["name"], c["plot"]["c"], 0.0) for c in P["compounds"] if c["kind"] == "public"]
     out += [(b["name"], b["c"], 0.5 * max(b["w"], b["d"]) + 1.0) for b in P["buildings"] if b["compound"] < 0]
-    out += [(f["name"], f["p"], 0.0) for f in P["features"] if f["kind"] in ("landing", "tree", "pond")]
+    out += [(f["name"], f["p"], 0.0) for f in P["features"] if f["kind"] in ("landing", "tree", "pond", "green", "square", "arch") and f.get("name")]
+    # 林带、環濠、水圳、条地、河埠头、条田：同一种只标一处
+    seen = set()
+    for f in P["features"]:
+        if f["kind"] in ("grove", "moat", "channel", "strip", "steps", "furlong") and f.get("name") and f["kind"] not in seen:
+            seen.add(f["kind"])
+            q = f["poly"][len(f["poly"]) // 2] if f["kind"] in ("moat", "channel") and len(f["poly"]) else f["p"]
+            out.append((f["name"], q, 0.0))
     return out
 
 
@@ -213,12 +259,22 @@ def _legend_handles(P: dict | None) -> list:
          Patch(color=(0.62, 0.72, 0.86), label="漫水"), Patch(color=(0.8, 0.3, 0.25), label="崖缘退让带"),
          Patch(color=np.array(SKY_RGB) / 255, label="虚空（岛外）")]
     if P:
-        h += [Patch(color="#4a3b30", label="正房"), Patch(color="#6a5646", label="厢房 / 住房"), Patch(color="#8b7763", label="倒座 / 杂屋"),
-              Patch(color="#2e241c", label="门楼"), Patch(color="#9c2f25", label="庙"), Patch(color="#b8433a", label="小庙"),
-              Patch(color="#4f6277", label="泊场货棚"), Patch(facecolor=YARD_COLOR, edgecolor=WALL_COLOR, label="院子与墙"),
-              Patch(color=ROAD_COLOR[1], label="路"), Patch(color=BRIDGE_COLOR, label="桥"), Patch(color=POND_COLOR, label="塘"),
-              Patch(color=THRESH_COLOR, label="场院"), Patch(color=LANDING_COLOR, label="泊场"), Patch(color=WELL_COLOR, label="井"),
-              Patch(color=TREE_COLOR, label="树"), Patch(color="#e8b86a", label="房的正面")]
+        # 只列这张图上有的：房按类，地物按种
+        kinds = {}
+        for b in P["buildings"]:
+            col, name = _building_kind(b)
+            kinds.setdefault(name, col)
+        h += [Patch(color=col, label=name) for name, col in kinds.items()]
+        h += [Patch(facecolor=YARD_COLOR, edgecolor=WALL_COLOR, label="院子与墙"), Patch(color=ROAD_COLOR[1], label="路")]
+        if P["bridges"]:
+            h.append(Patch(color=BRIDGE_COLOR, label="桥"))
+        present = {f["kind"] for f in P["features"]}
+        h += [Patch(color=fill, alpha=alpha, label=name) for kind, (fill, _, _, alpha, name) in AREA.items() if kind in present]
+        for kind, col, name in (("moat", MOAT_COLOR, "環濠"), ("channel", CHANNEL_COLOR, "水圳"), ("arch", ARCH_COLOR, "牌坊"),
+                                ("well", WELL_COLOR, "井"), ("tree", TREE_COLOR, "树")):
+            if kind in present:
+                h.append(Patch(color=col, label=name))
+        h.append(Patch(color="#e8b86a", label="房的正面"))
     return h
 
 
@@ -244,6 +300,14 @@ def _info_lines(meta: dict, stats: dict | None, P: dict | None, step: float, res
             lines.append(f"朝阳 {m['orient_sun_share']:.0%}（平均偏 {m.get('orient_dev_mean_deg', 0):.1f}°）")
         if "clark_evans" in m:
             lines.append(f"Clark–Evans R {m['clark_evans']:.2f} · 密度 {m.get('density_hh_per_ha', 0):.0f} 户/ha")
+        extra = [("site_nn_median_m", "簇间最近邻 {:.0f} m"), ("site_clark_evans", "簇的 R {:.2f}"), ("water_front_share", "临水 {:.0%}"),
+                 ("lane_spacing_cv", "巷距变异 {:.2f}"), ("hh_per_enclosure", "每楼 {:.0f} 户"), ("green_area_m2", "公地 {:.0f} m²"),
+                 ("terraces", "台 {:.0f} 层"), ("face_street_share", "面街 {:.0%}")]
+        ex = [fmt.format(m[k]) for k, fmt in extra if k in m and m[k] == m[k]]
+        if ex:
+            lines.append(" · ".join(ex[:3]))
+            if len(ex) > 3:
+                lines.append(" · ".join(ex[3:6]))
         lines.append(f"井 {int(m.get('wells', 0))} 口（中位 {m.get('well_dist_median_m', float('nan')):.0f} m）")
         lines.append("")
         for c in P["checks"]:
@@ -270,8 +334,9 @@ def _render(out_png: Path, sd: dict, meta: dict, cfg: dict, stats: dict | None, 
     span_x, span_y = ext[1] - ext[0], ext[3] - ext[2]
     px = min(max_px, max(900, int(span_x * (3.0 if detail else 1.0) / 1.0)))
     py = int(px * span_y / span_x)
-    fig = plt.figure(figsize=(px / 100.0 + 2.8, py / 100.0 + 0.9), dpi=100)
-    axw = px / (px + 280.0)
+    # 太扁的图画布至少 7.5 英寸高：右边的图例与说明放得下
+    fig = plt.figure(figsize=(px / 100.0 + 3.2, max(py / 100.0, 7.5) + 0.9), dpi=100)
+    axw = px / (px + 320.0)
     ax = fig.add_axes([0.02, 0.04, axw, 0.9])
     ax.imshow(img, extent=ext, origin="upper", interpolation="nearest" if not detail else "bilinear", zorder=0)
     h = sd["height"][i0:i1:st, j0:j1:st].astype(np.float64)
@@ -304,7 +369,9 @@ def _render(out_png: Path, sd: dict, meta: dict, cfg: dict, stats: dict | None, 
     ax.annotate("北", xy=(ext[1] - 0.05 * span_x, ext[3] - 0.04 * span_y), xytext=(ext[1] - 0.05 * span_x, ext[3] - 0.12 * span_y),
                 ha="center", fontsize=9, arrowprops={"arrowstyle": "-|>", "color": "k"}, bbox={"fc": "w", "ec": "none", "alpha": 0.7, "pad": 1},
                 zorder=21)
-    ax.legend(handles=_legend_handles(P), loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=7.5, frameon=False)
+    hs = _legend_handles(P)
+    ax.legend(handles=hs, loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=7.0, frameon=False, ncol=2 if len(hs) > 16 else 1,
+              columnspacing=0.8, handlelength=1.4)
     fig.text(axw + 0.03, 0.05, "\n".join(_info_lines(meta, stats, P, step, res)), fontsize=7.5, va="bottom")
     fig.savefig(out_png, dpi=100)
     plt.close(fig)
@@ -350,10 +417,16 @@ def write_plan_svg(out: Path, sd: dict, meta: dict, P: dict, style_name: str | N
          f"<title>{esc(_title(meta, P, style_name))}</title>",
          f'<image href="data:image/png;base64,{b64}" x="0" y="0" width="{Wm:.2f}" height="{Hm:.2f}" preserveAspectRatio="none" style="image-rendering:pixelated"/>',
          '<g id="features">']
+    for kind in sorted((k for k, v in AREA.items() if v[2] < 7.0), key=lambda k: AREA[k][2]):
+        fill, edge, _, alpha, name = AREA[kind]
+        for f in P["features"]:
+            if f["kind"] == kind and len(f["poly"]) >= 3:
+                o.append(f'<polygon points="{pts(f["poly"])}" fill="{fill}" fill-opacity="{alpha}" stroke="{edge}" stroke-width="0.4">'
+                         f'<title>{esc(f["name"] or name)}</title></polygon>')
     for f in P["features"]:
-        if f["kind"] in ("threshing", "landing", "pond"):
-            fill, edge = {"threshing": (THRESH_COLOR, THRESH_EDGE), "landing": (LANDING_COLOR, LANDING_EDGE), "pond": (POND_COLOR, POND_EDGE)}[f["kind"]]
-            o.append(f'<polygon points="{pts(f["poly"])}" fill="{fill}" stroke="{edge}" stroke-width="0.4"><title>{esc(f["name"])}</title></polygon>')
+        if f["kind"] == "moat" and len(f["poly"]) >= 2:
+            o.append(f'<polyline points="{pts(f["poly"])}" fill="none" stroke="{MOAT_COLOR}" stroke-width="{f["r"]:.2f}" stroke-linejoin="round">'
+                     f'<title>{esc(f["name"])}</title></polyline>')
     o.append('</g><g id="roads" fill="none" stroke-linecap="round" stroke-linejoin="round">')
     for r in sorted(P["roads"], key=lambda r: -r["cls"]):
         o.append(f'<polyline points="{pts(r["line"])}" stroke="#a8966c" stroke-width="{r["width_m"] + 0.4:.2f}"/>')
@@ -362,12 +435,21 @@ def write_plan_svg(out: Path, sd: dict, meta: dict, P: dict, style_name: str | N
     for b in P["bridges"]:
         o.append(f'<line x1="{X(b["a"][0]):.2f}" y1="{Y(b["a"][1]):.2f}" x2="{X(b["b"][0]):.2f}" y2="{Y(b["b"][1]):.2f}" '
                  f'stroke="{BRIDGE_COLOR}" stroke-width="{b["width_m"] + 1:.2f}"/>')
+    for f in P["features"]:
+        if f["kind"] == "channel" and len(f["poly"]) >= 2:
+            o.append(f'<polyline points="{pts(f["poly"])}" stroke="{CHANNEL_COLOR}" stroke-width="{max(0.4, f["r"]):.2f}"><title>{esc(f["name"])}</title></polyline>')
     o.append('</g><g id="compounds">')
     for c in P["compounds"]:
         q = _obb_poly(c["plot"]["c"], c["plot"]["facing_deg"], c["plot"]["w"], c["plot"]["d"])
         t = f'{c["template_name"]}' + (f'（{c["name"]}）' if c["name"] else "") + f'，住 {len(c["households"])} 户，台基 {c["base_m"]:.1f} m'
         o.append(f'<polygon points="{pts(q)}" fill="{YARD_COLOR}" stroke="{WALL_COLOR if c["walled"] else "#b7a98d"}" stroke-width="0.4">'
                  f"<title>{esc(t)}</title></polygon>")
+    for kind in sorted((k for k, v in AREA.items() if v[2] >= 7.0), key=lambda k: AREA[k][2]):
+        fill, edge, _, alpha, name = AREA[kind]
+        for f in P["features"]:
+            if f["kind"] == kind and len(f["poly"]) >= 3:
+                o.append(f'<polygon points="{pts(f["poly"])}" fill="{fill}" fill-opacity="{alpha}" stroke="{edge}" stroke-width="0.2">'
+                         f'<title>{esc(f["name"] or name)}</title></polygon>')
     o.append('</g><g id="trees">')
     for f in P["features"]:
         if f["kind"] == "tree":
@@ -380,6 +462,10 @@ def write_plan_svg(out: Path, sd: dict, meta: dict, P: dict, style_name: str | N
         o.append(f'<line x1="{X(q[0][0]):.2f}" y1="{Y(q[0][1]):.2f}" x2="{X(q[1][0]):.2f}" y2="{Y(q[1][1]):.2f}" stroke="#e8b86a" stroke-width="0.35"/>')
     o.append('</g><g id="points">')
     for f in P["features"]:
+        if f["kind"] == "arch":
+            a, b2 = _arch_seg(f)
+            o.append(f'<line x1="{X(a[0]):.2f}" y1="{Y(a[1]):.2f}" x2="{X(b2[0]):.2f}" y2="{Y(b2[1]):.2f}" stroke="{ARCH_COLOR}" stroke-width="1.2">'
+                     f'<title>{esc(f["name"])}</title></line>')
         if f["kind"] == "well":
             o.append(f'<circle cx="{X(f["p"][0]):.2f}" cy="{Y(f["p"][1]):.2f}" r="1.2" fill="{WELL_COLOR}" stroke="white" stroke-width="0.3"><title>{esc(f["name"])}</title></circle>')
     o.append('</g><g id="labels" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="4" text-anchor="middle">')

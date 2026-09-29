@@ -15,6 +15,9 @@ SITE_ARRAYS = ("height", "water_level", "water", "sky", "edge", "farmland", "flo
 
 def out_dir(ctx_out: Path | None, meta: dict, style: str | None) -> Path:
     tag = style or "地面"
+    for ch in '/\\:*?"<>|':   # 算子的叫法里可能有斜杠（「土楼 / 围龙屋」）：目录名里换掉
+        tag = tag.replace(ch, "、" if ch == "/" else "-")
+    tag = tag.replace(" 、 ", "、")
     if meta["source"] == "island":
         d = ctx_out / "islands" / str(meta["node"]) / "town" / f"{meta['site']}-{tag}"
     elif meta["source"] == "synth":
@@ -31,7 +34,7 @@ def out_dir(ctx_out: Path | None, meta: dict, style: str | None) -> Path:
 def write_site(out: Path, sd: dict, occ: np.ndarray | None = None) -> Path:
     arrs = {k: sd[k] for k in SITE_ARRAYS}
     if occ is not None:
-        arrs["occ"] = occ   # 0 空 · 1 路 · 2 院 · 3 房 · 4 塘 · 5 场院 · 6 泊场 · 7 桥
+        arrs["occ"] = occ   # 0 空 · 1 路 · 2 院 · 3 房 · 4 塘 · 5 场院 · 6 泊场 · 7 桥 · 8 公地 / 广场 / 林带 / 坑 · 9 環濠
     # 河：顶点拼成一张表，river_start[k] 是第 k 条的起点下标
     lines = sd["rivers"]
     if lines:
@@ -83,7 +86,7 @@ def plan_json(P: dict, st: dict, style_hash: str) -> dict:
     return {
         "style": {"id": st["meta"]["id"], "name": st["meta"]["name"], "region": st["meta"].get("region", ""), "hash": style_hash},
         "request": P["request"],
-        "plan": {"operator": P["op"], "center": _r(P["center"]), "facing_deg": round(P["facing_deg"] % 360.0, 2), "radius_m": round(P["radius_m"], 1)},
+        "plan": {"operator": P["op"], "operator_name": P.get("op_name", P["op"]), "operators_fit": list(P.get("ops_fit", [])), "center": _r(P["center"]), "facing_deg": round(P["facing_deg"] % 360.0, 2), "radius_m": round(P["radius_m"], 1)},
         "checks": P["checks"],
         "metrics": {k: (round(v, 4) if isinstance(v, float) and np.isfinite(v) else None if isinstance(v, float) else v) for k, v in P["metrics"].items()},
         "timing_plan_s": _r(P["timing"], 4),
