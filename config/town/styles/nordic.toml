@@ -1,0 +1,215 @@
+# 北欧农庄（docs/PLAN-TOWN.md 6.6 第 9 卡；数与出处 docs/TOWN-SOURCES.md §6）
+# 子预设 = 形态算子：挪威簇院 / 散居农庄（klyngetun、tun：散居，一处一至几户）、瑞典列村（radby：农庄沿村街一字排开，3–12 户）。
+# 一庄十来栋、各司一职：住屋 stue、仓楼 stabbur（两层、立柱架空）、畜舍 fjøs、谷仓 låve、烤房 eldhus……围一个院（tun）；
+# 防火规矩：浴房（badstu / 桑拿）与铁匠房离开主院（桑拿近湖岸）。选址在坡上台地或山脊，避开易霜冻、又是好田的谷底。
+
+[meta]
+id = "nordic"
+name = "北欧农庄"
+region = "挪威、瑞典、芬兰"
+sources = ["TOWN-SOURCES §6：院型 [31][32]、每庄栋数 [33]、簇团院 [34]、防火 [32][35]、选址 [36]、火塘屋 [37]、radby [38][39]、合围院与 1681 年法令 [40]；单体尺寸、栋距、桑拿离岸为估"]
+
+[site]
+center_search_m = 400.0
+window_factor = 1.8           # 散居农庄之间隔着田与林
+[site.weights]
+flat = 0.6
+water = 0.4
+dry = 1.2                     # 坡上台地、山脊
+sun = 0.8
+shelter = 0.3
+farmland = -0.6               # 避开好田
+edge = -1.0
+
+[ground]
+max_slope_deg = 16.0
+max_cut_m = 2.5               # 坡上的谷仓下坡一头是石砌的半地下层（låvebru 引坡上二层），挖填放宽（估）
+max_terrace_m = 9.0           # 农庄的院（tun）不做平：一栋栋各自落在坡上
+
+[village]
+operators = { dispersed = 0.6, street_village = 0.4 }
+households_per_compound = [1, 1]
+kin_p = 0.7
+[village.max_households]
+street_village = 16           # 瑞典中部一村只有几户（估 3–12 户）
+[village.operator_names]
+dispersed = "农庄（tun）"
+street_village = "列村（radby）"
+
+[dispersed]
+cluster_hh = [1, 3]           # 簇团院由分户形成，一处可达 8 户 [34]
+spacing_m = [150.0, 320.0]
+cluster_radius_m = 45.0
+w_interest = 1.0
+w_farmland = -0.3
+grove = "none"
+
+[street_village]
+axis = "contour"
+face_street = true
+length_factor = 1.2
+front_w_m = [0.0, 0.0]        # 宅基临街宽与田份额成正比 [38]：按模板抽，面宽的变异就是份额的变异
+
+[street]
+main_width_m = [4.0, 6.0]
+street_width_m = [3.0, 4.5]
+lane_width_m = [2.5, 3.5]
+path_width_m = [2.0, 3.0]
+trunk_width_m = [3.5, 5.0]
+plot_gap_m = [2.0, 8.0]
+setback_m = [0.0, 3.0]
+max_grade = 0.2               # 山坡上的农道陡（之字上坡），别顺着溪沟走
+
+[orient]
+[[orient.rule]]
+kind = "sun"                  # 主屋长边朝阳（估）
+weight = 1.0
+tol_deg = 45.0
+[[orient.rule]]
+kind = "downslope"            # 顺等高线
+weight = 1.0
+tol_deg = 30.0
+[[orient.rule]]
+kind = "street"
+weight = 1.0
+tol_deg = 20.0
+
+[gate]
+front = "center"
+back = "center"
+side = "front"
+width_m = [3.0, 4.0]
+
+[compound]
+yard_min_m = 10.0             # 院（tun）
+
+# 农庄：各栋围一个院，院外单栋浴房、铁匠房；stue 6–8 × 6–9、loft 4–5 × 4–6、fjøs 8–12 × 6–8、låve 10–20 m（估，[37]）
+[compound.templates.tun]
+name = "农庄（tun）"
+kind = "house"
+weight = 1.0
+plot_w_m = [44.0, 60.0]
+plot_d_m = [38.0, 52.0]
+bay_m = [3.5, 4.2]
+wall = false
+[[compound.templates.tun.b]]
+role = "main"
+name = "住屋（stue）"
+func = "dwelling"
+side = "back"
+bays = [2, 2]
+depth_m = [6.0, 8.0]
+pos = 0.3
+face = "front"
+storeys = 2
+eave_m = 5.0
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.5
+[[compound.templates.tun.b]]
+role = "ear"
+name = "烤房（eldhus）"
+func = "kitchen"
+side = "back"
+attach = "right"
+bays = [1, 1]
+depth_m = [4.0, 5.0]
+face = "front"
+prob = 0.7
+eave_m = 2.8
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.3
+[[compound.templates.tun.b]]
+role = "barn"
+name = "谷仓（låve）"
+func = "barn"
+side = "front"
+bays = [3, 5]
+depth_m = [8.0, 10.0]
+pos = 0.6
+face = "in"
+eave_m = 5.0
+roof = "gable"
+pitch_deg = 35.0
+plinth_m = 0.3
+[[compound.templates.tun.b]]
+role = "wing"
+name = "畜舍（fjøs）"
+func = "byre"
+side = "left"
+bays = [2, 3]
+depth_m = [6.0, 8.0]
+pos = 0.5
+face = "in"
+eave_m = 3.4
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.3
+[[compound.templates.tun.b]]
+role = "wing"
+name = "仓楼（stabbur）"
+func = "store"
+side = "right"
+bays = [1, 1]
+depth_m = [4.0, 5.0]
+pos = 0.8
+face = "in"
+storeys = 2
+eave_m = 4.2
+roof = "gable"
+pitch_deg = 32.0
+plinth_m = 0.9                # 立柱架空
+[[compound.templates.tun.b]]
+role = "wing"
+name = "马厩"
+func = "byre"
+side = "right"
+bays = [1, 2]
+depth_m = [5.0, 6.0]
+pos = 0.1
+face = "in"
+prob = 0.6
+eave_m = 3.0
+roof = "gable"
+plinth_m = 0.3
+[[compound.templates.tun.b]]
+role = "detached"
+name = "浴房（badstu）"
+func = "bath"
+bays = [1, 1]
+depth_m = [4.0, 5.0]
+detached_m = [20.0, 60.0]     # 离开主院（防火）
+near = "water"                # 桑拿近湖岸 20–100 m（估）
+eave_m = 2.6
+roof = "gable"
+plinth_m = 0.2
+[[compound.templates.tun.b]]
+role = "detached"
+name = "铁匠房"
+func = "smithy"
+bays = [1, 2]
+depth_m = [4.0, 5.0]
+detached_m = [20.0, 45.0]
+prob = 0.5
+eave_m = 2.8
+roof = "gable"
+plinth_m = 0.2
+
+[functions.church]
+enabled = true
+name = "教堂（kyrkje）"
+count = { base = 1, per_households = 0, min_households = 30, max = 1 }
+site = { high = 2.0, center = 1.5, main = 1.0 }
+[functions.tree]
+enabled = true
+name = "院树（tuntre）"
+[functions.landing]
+shed_name = "长棚（naust）"   # 泊场边的长棚照船屋的样子
+
+[targets]
+[targets.dispersed]
+buildings_per_compound_median = [6.0, 30.0]   # 每庄栋数 10–30 [33]（这里的模板只摆主要的六到八栋）
+detached_min_m = [15.0, 999.0]                # 浴房 / 铁匠房离主院（估）
+[targets.street_village]
+lambda = [2.0, 99.0]

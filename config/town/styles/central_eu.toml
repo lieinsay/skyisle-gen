@@ -1,0 +1,269 @@
+# 中欧村落（docs/PLAN-TOWN.md 6.6 第 10 卡；数与出处 docs/TOWN-SOURCES.md §7）
+# 子预设 = 形态算子：林地排村（Waldhufendorf，每户一条长地、房沿溪或路排成一线）、街村（Straßendorf，两排农庄夹一条村路）、
+# 绿地村（Angerdorf，眼形公地，房屋朝公地；小村成环村 Rundling）、团村（Haufendorf，无规划聚集）。
+# 农庄：三合院（Dreiseithof：住宅与畜舍山墙朝街、相对而立，谷仓横封后侧，临街门墙 Torwand）、四合院、一字屋。
+
+[meta]
+id = "central_eu"
+name = "中欧村落"
+region = "德意志、波希米亚、奥地利"
+sources = ["TOWN-SOURCES §7：Waldhufendorf [43][44]、Hufe [44][45]、Straßendorf / Rundling [46]、Angerdorf [47][48]、Haufendorf [49]†、Hof 类型 [50]†[51]；地块尺寸与 Anger 尺寸为估"]
+
+[site]
+window_factor = 1.3
+[site.weights]
+flat = 1.0
+water = 0.8                   # 沿溪
+dry = 0.8
+sun = 0.3
+farmland = -0.2
+edge = -1.0
+
+[ground]
+max_slope_deg = 14.0               # 丘陵上的村也有（估）
+max_cut_m = 2.5                   # 坡上的农舍下坡一头露出半层地下室（Hanghaus、谷仓坡道），挖填放宽（估）
+max_terrace_m = 4.5               # 坡上的农庄院子分台
+
+[village]
+operators = { hufen = 0.25, street_village = 0.25, green = 0.25, organic = 0.25 }
+households_per_compound = [1, 1]
+kin_p = 0.5
+[village.operator_names]
+hufen = "林地排村"
+street_village = "街村"
+green = "绿地村"
+organic = "团村"
+
+[street]
+main_width_m = [6.0, 9.0]     # 村路（估）
+street_width_m = [4.0, 6.0]
+lane_width_m = [3.0, 4.0]
+path_width_m = [2.0, 3.0]
+trunk_width_m = [4.0, 6.0]
+plot_gap_m = [0.0, 2.0]
+setback_m = [0.0, 2.0]        # 屋前小园
+
+[street_village]
+axis = "auto"
+face_street = true
+length_factor = 1.1
+
+[hufen]
+frontage_m = [40.0, 100.0]    # 临街宽约 100 m [43]
+min_frontage_m = 25.0
+strip_len_m = [400.0, 2400.0] # 向后可达 2,400 m [43]
+axis = "river"                # 屋沿溪排成一线
+strip_name = "条地（宅—园—田—牧—林）"
+
+[green]
+modes = { anger = 0.8, rundling = 0.2 }
+rundling_max_hh = 12          # Rundling 初建 3–10 户 [46]
+width_m = [30.0, 100.0]
+length_m = [150.0, 600.0]
+green_name = "公地（Anger）"
+pond_name = "村塘"
+
+[organic]
+jitter_deg = 12.0             # 团村：大小形状不一
+stagger_m = 4.0
+gap_m = [1.0, 6.0]
+lane_reach_m = 100.0          # 农庄地块深（40–70 m），后排的农庄要修长一点的农道
+candidates = 32
+
+[growth]
+w_contact = 0.2
+
+[orient]
+[[orient.rule]]
+kind = "street"               # 农庄朝街（门墙临街）
+weight = 3.0
+tol_deg = 10.0
+[[orient.rule]]
+kind = "sun"
+weight = 0.5
+tol_deg = 60.0
+
+[gate]
+front = "center"              # 临街门墙正中的大门
+back = "center"
+side = "front"
+width_m = [3.0, 4.0]
+
+[compound]
+yard_min_m = 6.0
+
+# 地块 25–40 × 40–80 m（估）；住宅两层、陡坡顶
+[compound.templates.dreiseithof]
+name = "三合院"
+kind = "house"
+weight = 0.5
+plot_w_m = [25.0, 40.0]
+plot_d_m = [40.0, 70.0]
+bay_m = [3.5, 4.5]
+wall = true
+[[compound.templates.dreiseithof.b]]
+role = "main"
+name = "住宅"
+func = "dwelling"
+side = "left"                 # 山墙朝街：住宅是贴一侧的一栋，进深方向顺地块
+len_frac = [0.35, 0.5]
+depth_m = [8.0, 10.0]
+pos = 0.0
+face = "in"
+storeys = 2
+eave_m = 5.5
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.4
+[[compound.templates.dreiseithof.b]]
+role = "wing"
+name = "畜舍"
+func = "byre"
+side = "right"
+len_frac = [0.4, 0.6]
+depth_m = [7.0, 9.0]
+pos = 0.1
+face = "in"
+eave_m = 3.8
+roof = "gable"
+pitch_deg = 40.0
+plinth_m = 0.2
+[[compound.templates.dreiseithof.b]]
+role = "barn"
+name = "谷仓"
+func = "barn"
+side = "back"
+len_frac = [0.85, 1.0]
+depth_m = [9.0, 12.0]
+face = "front"
+eave_m = 5.5
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.2
+
+[compound.templates.vierseithof]
+name = "四合院"
+kind = "house"
+weight = 0.25
+plot_w_m = [30.0, 40.0]
+plot_d_m = [40.0, 60.0]
+bay_m = [3.5, 4.5]
+wall = true
+gate_house = true
+[[compound.templates.vierseithof.b]]
+role = "main"
+name = "住宅"
+func = "dwelling"
+side = "left"
+len_frac = [0.4, 0.55]
+depth_m = [8.0, 10.0]
+pos = 0.0
+face = "in"
+storeys = 2
+eave_m = 5.5
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.4
+[[compound.templates.vierseithof.b]]
+role = "wing"
+name = "畜舍"
+func = "byre"
+side = "right"
+len_frac = [0.5, 0.7]
+depth_m = [7.0, 9.0]
+face = "in"
+eave_m = 3.8
+roof = "gable"
+pitch_deg = 40.0
+[[compound.templates.vierseithof.b]]
+role = "barn"
+name = "谷仓"
+func = "barn"
+side = "back"
+len_frac = [0.9, 1.0]
+depth_m = [9.0, 12.0]
+face = "front"
+eave_m = 5.5
+roof = "gable"
+pitch_deg = 45.0
+[[compound.templates.vierseithof.b]]
+role = "front"
+name = "门屋"
+func = "store"
+side = "front"
+len_frac = [0.9, 1.0]
+depth_m = [6.0, 7.0]
+face = "in"
+eave_m = 3.5
+roof = "gable"
+pitch_deg = 40.0
+
+[compound.templates.streckhof]
+name = "一字屋"
+kind = "house"
+weight = 0.25
+plot_w_m = [20.0, 28.0]
+plot_d_m = [40.0, 60.0]
+bay_m = [3.5, 4.5]
+wall = false
+[[compound.templates.streckhof.b]]
+role = "main"
+name = "住宅连畜舍"
+func = "dwelling"
+side = "left"
+len_frac = [0.6, 0.85]
+depth_m = [7.0, 9.0]
+pos = 0.0
+face = "in"
+eave_m = 4.2
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.3
+[[compound.templates.streckhof.b]]
+role = "barn"
+name = "谷仓"
+func = "barn"
+side = "back"
+len_frac = [0.7, 1.0]
+depth_m = [8.0, 10.0]
+face = "front"
+prob = 0.5
+eave_m = 5.0
+roof = "gable"
+pitch_deg = 45.0
+
+[functions.church]
+enabled = true
+name = "教堂"
+[functions.smithy]
+enabled = true
+[functions.pond]
+enabled = true
+name = "村塘"
+count = { base = 1, per_households = 0, min_households = 10, max = 1 }
+site = { low = 2.0, center = 1.0, green = 3.0 }
+ring_m = [0.0, 40.0]
+[functions.shrine]
+enabled = true
+name = "路边十字架"
+size_w_m = [1.2, 1.8]
+size_d_m = [1.2, 1.8]
+eave_m = 3.0
+[functions.tree]
+enabled = true
+name = "村中椴树"
+site = { green = 4.0, center = 3.0, main = 1.0 }
+[functions.landing]
+shed_name = "货棚"
+
+[targets]
+[targets.hufen]
+lambda = [3.0, 99.0]          # 带状
+frontage_cv = [0.0, 0.2]      # 地条宽变异系数 < 0.2
+[targets.street_village]
+lambda = [2.0, 99.0]
+gable_street_share = [0.7, 1.0]
+[targets.green]
+face_street_share = [0.8, 1.0]  # 房屋朝公地 ≥ 80%
+[targets.organic]
+lambda = [1.0, 2.0]

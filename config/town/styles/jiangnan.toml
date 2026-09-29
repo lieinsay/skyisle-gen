@@ -1,0 +1,196 @@
+# 江南水乡（docs/PLAN-TOWN.md 6.6 第 2 卡；数与出处 docs/TOWN-SOURCES.md §2）
+# 以河为骨：前街后河（房在街与河之间，后门临水，几户一个河埠头）0.7、街市 0.3；天井屋连排、山墙相贴，下店上宅；
+# 桥按桥距横跨两岸的街；少树。村与市镇同一套，这里是村级（市镇是第四步）。
+
+[meta]
+id = "jiangnan"
+name = "江南水乡"
+region = "太湖流域（苏南、浙北）"
+sources = ["TOWN-SOURCES §2：市镇与河网 [8]、镇形 [9]†、周庄 / 西塘 [10][11]†、街宽 [11][12]†、单体 [13][14]†；天井、河宽、桥距为估"]
+
+[site]
+center_search_m = 250.0
+[site.weights]
+flat = 1.2
+water = 2.0                   # 以河为骨
+dry = 0.3
+sun = 0.2
+farmland = -0.2
+edge = -1.0
+
+[ground]
+max_slope_deg = 8.0           # 水网平原
+max_cut_m = 1.0
+max_terrace_m = 1.5
+allow_flood = true            # 临河的房后是石砌驳岸，房直接临水（漫水带照建）
+
+[village]
+operators = { waterfront = 0.7, street_village = 0.3 }
+households_per_compound = [1, 1]
+kin_p = 0.4
+[village.operator_names]
+waterfront = "前街后河"
+street_village = "街市"
+
+[street]
+main_width_m = [2.2, 3.0]     # 沿河廊棚街 2–2.5 m [11]
+street_width_m = [2.0, 2.6]
+lane_width_m = [0.9, 1.8]     # 弄 0.8–2 m [12]†
+path_width_m = [1.0, 1.5]
+trunk_width_m = [3.0, 4.5]
+plot_gap_m = [0.0, 0.0]       # 连排，山墙相贴
+setback_m = [0.0, 0.0]
+
+[waterfront]
+reach_m = 100.0
+min_width_m = 4.0
+modes = { qianjie_houhe = 0.7, qianhe_houjie = 0.3 }
+row_depth_m = [11.0, 17.0]    # 一进 5–13 m + 天井（估）
+bank_m = 1.2
+steps_every = [3, 6]          # 几户一个河埠头
+water_lane_m = [1.0, 1.6]     # 水弄
+steps_name = "河埠头"
+bridge_spacing_m = [80.0, 200.0]   # 按周庄的桥密度推算（估）
+length_factor = 1.1
+
+[street_village]
+axis = "auto"
+face_street = true
+length_factor = 1.05
+branch_spacing_m = [60.0, 100.0]
+branch_len_m = [50.0, 110.0]
+
+[orient]
+[[orient.rule]]
+kind = "street"               # 面街 / 面河 > 朝阳
+weight = 3.0
+tol_deg = 8.0
+[[orient.rule]]
+kind = "water"
+weight = 1.0
+tol_deg = 30.0
+[[orient.rule]]
+kind = "sun"
+weight = 0.4
+tol_deg = 45.0
+
+[gate]
+front = "center"
+back = "center"
+side = "front"
+width_m = [1.2, 1.6]
+
+[compound]
+yard_min_m = 2.0              # 天井窄长，深 2–4 m（估）
+
+# 天井屋：三开间（每间 3–4 m），两层，前进下店上宅、天井、后进正屋；连排无院墙
+[compound.templates.tianjing]
+name = "天井屋"
+kind = "house"
+weight = 0.6
+plot_w_m = [9.5, 12.0]
+plot_d_m = [12.0, 18.0]
+bay_m = [3.2, 4.0]
+wall = false
+[[compound.templates.tianjing.b]]
+role = "front"
+name = "前进（下店上宅）"
+func = "shop"
+side = "front"
+bays = [3, 3]
+depth_m = [4.5, 6.0]
+face = "out"
+storeys = 2
+eave_m = 5.8
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.tianjing.b]]
+role = "main"
+name = "后进正屋"
+func = "dwelling"
+side = "back"
+bays = [3, 3]
+depth_m = [5.0, 7.0]
+face = "front"
+storeys = 2
+eave_m = 6.2
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.4
+[[compound.templates.tianjing.b]]
+role = "side_hall"
+name = "厢廊"
+func = "store"
+side = "left"
+len_frac = [0.9, 1.0]
+depth_m = [1.2, 1.8]
+face = "in"
+prob = 0.6
+eave_m = 3.2
+roof = "shed"
+plinth_m = 0.3
+
+# 窄面宽的一开间、两开间（前店后宅）
+[compound.templates.dianwu]
+name = "店屋"
+kind = "house"
+weight = 0.4
+plot_w_m = [4.5, 7.5]
+plot_d_m = [11.0, 16.0]
+bay_m = [3.2, 3.8]
+wall = false
+[[compound.templates.dianwu.b]]
+role = "front"
+name = "店面"
+func = "shop"
+side = "front"
+len_frac = [1.0, 1.0]
+depth_m = [5.0, 6.5]
+face = "out"
+storeys = 2
+eave_m = 5.6
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+[[compound.templates.dianwu.b]]
+role = "main"
+name = "后屋"
+func = "dwelling"
+side = "back"
+len_frac = [1.0, 1.0]
+depth_m = [4.0, 5.5]
+face = "front"
+storeys = 2
+eave_m = 5.6
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.3
+
+[compound.templates.temple]
+name = "庙"
+
+[functions.temple]
+enabled = true
+name = "庙"
+count = { base = 1, per_households = 0, min_households = 40, max = 1 }
+site = { bridge = 3.0, center = 2.0, main = 1.0 }
+[functions.shrine]
+enabled = true
+name = "土地堂"
+site = { bridge = 3.0, entrance = 2.0 }
+[functions.threshing]
+enabled = true
+name = "晒场"
+households_per = [10.0, 20.0]
+area_m2 = [300.0, 900.0]
+[functions.landing]
+shed_name = "货栈"
+
+[targets]
+along_street_share = [0.7, 1.0]   # 贴线率 ≥ 70%
+[targets.waterfront]
+lambda = [2.0, 99.0]
+water_front_share = [0.3, 1.0]     # 临水一排（估：两岸各一排临水、街对面一排不临水）
+[targets.street_village]
+lambda = [2.0, 99.0]

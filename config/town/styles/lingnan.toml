@@ -1,0 +1,140 @@
+# 岭南梳式（docs/PLAN-TOWN.md 6.6 第 5 卡；数与出处 docs/TOWN-SOURCES.md §5）
+# 梳式：整村朝前沿（朝阳、面塘），前沿一排风水塘 + 晒坪 + 祠堂；垂直于前沿开平行的巷（冷巷），巷距 12–14 m，
+# 两巷之间一列三间两廊，前后栋间隙很小，全部朝前沿，门开在巷里（侧门）；祠堂并列于前排。实例大旗头村：民居 37 栋、塘 1、晒坪 1、井 2。
+
+[meta]
+id = "lingnan"
+name = "岭南梳式"
+region = "珠江三角洲（广府）"
+sources = ["TOWN-SOURCES §5：排列 [27]†、大旗头村 [29]†、祠堂与塘 [30]†、三间两廊实测 [28]；单元尺寸、巷距、排数为估"]
+
+[site]
+center_search_m = 300.0
+[site.weights]
+flat = 1.5
+water = 1.0                   # 面塘面水
+dry = 0.5
+sun = 0.4
+farmland = -0.2
+edge = -1.0
+
+[ground]
+max_slope_deg = 12.0          # 也有顺坡成列的（[27]†），坡上前低后高
+max_cut_m = 1.5
+max_terrace_m = 2.5           # 前低后高
+
+[village]
+operators = { comb = 1.0 }
+households_per_compound = [1, 1]
+founders = [1, 2]
+kin_p = 0.85
+[village.operator_names]
+comb = "梳式"
+
+[comb]
+lane_spacing_m = [12.0, 14.0] # 巷距 = 单元面宽 + 巷宽（估）
+rows = [5, 15]
+row_gap_m = [0.3, 0.8]        # 前后栋间隙很小
+threshing_depth_m = [16.0, 26.0]
+pond_depth_m = [24.0, 40.0]
+pond_name = "风水塘"
+threshing_name = "晒坪"
+hall_every_hh = 25
+halls_max = 3
+
+[street]
+main_width_m = [3.0, 5.0]     # 塘边的前街
+street_width_m = [2.5, 3.5]
+lane_width_m = [1.2, 2.0]     # 巷宽 1.2–2.0 m [27]†
+path_width_m = [1.2, 2.0]
+trunk_width_m = [3.0, 4.5]
+plot_gap_m = [0.0, 0.3]
+setback_m = [0.0, 0.0]
+
+[orient]
+[[orient.rule]]
+kind = "sun"                  # 前沿朝阳
+weight = 2.0
+tol_deg = 20.0
+[[orient.rule]]
+kind = "water"
+weight = 1.0
+tol_deg = 40.0
+
+[gate]
+front = "center"
+back = "center"
+side = "front"                # 侧门开在廊的前端（巷里）
+width_m = [1.0, 1.4]
+
+[compound]
+yard_min_m = 3.5              # 天井 4.0 × 2.0 m [28]
+
+# 三间两廊：面宽 11–12 × 进深 10–12 m（估）；厅堂 4.5 × 4.4、厢房 3.3 × 3.2、廊宽 0.9 m [28]
+[compound.templates.sanjian_lianglang]
+name = "三间两廊"
+kind = "house"
+weight = 1.0
+plot_w_m = [10.5, 11.5]
+plot_d_m = [10.0, 12.0]
+bay_m = [3.3, 4.5]
+wall = true
+[[compound.templates.sanjian_lianglang.b]]
+role = "main"
+name = "厅堂与两房"
+func = "dwelling"
+side = "back"
+len_frac = [1.0, 1.0]
+depth_m = [4.4, 5.2]
+face = "front"
+eave_m = 4.4                  # 厅堂檐高 4.4 m [28]
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.4
+[[compound.templates.sanjian_lianglang.b]]
+role = "wing"
+name = "廊（门廊）"
+func = "store"
+side = "left"
+len_frac = [1.0, 1.0]
+depth_m = [3.2, 3.6]
+face = "in"
+eave_m = 3.3
+roof = "shed"
+plinth_m = 0.3
+[[compound.templates.sanjian_lianglang.b]]
+role = "wing"
+name = "廊（厨房）"
+func = "kitchen"
+side = "right"
+len_frac = [1.0, 1.0]
+depth_m = [3.2, 3.6]
+face = "in"
+eave_m = 3.3
+roof = "shed"
+plinth_m = 0.3
+
+[compound.templates.ancestral]
+name = "祠堂"
+plot_w_m = [20.0, 24.0]       # 占两列
+plot_d_m = [20.0, 24.0]
+
+[functions.ancestral]
+enabled = true
+name = "祠堂"                  # 由梳式算子排在前排、朝塘
+[functions.well]
+radius_m = [60.0, 90.0]
+[functions.shrine]
+enabled = true
+name = "社坛"
+site = { entrance = 4.0, water = 1.0 }
+[functions.tree]
+enabled = true
+name = "榕树"
+site = { entrance = 3.0, pond = 2.0 }
+[functions.landing]
+shed_name = "货棚"
+
+[targets]
+orient_dispersion_deg = [0.0, 5.0]   # 朝向离散 < 5°
+lane_spacing_cv = [0.0, 0.1]         # 巷距变异系数 < 0.1

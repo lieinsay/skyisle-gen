@@ -1,0 +1,225 @@
+# 客家土楼 / 围龙屋（docs/PLAN-TOWN.md 6.6 第 7 卡；数与出处 docs/TOWN-SOURCES.md §13）
+# 围合单体：整个宗族住一座环形、方形大楼或围龙屋，户 = 竖向一列房间（底层厨房、二层谷仓、三四层卧室）；
+# 只开一道大门，中心祖堂；户数超出一楼的容量就成楼群（田螺坑：一方楼 + 三圆 + 一椭圆）。
+# 围龙屋「两堂两横一围龙」，前有禾坪与半月池（宽于两侧门距），后有化胎。楼外的零星小屋交给团块生长。
+
+[meta]
+id = "hakka"
+name = "客家土楼"
+region = "闽西、粤东（永定、南靖、梅州）"
+sources = ["TOWN-SOURCES §13：圆楼尺寸与承启楼 [80]、规则 [80]、群组 [80][81]†、围龙屋 [82][83]†；每间弧长、楼距为估"]
+
+[site]
+center_search_m = 350.0
+window_factor = 1.6           # 一座围龙屋连禾坪、半月池就占一两公顷
+[site.weights]
+flat = 1.2
+water = 0.8                   # 面水
+dry = 0.6
+sun = 0.8
+shelter = 0.6                 # 背山
+farmland = -0.4
+edge = -1.0
+
+[ground]
+max_slope_deg = 12.0
+max_cut_m = 2.5               # 整座楼一个石砌台基，基地先整平（估）
+max_terrace_m = 4.0
+
+[village]
+operators = { enclosure = 1.0 }
+households_per_compound = [1, 1]
+founders = [1, 1]
+kin_p = 0.95
+[village.operator_names]
+enclosure = "土楼 / 围龙屋"
+
+[enclosure]
+hh_columns = [1, 2]           # 一户一两列
+max_rooms = 72                # 外环每层 48–72 间 [80]
+min_rooms = 24
+gap_factor = 1.0              # 楼距 ≥ 一个直径（估）
+front_pond = true
+pond_name = "半月池"
+threshing_name = "禾坪"
+
+[organic]
+lane_reach_m = 50.0
+gap_m = [2.0, 6.0]
+
+[street]
+main_width_m = [3.0, 4.5]
+street_width_m = [2.5, 3.5]
+lane_width_m = [1.5, 2.5]
+path_width_m = [1.2, 2.0]
+trunk_width_m = [3.0, 4.5]
+plot_gap_m = [1.0, 4.0]
+setback_m = [0.0, 1.0]
+
+[orient]
+[[orient.rule]]
+kind = "sun"                  # 大门朝阳
+weight = 1.5
+tol_deg = 30.0
+[[orient.rule]]
+kind = "water"                # 面水
+weight = 1.0
+tol_deg = 40.0
+[[orient.rule]]
+kind = "downslope"            # 背山
+weight = 1.0
+tol_deg = 40.0
+
+[gate]
+front = "center"              # 只开一道大门
+back = "center"
+side = "front"
+width_m = [2.0, 2.6]
+
+# 圆楼：直径 14–77 m、3–5 层；每间弧长 2.5–2.7 m（估）；房进深按外环一间
+[compound.templates.yuanlou]
+name = "圆楼"
+kind = "house"
+weight = 0.5
+shape = "ring"
+ops = ["enclosure"]
+plot_w_m = [30.0, 70.0]
+plot_d_m = [30.0, 70.0]
+ring_room_m = [2.5, 2.7]
+ring_depth_m = [6.5, 8.5]
+ring_storeys = [3, 4]
+wall = true
+[[compound.templates.yuanlou.b]]
+role = "ring"
+name = "环楼（每户一列）"
+func = "dwelling"
+eave_m = 3.0                  # 每层
+roof = "hip"
+pitch_deg = 26.0
+plinth_m = 0.6
+[[compound.templates.yuanlou.b]]
+role = "hall"
+name = "祖堂"
+func = "worship"
+eave_m = 4.0
+roof = "gable"
+plinth_m = 0.8
+[[compound.templates.yuanlou.b]]
+role = "gate"
+name = "大门"
+func = "gate"
+eave_m = 4.0
+roof = "gable"
+plinth_m = 0.6
+
+[compound.templates.fanglou]
+name = "方楼"
+kind = "house"
+weight = 0.2
+shape = "square_ring"
+ops = ["enclosure"]
+plot_w_m = [30.0, 60.0]
+plot_d_m = [30.0, 60.0]
+ring_room_m = [2.6, 3.0]
+ring_depth_m = [6.5, 8.0]
+ring_storeys = [3, 4]
+wall = true
+[[compound.templates.fanglou.b]]
+role = "ring"
+name = "楼（每户一列）"
+func = "dwelling"
+eave_m = 3.0
+roof = "hip"
+pitch_deg = 26.0
+plinth_m = 0.6
+[[compound.templates.fanglou.b]]
+role = "hall"
+name = "祖堂"
+func = "worship"
+eave_m = 4.0
+roof = "gable"
+plinth_m = 0.8
+[[compound.templates.fanglou.b]]
+role = "gate"
+name = "大门"
+func = "gate"
+eave_m = 4.0
+roof = "gable"
+plinth_m = 0.6
+
+# 围龙屋：两堂两横一围龙；小者 8–10 亩
+[compound.templates.weilong]
+name = "围龙屋"
+kind = "house"
+weight = 0.3
+shape = "weilong"
+ops = ["enclosure"]
+plot_w_m = [40.0, 70.0]
+plot_d_m = [50.0, 90.0]
+ring_room_m = [3.0, 3.6]
+ring_depth_m = [4.5, 5.5]
+ring_storeys = [1, 1]
+wall = true
+[[compound.templates.weilong.b]]
+role = "ring"
+name = "围龙"
+func = "dwelling"
+eave_m = 3.6
+roof = "gable"
+pitch_deg = 26.0
+plinth_m = 0.5
+[[compound.templates.weilong.b]]
+role = "side_row"
+name = "横屋"
+func = "dwelling"
+depth_m = [5.0, 6.0]
+eave_m = 3.6
+roof = "gable"
+pitch_deg = 26.0
+plinth_m = 0.5
+[[compound.templates.weilong.b]]
+role = "hall"
+name = "上堂（祖堂）"
+func = "worship"
+eave_m = 5.0
+roof = "gable"
+plinth_m = 0.9
+[[compound.templates.weilong.b]]
+role = "gate"
+name = "下堂（大门）"
+func = "gate"
+eave_m = 4.2
+roof = "gable"
+plinth_m = 0.6
+
+# 楼外零星的小屋（楼放不下的户）
+[compound.templates.xiaowu]
+name = "小屋"
+kind = "house"
+weight = 0.05
+plot_w_m = [10.0, 14.0]
+plot_d_m = [10.0, 14.0]
+bay_m = [3.2, 3.8]
+wall = false
+[[compound.templates.xiaowu.b]]
+role = "main"
+name = "正屋"
+func = "dwelling"
+side = "back"
+bays = [3, 3]
+depth_m = [5.0, 6.0]
+face = "front"
+eave_m = 3.2
+roof = "gable"
+plinth_m = 0.4
+
+[functions.shrine]
+enabled = true
+name = "伯公坛"
+[functions.well]
+radius_m = [80.0, 120.0]      # 楼里有井，楼外按覆盖补
+[functions.landing]
+shed_name = "货棚"
+
+[targets]
+hh_per_enclosure = [1.0, 80.0]   # 每楼户数 ≤ 容量（承启楼鼎盛时 80 余户）

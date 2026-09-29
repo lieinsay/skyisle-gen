@@ -1,0 +1,267 @@
+# 日本（docs/PLAN-TOWN.md 6.6 第 14 卡；数与出处 docs/TOWN-SOURCES.md §11）
+# 子预设 = 形态算子：砺波散居村（一户一处，屋距 50–100 m，每户被自家水田围着，冬季风上风侧是屋敷林カイニョ）、
+# 宿場町（沿街道约 1 km，短冊形地割：间口窄、进深长，切妻平入的町家临街排开，本陣居中段）、
+# 環濠集落（约 260 m 见方、40–50 户，濠宽 7–15 m，村内路曲折）。
+
+[meta]
+id = "japan"
+name = "日本村落"
+region = "日本（砺波平野、中山道、奈良盆地）"
+sources = ["TOWN-SOURCES §11：砺波 [67][68]、カイニョ [69]†[67]、奈良井宿 [70]、宿場设施 [71][72]†、地割 [73]、環濠集落 [74][75]†[76]；宿场间口进深为估"]
+
+[site]
+center_search_m = 350.0
+window_factor = 2.0           # 散居村的屋距、宿場町的长街都要大窗口
+[site.weights]
+flat = 1.2
+water = 0.6
+dry = 0.6
+sun = 0.4
+farmland = 0.2                # 散居：每户在自家田中间
+edge = -1.0
+
+[ground]
+max_slope_deg = 10.0
+max_cut_m = 1.2
+max_terrace_m = 2.5
+
+[village]
+operators = { dispersed = 0.4, street_village = 0.35, organic = 0.25 }
+households_per_compound = [1, 1]
+kin_p = 0.5
+[village.operator_names]
+dispersed = "散居村（砺波）"
+street_village = "宿場町"
+organic = "環濠集落"
+[village.flat_slope_deg]        # 散居村（扇状地）、環濠集落（盆地）要平地：村心一带坡 ≤ 5° 的地过半才用；宿場町顺山道，坡上也行
+dispersed = 5.0
+organic = 5.0
+[village.flat_share]
+dispersed = 0.5
+organic = 0.5
+
+[dispersed]
+cluster_hh = [1, 1]           # 一户一处
+spacing_m = [90.0, 180.0]     # 屋距 50–100 m、按户密度匀摊约 180 m [67][68]：下限取中间
+cluster_radius_m = 12.0
+w_interest = 0.4              # 砺波的屋散得匀：兴趣、离村心都只轻轻地拉
+w_farmland = 1.0
+w_center = 0.05
+grove = "windward"            # 冬季风上风侧最厚（原地是西南）
+grove_width_m = [8.0, 16.0]
+grove_name = "屋敷林（カイニョ）"
+
+[street_village]
+axis = "exit"
+sides = 2
+face_street = true
+length_factor = 1.0
+front_w_m = [5.4, 9.0]        # 间口 3–5 間（估）
+depth_m = [27.0, 45.0]        # 进深 15–25 間（估）
+branch_spacing_m = [200.0, 300.0]
+branch_len_m = [60.0, 120.0]
+
+[organic]
+jitter_deg = 8.0              # 村内路曲折
+stagger_m = 2.0
+gap_m = [0.5, 3.0]
+lane_reach_m = 40.0
+
+[street]
+main_width_m = [3.6, 6.4]     # 道宽 2.7–6.4 m [70]
+street_width_m = [2.7, 4.0]
+lane_width_m = [1.8, 2.7]
+path_width_m = [1.2, 2.0]     # 畦道
+trunk_width_m = [3.5, 5.0]
+plot_gap_m = [0.0, 0.3]
+setback_m = [0.0, 0.0]
+
+[orient]
+[[orient.rule]]
+kind = "street"               # 平入：檐面朝街
+weight = 2.5
+tol_deg = 10.0
+[[orient.rule]]
+kind = "sun"
+weight = 1.0
+tol_deg = 40.0
+
+[gate]
+front = "center"
+back = "center"
+side = "front"
+width_m = [1.8, 2.4]
+
+[compound]
+yard_min_m = 3.0
+
+# 农家（散居村、環濠集落）：主屋 + 土蔵 + 納屋，四周是屋敷
+[compound.templates.noka]
+name = "农家"
+kind = "house"
+weight = 0.6
+ops = ["dispersed", "organic"]
+plot_w_m = [26.0, 36.0]
+plot_d_m = [24.0, 34.0]
+bay_m = [3.6, 4.0]            # 二間
+wall = false
+[[compound.templates.noka.b]]
+role = "main"
+name = "主屋（アズマダチ）"
+func = "dwelling"
+side = "back"
+len_frac = [0.5, 0.65]
+depth_m = [10.0, 13.0]
+pos = 0.35
+face = "front"
+storeys = 2
+eave_m = 5.0
+roof = "hip_gable"            # 入母屋
+pitch_deg = 40.0
+plinth_m = 0.5
+[[compound.templates.noka.b]]
+role = "wing"
+name = "土蔵"
+func = "store"
+side = "right"
+bays = [1, 2]
+depth_m = [5.0, 6.0]
+pos = 0.9
+face = "in"
+storeys = 2
+eave_m = 5.5
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.5
+[[compound.templates.noka.b]]
+role = "wing"
+name = "納屋"
+func = "barn"
+side = "left"
+bays = [2, 3]
+depth_m = [5.0, 6.5]
+pos = 0.8
+face = "in"
+prob = 0.7
+eave_m = 3.5
+roof = "gable"
+pitch_deg = 30.0
+plinth_m = 0.3
+
+# 町家（宿場町）：切妻平入、中二階，临街排开；后面是庭与土蔵
+[compound.templates.machiya]
+name = "町家"
+kind = "house"
+weight = 0.4
+ops = ["street_village"]
+plot_w_m = [5.4, 9.0]
+plot_d_m = [27.0, 45.0]
+bay_m = [1.8, 2.0]            # 一間
+wall = false
+garden_frac = 0.3
+[[compound.templates.machiya.b]]
+role = "main"
+name = "町家（主屋）"
+func = "shop"
+side = "front"
+len_frac = [1.0, 1.0]
+depth_m = [10.0, 14.0]
+face = "out"                  # 平入：檐面朝街
+storeys = 2
+eave_m = 4.8                  # 中二階
+roof = "gable"
+pitch_deg = 25.0
+plinth_m = 0.2
+[[compound.templates.machiya.b]]
+role = "barn"
+name = "土蔵"
+func = "store"
+side = "back"
+len_frac = [0.55, 0.8]
+depth_m = [5.0, 6.5]
+pos = 0.8
+face = "front"
+prob = 0.6
+storeys = 2
+eave_m = 5.5
+roof = "gable"
+plinth_m = 0.4
+
+# 本陣（宿場町中段）
+[compound.templates.honjin]
+name = "本陣"
+kind = "public"
+weight = 0.0
+plot_w_m = [18.0, 24.0]
+plot_d_m = [36.0, 48.0]
+bay_m = [1.8, 2.0]
+wall = true
+gate = "center"
+gate_house = true
+[[compound.templates.honjin.b]]
+role = "hall"
+name = "本陣"
+func = "inn"
+side = "front"
+len_frac = [0.85, 1.0]
+depth_m = [12.0, 16.0]
+face = "out"
+storeys = 2
+eave_m = 5.0
+roof = "hip_gable"
+pitch_deg = 30.0
+plinth_m = 0.4
+[[compound.templates.honjin.b]]
+role = "wing"
+name = "座敷"
+func = "inn"
+side = "back"
+len_frac = [0.6, 0.8]
+depth_m = [8.0, 10.0]
+face = "front"
+eave_m = 3.8
+roof = "hip_gable"
+plinth_m = 0.5
+
+[compound.templates.temple]
+name = "寺"
+
+[functions.honjin]
+name = "本陣"
+enabled = true
+mode = "compound"
+template = "honjin"
+ops = ["street_village"]
+count = { base = 1, per_households = 0, min_households = 20, max = 1 }
+site = { center = 3.0, main = 2.0 }
+[functions.temple]
+enabled = true
+name = "寺"
+ops = ["organic", "street_village"]
+count = { base = 1, per_households = 0, min_households = 30, max = 1 }
+site = { edge = 2.0, high = 1.0, main = 1.0 }
+required = false
+[functions.shrine]
+enabled = true
+name = "神社"
+size_w_m = [4.0, 6.0]
+size_d_m = [5.0, 7.0]
+eave_m = 3.5
+site = { entrance = 4.0, high = 1.0 }
+[functions.moat]
+enabled = true
+name = "環濠"
+ops = ["organic"]
+[functions.pond]
+enabled = true
+name = "溜池"
+ops = ["dispersed", "organic"]
+count = { base = 1, per_households = 60, min_households = 20, max = 2 }
+[functions.landing]
+shed_name = "蔵"
+
+[targets]
+[targets.dispersed]
+site_clark_evans = [1.0, 9.0]    # 散居村 R ≥ 1
+[targets.street_village]
+lambda = [2.0, 99.0]             # 宿場町 λ > 5 是上百户、沿街约 1 km 的宿；这里 40 户上下的小宿按 > 2

@@ -1,0 +1,189 @@
+# 英格兰集村（docs/PLAN-TOWN.md 6.6 第 11 卡；数与出处 docs/TOWN-SOURCES.md §8）
+# 规划型：同宽的 toft（房 + 院）+ croft（后园）沿主路两侧排开，后有背巷；教堂与庄园占村端的大地块；绿地变体；24–50 户。
+# 村外是开放田：两三大块，块里是一 furlong（约 201 m）长的条田。
+
+[meta]
+id = "england"
+name = "英格兰集村"
+region = "英格兰中部与北部"
+sources = ["TOWN-SOURCES §8：构成与规划型 [52]、户数 [53]†[54]、单体与地块 [55][56]†[57]、开放田 [57]；toft + croft 尺寸为估"]
+
+[site]
+center_search_m = 300.0
+window_factor = 1.5           # 开放田画在窗口里
+[site.weights]
+flat = 1.2
+water = 0.6
+dry = 1.0
+sun = 0.2
+farmland = -0.3
+edge = -1.0
+
+[ground]
+max_slope_deg = 12.0
+max_cut_m = 1.2
+max_terrace_m = 3.0
+
+[village]
+operators = { street_village = 0.6, green = 0.25, organic = 0.15 }
+households_per_compound = [1, 1]
+kin_p = 0.5
+[village.operator_names]
+street_village = "规划型（toft & croft）"
+green = "绿地村"
+organic = "团村"
+[village.flat_slope_deg]        # 绿地村的村绿要平：村心一带坡 ≤ 6° 的地过半才用
+green = 6.0
+[village.flat_share]
+green = 0.5
+
+[street_village]
+axis = "exit"
+face_street = true
+length_factor = 1.05
+back_lane = true              # 地块后侧的背巷
+back_lane_gap_m = 3.0
+front_w_m = [16.0, 22.0]      # 同宽的 toft（估）
+depth_m = [78.0, 82.0]        # 同深：croft 的后沿齐成一线，背巷顺着走（估）
+
+[green]
+modes = { anger = 1.0, rundling = 0.0 }
+width_m = [30.0, 70.0]
+length_m = [120.0, 400.0]
+church_on_green = false       # 教堂在绿地边上
+green_name = "村绿（village green）"
+pond_name = "池塘"
+
+[organic]
+jitter_deg = 10.0
+stagger_m = 3.0
+gap_m = [1.0, 5.0]
+lane_reach_m = 110.0
+
+[street]
+main_width_m = [6.0, 9.0]
+street_width_m = [4.0, 6.0]
+lane_width_m = [2.5, 3.5]
+path_width_m = [1.5, 2.5]     # 背巷
+trunk_width_m = [4.0, 6.0]
+plot_gap_m = [0.0, 1.0]       # 同宽的地块相挨
+setback_m = [0.5, 3.0]
+
+[orient]
+[[orient.rule]]
+kind = "street"               # 面街（长边顺街）
+weight = 3.0
+tol_deg = 10.0
+[[orient.rule]]
+kind = "sun"
+weight = 0.3
+tol_deg = 60.0
+
+[gate]
+front = "left"
+back = "center"
+side = "front"
+width_m = [2.5, 3.5]
+
+[compound]
+yard_min_m = 4.0
+
+# toft + croft：面宽 15–25 × 进深 60–120 m（估）；长屋 14.2 × 4.3 m [56]†，台基 ≤ 20 × 10 m [55]；后 60% 是 croft
+[compound.templates.toft]
+name = "toft & croft"
+kind = "house"
+weight = 1.0
+plot_w_m = [15.0, 25.0]
+plot_d_m = [60.0, 100.0]
+bay_m = [3.5, 4.5]
+wall = false
+garden_frac = 0.6
+[[compound.templates.toft.b]]
+role = "main"
+name = "长屋（人畜同屋）"
+func = "dwelling"
+side = "front"
+len_frac = [0.6, 0.85]
+depth_m = [4.3, 6.0]
+pos = 0.8
+face = "out"                  # 长边顺街、门朝街
+eave_m = 2.8
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.3
+[[compound.templates.toft.b]]
+role = "barn"
+name = "谷仓"
+func = "barn"
+side = "left"
+len_frac = [0.3, 0.5]
+depth_m = [5.0, 7.0]
+pos = 0.5
+face = "in"
+prob = 0.6
+eave_m = 3.2
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.2
+
+# 团村外围、绿地边的小农舍（cottage）：小院、后面一块菜园
+[compound.templates.cottage]
+name = "小农舍（cottage）"
+kind = "house"
+weight = 0.5
+ops = ["organic"]
+plot_w_m = [12.0, 18.0]
+plot_d_m = [24.0, 36.0]
+bay_m = [3.5, 4.5]
+wall = false
+garden_frac = 0.45
+[[compound.templates.cottage.b]]
+role = "main"
+name = "农舍"
+func = "dwelling"
+side = "front"
+len_frac = [0.55, 0.8]
+depth_m = [4.3, 5.5]
+pos = 0.5
+face = "out"
+eave_m = 2.6
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.3
+
+[compound.templates.church]
+name = "教区教堂"
+[compound.templates.manor]
+name = "庄园"
+
+[functions.church]
+enabled = true
+name = "教区教堂"
+required = true
+count = { base = 1, per_households = 0, min_households = 15, max = 1 }
+site = { green = 3.0, main = 2.0, edge = 1.0, center = 1.0 }
+[functions.manor]
+enabled = true
+name = "庄园"
+count = { base = 1, per_households = 0, min_households = 24, max = 1 }
+site = { edge = 2.0, main = 2.0, high = 1.0 }
+[functions.open_fields]
+enabled = true
+name = "敞田"
+[functions.pond]
+enabled = true
+name = "村塘"
+count = { base = 1, per_households = 0, min_households = 20, max = 1 }
+site = { green = 3.0, low = 2.0 }
+[functions.smithy]
+enabled = true
+name = "铁匠铺"
+[functions.landing]
+shed_name = "谷仓式货棚"
+
+[targets]
+[targets.street_village]
+frontage_cv = [0.0, 0.25]     # 地块面宽变异系数 < 0.25
+lambda = [2.0, 99.0]          # 主路型 λ > 2
+[targets.green]
+face_street_share = [0.7, 1.0]

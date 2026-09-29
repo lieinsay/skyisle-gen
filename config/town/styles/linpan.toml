@@ -1,0 +1,159 @@
+# 川西林盘（docs/PLAN-TOWN.md 6.6 第 4 卡；数与出处 docs/TOWN-SOURCES.md §4）
+# 散居：一个林盘 3–5 户（大者 20–30），林盘之间 0.3–0.6 km，坐落在水田之中；田—林—宅—院圈层，宅与竹林在中心 30 m 内；
+# 竹林环绕（林带 10–30 m）；林盘之间是田埂路（按最小生成树一簇簇接起来）；无统一朝向。
+
+[meta]
+id = "linpan"
+name = "川西林盘"
+region = "成都平原"
+sources = ["TOWN-SOURCES §4：户数 [22][23]、面积 [24][26]†、密度 [24]†[25]、间距 [22]、圈层 [23]；林带宽、朝向为估"]
+
+[site]
+center_search_m = 400.0
+window_factor = 2.4           # 林盘之间 0.3–0.6 km：窗口要比集村大得多
+[site.weights]
+flat = 1.2
+water = 0.6                   # 依托灌渠
+dry = 0.6
+sun = 0.2
+farmland = 0.4                # 散点坐落在水田之中
+edge = -1.0
+
+[ground]
+max_slope_deg = 10.0
+max_cut_m = 1.2
+max_terrace_m = 2.0
+
+[village]
+operators = { dispersed = 1.0 }
+households_per_compound = [1, 1]
+kin_p = 0.8
+[village.operator_names]
+dispersed = "林盘"
+
+[dispersed]
+cluster_hh = [3, 5]           # 小林盘 3–5 户
+spacing_m = [300.0, 600.0]    # 相隔或半里、或里许
+cluster_radius_m = 30.0       # 房屋与竹林在中心 30 m 内
+w_interest = 1.0
+w_farmland = 0.8
+grove = "ring"
+grove_width_m = [10.0, 30.0]
+grove_name = "竹林"
+
+[street]
+main_width_m = [2.5, 3.5]
+street_width_m = [2.0, 3.0]
+lane_width_m = [1.5, 2.5]
+path_width_m = [1.2, 2.0]     # 田埂路
+trunk_width_m = [3.0, 4.5]
+plot_gap_m = [2.0, 6.0]
+setback_m = [0.0, 1.0]
+
+[orient]
+[[orient.rule]]
+kind = "sun"                  # 朝阳弱约束 ±60°（估）
+weight = 1.0
+tol_deg = 60.0
+[[orient.rule]]
+kind = "wind"                 # 背风
+weight = 0.5
+tol_deg = 60.0
+
+[gate]
+front = "center"
+back = "center"
+side = "front"
+width_m = [1.5, 2.2]
+
+[compound]
+yard_min_m = 6.0
+
+# 一字屋、曲尺形小院（估）：三到五间，前有院坝
+[compound.templates.yizi]
+name = "一字屋"
+kind = "house"
+weight = 0.5
+plot_w_m = [16.0, 22.0]
+plot_d_m = [14.0, 20.0]
+bay_m = [3.3, 4.0]
+wall = false
+[[compound.templates.yizi.b]]
+role = "main"
+name = "正房"
+func = "dwelling"
+side = "back"
+bays = [3, 5]
+odd = true
+depth_m = [5.5, 7.0]
+face = "front"
+eave_m = 3.4
+roof = "gable"
+pitch_deg = 27.0
+plinth_m = 0.4
+[[compound.templates.yizi.b]]
+role = "ear"
+name = "灶房"
+func = "kitchen"
+side = "back"
+attach = "left"
+bays = [1, 1]
+depth_m = [4.0, 5.0]
+face = "front"
+prob = 0.6
+eave_m = 2.8
+roof = "gable"
+plinth_m = 0.3
+
+[compound.templates.quchi]
+name = "曲尺院"
+kind = "house"
+weight = 0.5
+plot_w_m = [18.0, 24.0]
+plot_d_m = [16.0, 22.0]
+bay_m = [3.3, 4.0]
+wall = false
+[[compound.templates.quchi.b]]
+role = "main"
+name = "正房"
+func = "dwelling"
+side = "back"
+bays = [3, 5]
+odd = true
+depth_m = [5.5, 7.0]
+face = "front"
+eave_m = 3.4
+roof = "gable"
+pitch_deg = 27.0
+plinth_m = 0.4
+[[compound.templates.quchi.b]]
+role = "wing"
+name = "厢房"
+func = "dwelling"
+side = "left"
+bays = [2, 3]
+depth_m = [4.5, 5.5]
+face = "in"
+eave_m = 3.0
+roof = "gable"
+pitch_deg = 27.0
+plinth_m = 0.3
+
+[functions.shrine]
+enabled = true
+name = "土地庙"
+site = { crossroad = 3.0, entrance = 1.0 }
+[functions.threshing]
+enabled = true
+name = "院坝"
+households_per = [3.0, 6.0]
+area_m2 = [200.0, 600.0]
+spacing_m = 60.0
+[functions.well]
+radius_m = [60.0, 90.0]
+[functions.landing]
+shed_name = "货棚"
+
+[targets]
+site_nn_median_m = [300.0, 600.0]   # 林盘间最近邻距离
+site_clark_evans = [1.0, 9.0]       # 林盘尺度趋匀

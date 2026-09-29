@@ -1,0 +1,193 @@
+# 黄土窑洞村（docs/PLAN-TOWN.md 6.6 第 6 卡；数与出处 docs/TOWN-SOURCES.md §14）
+# 沟坡上：靠崖窑依山靠崖，随等高线排成曲线或折线，坡够高就叠几层台，层间之字坡道；
+# 塬面平地：下沉式地坑院（平地挖 10–12 m 见方、深 6–7 m 的坑，四壁凿窑）。打谷场在台地，庙在沟口。
+
+[meta]
+id = "yaodong"
+name = "黄土窑洞"
+region = "陕北、晋西、豫西（黄土高原）"
+sources = ["TOWN-SOURCES §14：靠崖窑尺寸 [84]†、沿等高线排列 [85]†、地坑院 [86][87]†、占地 [87]†、村规模 [88]†；每户孔数、前院深、层差、院距为估"]
+
+[site]
+center_search_m = 350.0
+[site.weights]
+flat = 0.3
+water = 0.3
+dry = 0.8
+sun = 1.2                     # 朝阳坡优先
+shelter = 0.5
+farmland = -0.3
+edge = -1.0
+
+[ground]
+max_slope_deg = 25.0          # 地坑院、打谷场等的坡上限；靠崖窑的院与窑都是在坡上挖出来的，不查坡（≤ 60°）
+max_cut_m = 1.5
+max_terrace_m = 2.5
+
+[village]
+operators = { contour = 0.7, organic = 0.3 }
+households_per_compound = [1, 1]
+kin_p = 0.7
+[village.operator_names]
+contour = "靠崖窑（沿沟台）"
+organic = "地坑院（塬面）"
+[village.flat_slope_deg]        # 地坑院要平塬：村心一带坡 ≤ 6° 的地过半才用
+organic = 6.0
+[village.flat_share]
+organic = 0.5
+
+[contour]
+min_slope_deg = 10.0
+min_share = 0.3
+layer_m = [3.0, 5.0]          # 层差 3–5 m（估）
+max_slope_deg = 55.0
+min_line_m = 22.0
+
+[organic]
+gap_m = [2.0, 6.0]            # 院距 26–32 m（估）：地坑院之间留出窑顶的地
+jitter_deg = 6.0
+lane_reach_m = 45.0
+main_street = true
+
+[street]
+main_width_m = [3.0, 4.5]     # 沿沟台路
+street_width_m = [2.5, 3.5]
+lane_width_m = [1.8, 2.8]
+path_width_m = [1.5, 2.5]     # 之字坡道
+trunk_width_m = [3.0, 4.5]
+plot_gap_m = [0.5, 3.0]
+setback_m = [0.0, 1.0]
+max_grade = 0.14              # 坡道陡一点
+
+[orient]
+[[orient.rule]]
+kind = "downslope"            # 靠崖窑顺坡朝外
+weight = 2.0
+tol_deg = 30.0
+[[orient.rule]]
+kind = "sun"                  # 地坑院主窑在北壁朝南
+weight = 1.5
+tol_deg = 30.0
+
+[gate]
+front = "center"
+back = "center"
+side = "front"
+width_m = [2.0, 2.8]
+
+[compound]
+yard_min_m = 5.0
+
+# 靠崖窑：每户 3–5 孔（孔宽 3–3.5 m、深 5–9 m），前院深 10–15 m（估）；只在等高线上用
+[compound.templates.kaoya]
+name = "靠崖窑院"
+kind = "house"
+weight = 0.6
+ops = ["contour"]
+dug_in = true
+plot_w_m = [12.0, 19.0]
+plot_d_m = [16.0, 22.0]
+bay_m = [3.4, 3.9]            # 一孔宽 + 窑腿
+wall = true
+[[compound.templates.kaoya.b]]
+role = "main"
+name = "靠崖窑"
+func = "dwelling"
+side = "back"
+bays = [3, 5]
+depth_m = [6.0, 8.0]          # 挖进崖里 5–9 m
+face = "front"
+eave_m = 3.6
+roof = "cave"
+plinth_m = 0.0
+[[compound.templates.kaoya.b]]
+role = "wing"
+name = "厢房"
+func = "kitchen"
+side = "left"
+bays = [1, 2]
+depth_m = [3.5, 4.5]
+face = "in"
+prob = 0.4
+eave_m = 2.8
+roof = "shed"
+plinth_m = 0.2
+
+# 地坑院：坑 10–12 m 见方、深 6–7 m，四壁 8–12 孔；每院 1–1.5 亩；只在塬面（团块）上用
+[compound.templates.dikeng]
+name = "地坑院"
+kind = "house"
+weight = 0.4
+ops = ["organic"]
+sunken = true
+plot_w_m = [24.0, 28.0]
+plot_d_m = [24.0, 28.0]
+bay_m = [3.2, 3.6]
+wall = false
+[[compound.templates.dikeng.b]]
+role = "main"
+name = "主窑（北壁）"
+func = "dwelling"
+side = "back"
+bays = [3, 3]
+depth_m = [7.0, 8.0]
+face = "front"
+eave_m = 3.6
+roof = "cave"
+plinth_m = 0.0
+[[compound.templates.dikeng.b]]
+role = "wing"
+name = "侧窑"
+func = "dwelling"
+side = "left"
+bays = [2, 3]
+depth_m = [6.5, 7.5]
+face = "in"
+eave_m = 3.4
+roof = "cave"
+plinth_m = 0.0
+[[compound.templates.dikeng.b]]
+role = "wing"
+name = "侧窑"
+func = "store"
+side = "right"
+bays = [2, 3]
+depth_m = [6.5, 7.5]
+face = "in"
+eave_m = 3.4
+roof = "cave"
+plinth_m = 0.0
+[[compound.templates.dikeng.b]]
+role = "front"
+name = "门洞窑"
+func = "store"
+side = "front"
+bays = [2, 3]
+depth_m = [6.5, 7.5]
+face = "in"
+eave_m = 3.4
+roof = "cave"
+plinth_m = 0.0
+
+[compound.templates.temple]
+name = "庙"
+
+[functions.temple]
+enabled = true
+name = "庙"                    # 沟口（估）
+count = { base = 1, per_households = 0, min_households = 30, max = 1 }
+site = { low = 2.0, entrance = 2.0, main = 1.0 }
+required = false
+[functions.threshing]
+enabled = true
+name = "打谷场"
+max_slope_deg = 4.0
+platform_max_m = 2.5
+[functions.well]
+name = "水窖"
+[functions.landing]
+shed_name = "窑棚"
+
+[targets]
+[targets.contour]
+contour_share = [0.8, 1.0]    # 贴等高线率 ≥ 80%（估）

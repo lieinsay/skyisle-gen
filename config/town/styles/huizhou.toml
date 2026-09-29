@@ -1,0 +1,206 @@
+# 徽州宗族村（docs/PLAN-TOWN.md 6.6 第 3 卡；数与出处 docs/TOWN-SOURCES.md §3）
+# 高密度团块：背山面水、以溪为骨；天井屋两层两进、高墙窄巷；村中月沼（塘），总祠临塘，主街下水圳贯通；
+# 入村路上牌坊，村下游 200–800 m 是水口（桥 / 亭 + 水口林）。
+
+[meta]
+id = "huizhou"
+name = "徽州宗族村"
+region = "徽州（皖南、婺源）"
+sources = ["TOWN-SOURCES §3：选址 [15]†、西递 [16]†、水口 [17][18]†、水圳 [17]、巷宽 [19]†、天井屋 [20][21]†；水口距离、祠堂位置、巷 D/H 为估"]
+
+[site]
+center_search_m = 300.0
+[site.weights]
+flat = 0.8
+water = 1.5                   # 以溪为骨
+dry = 0.3
+sun = 0.4
+shelter = 0.6                 # 背山
+farmland = -0.4
+edge = -1.0
+
+[ground]
+max_slope_deg = 16.0          # 山间盆地，村子上坡
+max_cut_m = 1.5
+max_terrace_m = 4.0           # 山村的院子、祠堂多做台地
+
+[village]
+operators = { organic = 1.0 }
+households_per_compound = [1, 1]
+founders = [1, 2]             # 一姓聚居
+kin_p = 0.85
+[village.operator_names]
+organic = "宗族团块"
+
+[street]
+main_width_m = [3.0, 4.5]     # 村中主街（下设水圳）
+street_width_m = [2.4, 3.0]
+lane_width_m = [1.2, 2.4]     # 生活巷 1.7–2.4 m，最窄仅容一人 [19]†
+path_width_m = [1.0, 1.8]
+trunk_width_m = [3.0, 4.0]
+plot_gap_m = [0.0, 0.3]       # 高墙相贴
+setback_m = [0.0, 0.0]
+
+[organic]
+candidates = 32
+gap_m = [0.0, 0.4]
+jitter_deg = 4.0              # 顺溪顺巷，朝向不拘正南
+stagger_m = 0.6
+lane_reach_m = 30.0
+squares = [1, 1]              # 月沼（宏村以月沼为中心）
+square_radius_m = [10.0, 15.0]
+square_kind = "pond"
+square_name = "月沼"
+
+[growth]
+w_contact = 1.6               # 挤着长
+w_kin = 0.8
+
+[orient]
+[[orient.rule]]
+kind = "water"                # 面水
+weight = 1.5
+tol_deg = 45.0
+[[orient.rule]]
+kind = "sun"
+weight = 1.0
+tol_deg = 45.0
+[[orient.rule]]
+kind = "align_street"
+weight = 1.0
+tol_deg = 6.0
+
+[gate]
+front = "center"              # 门罩在前墙正中
+back = "center"
+side = "front"
+width_m = [1.2, 1.6]
+
+[compound]
+yard_min_m = 1.8              # 天井约 20 m²（例 1.8 × 10.85、3 × 5 m）
+
+# 三间两搭厢：约 120 m²，面宽 10–12 m；正屋两层三间，两侧搭厢，前墙高墙
+[compound.templates.sanjian]
+name = "三间两搭厢"
+kind = "house"
+weight = 0.6
+plot_w_m = [10.0, 12.0]
+plot_d_m = [10.0, 13.0]
+bay_m = [3.2, 3.8]
+wall = true
+[[compound.templates.sanjian.b]]
+role = "main"
+name = "正屋（上下两层）"
+func = "dwelling"
+side = "back"
+bays = [3, 3]
+depth_m = [5.5, 7.0]
+face = "front"
+storeys = 2
+eave_m = 7.0                  # 马头墙 6–8 m
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.4
+[[compound.templates.sanjian.b]]
+role = "wing"
+name = "搭厢"
+func = "dwelling"
+side = "left"
+len_frac = [0.6, 0.9]
+depth_m = [2.2, 3.0]
+face = "in"
+storeys = 2
+eave_m = 6.0
+roof = "shed"
+plinth_m = 0.3
+[[compound.templates.sanjian.b]]
+role = "wing"
+name = "搭厢"
+func = "dwelling"
+side = "right"
+len_frac = [0.6, 0.9]
+depth_m = [2.2, 3.0]
+face = "in"
+storeys = 2
+eave_m = 6.0
+roof = "shed"
+plinth_m = 0.3
+
+# 两进：前进 + 天井 + 后进
+[compound.templates.liangjin]
+name = "两进天井屋"
+kind = "house"
+weight = 0.4
+plot_w_m = [10.5, 13.0]
+plot_d_m = [17.0, 22.0]
+bay_m = [3.3, 3.9]
+wall = true
+[[compound.templates.liangjin.b]]
+role = "main"
+name = "后进"
+func = "dwelling"
+side = "back"
+bays = [3, 3]
+depth_m = [6.0, 7.5]
+face = "front"
+storeys = 2
+eave_m = 7.5
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.5
+[[compound.templates.liangjin.b]]
+role = "front"
+name = "前进"
+func = "dwelling"
+side = "front"
+bays = [3, 3]
+depth_m = [5.0, 6.5]
+face = "in"
+storeys = 2
+eave_m = 7.0
+roof = "gable"
+pitch_deg = 28.0
+plinth_m = 0.4
+[[compound.templates.liangjin.b]]
+role = "side_hall"
+name = "廊"
+func = "store"
+side = "left"
+len_frac = [0.8, 1.0]
+depth_m = [1.2, 1.8]
+face = "in"
+prob = 0.7
+eave_m = 4.0
+roof = "shed"
+plinth_m = 0.3
+
+[compound.templates.ancestral]
+name = "祠堂"
+plot_w_m = [15.0, 20.0]
+plot_d_m = [26.0, 34.0]
+
+[functions.ancestral]
+enabled = true
+name = "祠堂"                  # 总祠居村前或村中、临塘；支祠在各房片区
+count = { base = 1, per_households = 40, min_households = 15, max = 3 }
+site = { pond = 4.0, center = 2.0, main = 1.0 }
+required = true
+[functions.shrine]
+enabled = true
+name = "土地庙"
+[functions.channel]
+enabled = true
+name = "水圳"
+[functions.arch]
+enabled = true
+name = "牌坊"
+[functions.shuikou]
+enabled = true
+name = "水口"
+[functions.landing]
+shed_name = "货棚"
+
+[targets]                     # 均为估
+coverage = [0.45, 0.8]        # 覆盖率 50–70%
+lane_width_median_m = [0.0, 2.4]
+lambda = [1.0, 2.6]           # 西递 700 × 300 m（λ ≈ 2.3）

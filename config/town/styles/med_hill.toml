@@ -1,0 +1,152 @@
+# 地中海山城（docs/PLAN-TOWN.md 6.6 第 13 卡；数与出处 docs/TOWN-SOURCES.md §12）
+# 团块生长：选址山顶、山脊、坡嘴（易守，TPI 高）；房屋紧挨着顺山形排，最外一圈连成墙（Kastro 的椭圆环）；
+# 教堂与城堡两个节点，街巷窄而曲（H/W 2–4），小广场 1–3 个；单栋约 30 m²、一两层，石屋白墙。
+
+[meta]
+id = "med_hill"
+name = "地中海山城"
+region = "意大利中部、希腊群岛"
+sources = ["TOWN-SOURCES §12：选址 [77]、核心 [77]†、基克拉泽斯 [78]†、Kastro [79]；街宽、广场数、覆盖率为估"]
+
+[site]
+center_search_m = 450.0       # 往高处挪
+[site.weights]
+flat = 0.2
+water = 0.0
+dry = 2.0                     # 山顶、山脊（大尺度地势高）
+sun = 0.5
+shelter = 0.0
+farmland = -0.5
+edge = -0.6
+
+[ground]
+max_slope_deg = 24.0
+max_cut_m = 1.5
+max_terrace_m = 2.2
+
+[village]
+operators = { organic = 1.0 }
+households_per_compound = [1, 1]
+kin_p = 0.6
+[village.operator_names]
+organic = "山城（团块）"
+
+[organic]
+candidates = 36
+gap_m = [0.0, 0.3]            # 墙贴墙
+jitter_deg = 14.0             # 顺山形，不拘朝向
+stagger_m = 1.5
+lane_reach_m = 22.0
+squares = [1, 3]              # 小广场 1–3 个（估）
+square_radius_m = [6.0, 10.0]
+square_kind = "square"
+square_name = "小广场"
+
+[growth]
+w_contact = 1.8
+w_dist = 1.5
+
+[street]
+main_width_m = [2.5, 3.5]     # 1.5–3.5 m（估，按 H/W 2–4）
+street_width_m = [2.0, 3.0]
+lane_width_m = [1.5, 2.4]
+path_width_m = [1.2, 2.0]
+trunk_width_m = [3.0, 4.0]
+plot_gap_m = [0.0, 0.2]
+setback_m = [0.0, 0.0]
+max_grade = 0.16              # 石阶坡道
+
+[orient]
+[[orient.rule]]
+kind = "downslope"            # 顺等高线、朝下坡
+weight = 2.0
+tol_deg = 30.0
+[[orient.rule]]
+kind = "street"
+weight = 1.0
+tol_deg = 20.0
+[[orient.rule]]
+kind = "sun"
+weight = 0.5
+tol_deg = 70.0
+
+[gate]
+front = "center"
+back = "center"
+side = "front"
+width_m = [1.0, 1.4]
+
+[compound]
+yard_min_m = 0.0
+
+# 单栋约 30 m²、一两层（[79]）；小院或没有院
+[compound.templates.casa]
+name = "石屋"
+kind = "house"
+weight = 0.7
+plot_w_m = [5.0, 7.5]
+plot_d_m = [6.0, 9.0]
+bay_m = [4.5, 6.0]
+wall = false
+[[compound.templates.casa.b]]
+role = "main"
+name = "石屋"
+func = "dwelling"
+side = "back"
+len_frac = [0.95, 1.0]
+depth_m = [5.0, 7.0]
+face = "front"
+storeys = 2
+eave_m = 5.5
+roof = "flat"
+plinth_m = 0.2
+
+[compound.templates.casa_corte]
+name = "带小院的石屋"
+kind = "house"
+weight = 0.3
+plot_w_m = [7.0, 10.0]
+plot_d_m = [9.0, 12.0]
+bay_m = [4.5, 6.0]
+wall = true
+[[compound.templates.casa_corte.b]]
+role = "main"
+name = "石屋"
+func = "dwelling"
+side = "back"
+len_frac = [0.95, 1.0]
+depth_m = [5.0, 6.5]
+face = "front"
+storeys = 2
+eave_m = 5.8
+roof = "flat"
+plinth_m = 0.2
+
+[compound.templates.church]
+name = "教堂"
+plot_w_m = [14.0, 20.0]
+plot_d_m = [24.0, 32.0]
+
+[functions.church]
+enabled = true
+name = "教堂"
+required = true
+count = { base = 1, per_households = 0, min_households = 15, max = 1 }
+site = { high = 2.0, center = 3.0, main = 1.0 }
+[functions.castle]
+enabled = true
+name = "城堡"
+[functions.well]
+name = "蓄水池"
+radius_m = [60.0, 90.0]
+[functions.threshing]
+enabled = true
+name = "打谷场（aloni）"
+households_per = [8.0, 15.0]
+area_m2 = [150.0, 400.0]
+[functions.landing]
+shed_name = "石棚"
+
+[targets]                     # 均为估
+coverage = [0.45, 0.85]       # 覆盖率 60–80%
+lambda = [1.0, 1.6]
