@@ -420,7 +420,8 @@ def build_towns(villages: list[dict], harbors: list[dict], mc: dict, rest_hh: in
     bi = boat_ok.astype(np.int64)
     walk_srv = np.zeros(V, dtype=bool)
     boat_srv = np.zeros(V, dtype=bool)
-    blocked = np.zeros(V, dtype=bool)
+    small = hh < int(mc["town_min_village_hh"])       # P6b：几户人家的小圩村不当镇（镇从老村核心长出来）；全都小于门槛时照旧都能挑
+    blocked = small.copy() if not small.all() else np.zeros(V, dtype=bool)
     chosen, scores = [], []
     spacing = float(mc["town_spacing_km"])
     min_srv = float(mc["town_min_served_hh"])

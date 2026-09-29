@@ -1,5 +1,5 @@
 """聚落生成器（docs/PLAN-SETTLE.md）：给一个已生成的岛群，按人口与地形落下已垦的田（P5：好地先占 + 定居门槛，farmland.py）、
-田块、村落与散户（第 1 步），专业聚落 / 集镇 / 飞船泊场（tiers.py，DESIGN-NOTES 四点十八）、水设施（第 2 步），
+田块、村落与散户（第 1 步；P6b：圩田另成田块，挂到走得到的村上或自成圩村，polder_villages），专业聚落 / 集镇 / 飞船泊场（tiers.py，DESIGN-NOTES 四点十八）、水设施（第 2 步），
 没人住的岛有人用（放牧 / 烽火台 / 庙 / 墓岛）、主家候选 / 前哨 / 都与城（第 3 步），最后村周开垦与荒地归谁。
 飞船取代车船、可在任意平地停靠：没有码头，交通不绑岸线；岛与岛之间没有索桥（P5，用户定），全靠船。
 
@@ -114,6 +114,10 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
 
     # ---------- 田块：已垦 8 邻域连通块；小块并入散户田；大块按 80 户切分 ----------
     # 不跨岛：两岛岸线贴着时 8 邻域连通块会跨岛，村子兜底落在田上就落到了别的岛（seed 2026 #5246 曾因此在找泊场时崩溃）
+    # P6b：连通块与 k-means 照旧按全部已垦（含圩田）切（随机数的用法不变，没有圩田的地方田块逐格不变），切好以后圩田的格拿出来，
+    # 另按 polder_village_blocks × polder_village_blocks 圩一组成田（下面），管它的村按走得到的距离挑
+    polder_id = g["polder_id"]
+    dry_f = polder_id.ravel() == 0
     lab, n_lab = label_by_island(arable, island_id, 8)
     fields_raster = np.zeros((H, W), dtype=np.int32)
     fields = []
@@ -143,8 +147,9 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         cap = cap_seat if L == main_biggest else cap_village
         k = max(1, int(math.ceil(hh_est / cap)))
         parts = _kmeans_split(rng, ii, jj, k)
+        dry_c = dry_f[cl]
         for m in range(k):
-            sel = parts == m
+            sel = (parts == m) & dry_c
             if not sel.any():
                 continue
             fid += 1
@@ -153,6 +158,23 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
                            "terrace_frac": round(float((g["cultivated"][ii[sel], jj[sel]] == 2).mean()), 3),
                            "centroid_cell": [int(round(ii[sel].mean())), int(round(jj[sel].mean()))],
                            "centroid_km": km(ii[sel].mean(), jj[sel].mean()), "water_dist_km": round(float(dist_water[ii[sel], jj[sel]].min()) * res_km, 2)})
+    # 圩田（P6b，Zhouzhu PLAN-LAND L30）：每片圩田按 m × m 圩一组成一块田（网格同纵浦横塘、锚在出水口；格子号向下取整），组按（行号、列号）排
+    wk = c.get("works") or {}
+    m_pol = max(1, int(wk.get("polder_village_blocks", 3)))
+    for P in FL["polders"]["patches"]:
+        groups = {}
+        for b_i, b_j, bc in P["blocks"]:
+            groups.setdefault((b_i // m_pol, b_j // m_pol), []).append(bc)
+        for key in sorted(groups):
+            cl = np.sort(np.concatenate(groups[key]))
+            ii, jj = cl // W, cl % W
+            fid += 1
+            fields_raster[ii, jj] = fid
+            fields.append({"id": fid, "island": int(P["island"]), "cells": int(cl.size), "area_km2": round(float(cl.size) * cell_km2, 3),
+                           "terrace_frac": round(float((g["cultivated"][ii, jj] == 2).mean()), 3),
+                           "centroid_cell": [int(round(ii.mean())), int(round(jj.mean()))],
+                           "centroid_km": km(ii.mean(), jj.mean()), "water_dist_km": round(float(dist_water[ii, jj].min()) * res_km, 2),
+                           "polder": True})
     # 户数按岛内田块面积分配（最大余数法，保证每岛之和 = 岛户数）
     for k_isl in range(n_isl):
         fs = [f for f in fields if f["island"] == k_isl]
@@ -188,7 +210,7 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     cells_of = {k: order_f[bounds[k - 1]:bounds[k]] for k in range(1, fid + 1)}
     for f in sorted(fields, key=lambda f: -f.get("households", 0)):
         hh = f.get("households", 0)
-        if hh <= 0:
+        if hh <= 0 or f.get("polder"):                 # 圩田的田块在下面另挑管它的村
             continue
         cells = cells_of[f["id"]]
         ii, jj = cells // W, cells % W
@@ -244,6 +266,7 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
             villages.append(rec)
         else:
             hamlets.append(rec)
+    polder_villages(g, c, fields, cells_of, villages, taken, dist_water, dist_shore, km)
     villages.sort(key=lambda r: (-r["households"], r["island"], r["cell"]))
     for k, r in enumerate(villages):
         r["id"] = k + 1
@@ -252,11 +275,15 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         r["id"] = k + 1
         r["name"] = f"散户{k + 1:03d}"
     vf = {r["field"]: r["id"] for r in villages}
+    for r in villages:                                  # P6b：挂在村上的圩田
+        for pf in r.get("polder_fields", []):
+            vf[pf] = r["id"]
     hf = {r["field"]: -r["id"] for r in hamlets}
     for f in fields:
         f["village"] = vf.get(f["id"], hf.get(f["id"]))
     # 废村（P5）：撂荒田旁的村址（没人住，不设泊场）
     ruins = FL["ruins"]
+    ruin_cells = {r["tract"]: r["cells"] for r in ruins}      # P6b：废村的撂荒田（废渠灌过的地）
     place_ruins(g, sc, ruins, ok_site, score_base, taken, km)
     # ---------- 聚落层级（tiers.py）：专业聚落 → 大泊场、中转站、镇与航船、邑治（market.py，P7）→ 泊场 ----------
     from . import market as MK
@@ -312,7 +339,8 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     water_out["landings"] = lands
     # ---------- 水利（P6，waterworks.py）：谷口的渠、村塘 / 山塘、圩田的纵浦横塘与圩塘、闸 ----------
     from .waterworks import build_waterworks
-    works = build_waterworks(g, c["works"], fields, fields_raster, villages, sraster, FL["polders"], km)
+    works = build_waterworks(g, c["works"], fields, fields_raster, villages, sraster, FL["polders"], km, ruins, ruin_cells)
+    cmd_cells = works.pop("_commanded_cells")               # 谷口的渠灌得到的格（landuse 的渠灌田）
     # ---------- 第 3 步：没人住的岛有人用（P5）、主家候选、前哨、都与城 ----------
     uses, status = island_uses(g, sc, _rng(ctx, node, "settle:uses"), villages, hamlets, specials, ruins, seat, km, relays)
     for u_ in uses:
@@ -325,6 +353,8 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         from .resources import sync_resources
         sync_resources(g)
     tenure = land_tenure(g, status, villages, hamlets, specials, uses, ruins, relays)
+    from .waterworks import landuse_layers
+    landuse_layers(g, cmd_cells)                          # P6b：原始地表与人工改造
     g["settle_raster"] = sraster
     g["settle_fields"] = fields_raster
     hh_v = sum(r["households"] for r in villages)
@@ -367,15 +397,87 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         f"纵浦横塘 {ws['polder_canal_km']:.0f} km、圩堤 {ws['dike_km']:.0f} km）")
 
 
+def polder_villages(g: dict, c: dict, fields: list[dict], cells_of: dict, villages: list[dict], taken: np.ndarray,
+                    dist_water: np.ndarray, dist_shore: np.ndarray, km) -> None:
+    """P6b（Zhouzhu PLAN-LAND L30：有水利就有人维护）：圩田的田块（按 polder_village_blocks² 圩一组；按户数从多到少、平局田号小的先——
+    大组先落圩村，零碎的边角组就近挂上去）挑管它、种它的村——
+    同岛的村（先挑好的旱地村与前面落下的圩村，按落村的先后）里这组圩田每一格（整格，量到格最远的那个角）都在 manage_walk_km 以内的，取最远那格最近的（平局先落的）：
+    这组圩田挂在那个村上（村的户数加上这块田的户，polder_fields 记田号）；一个都够不着就在这组圩田上落一个圩村（polder = True，户从这块田来）：
+    村址在这组圩田上、够得着这组每一格的格里，先挑还能整组够得着的「还没着落的圩田组」户数最多的（后面那些组就近挂上来，少出几户的小圩村），
+    平局挑圩里的高处（最高的），再平局最远那格近的、格号小的；都够不着就取最远那格最近的。
+    圩田没分到户（极小）时挂最近的村，不另落村。距离按 2 倍坐标的整数平方：村的格心到格的最远那个角 = (2|Δ行| + 1)² + (2|Δ列| + 1)²，
+    与 4 × (manage_walk_km / 格距)² 比（与 C++ 同）——整格走得到，走在格边上的纵浦横塘、圩堤也就走得到。"""
+    if not fields or not any(f.get("polder") for f in fields):
+        return
+    island_id = g["island_id"]
+    H, W = island_id.shape
+    res_km = float(g["res_km"])
+    t = float(c["works"]["manage_walk_km"]) / res_km
+    R4 = 4.0 * t * t
+    hflat = g["height"].ravel()
+    arable = g["cultivated"] > 0
+    pfs = sorted((f for f in fields if f.get("polder")), key=lambda f: (-int(f.get("households", 0)), f["id"]))
+    box = {f["id"]: (int((cells_of[f["id"]] // W).min()), int((cells_of[f["id"]] // W).max()), int((cells_of[f["id"]] % W).min()),
+                     int((cells_of[f["id"]] % W).max())) for f in pfs}
+    for pos, f in enumerate(pfs):
+        cells = cells_of[f["id"]]
+        ii, jj = cells // W, cells % W
+        hh = int(f.get("households", 0))
+        best = None
+        for idx, v in enumerate(villages):
+            if v["island"] != f["island"]:
+                continue
+            d2 = int(((2 * np.abs(ii - v["cell"][0]) + 1) ** 2 + (2 * np.abs(jj - v["cell"][1]) + 1) ** 2).max())
+            if (d2 <= R4 or hh <= 0) and (best is None or d2 < best[0]):
+                best = (d2, idx)
+        if best is not None:
+            v = villages[best[1]]
+            v["households"] += hh
+            v.setdefault("polder_fields", []).append(f["id"])
+            continue
+        if hh <= 0:
+            continue
+        P = np.stack([ii, jj], axis=1)
+        d2m = ((2 * np.abs(P[:, None, :] - P[None, :, :]) + 1) ** 2).sum(-1).max(axis=1)
+        ok = d2m <= R4
+        hts = hflat[cells]
+        cover = np.zeros(cells.size, dtype=np.int64)            # 还能整组够得着的没着落的圩田组的户（后面的组，同岛、有户）
+        b0 = box[f["id"]]
+        for x in pfs[pos + 1:]:
+            hx = int(x.get("households", 0))
+            if x["island"] != f["island"] or hx <= 0:
+                continue
+            bx = box[x["id"]]
+            gi_ = max(0, bx[0] - b0[1], b0[0] - bx[1])
+            gj_ = max(0, bx[2] - b0[3], b0[2] - bx[3])
+            if (2 * gi_ + 1) ** 2 + (2 * gj_ + 1) ** 2 > R4:       # 两组的外框隔得比走得到还远：够不着（只省算，不改结果）
+                continue
+            Q = cells_of[x["id"]]
+            Qp = np.stack([Q // W, Q % W], axis=1)
+            dx = ((2 * np.abs(P[:, None, :] - Qp[None, :, :]) + 1) ** 2).sum(-1).max(axis=1)
+            cover += hx * (dx <= R4)
+        order = np.lexsort((cells, d2m, -hts, -cover)) if ok.any() else np.lexsort((cells, d2m))
+        if ok.any():
+            order = order[ok[order]]
+        q = int(cells[int(order[0])])
+        gi, gj = q // W, q % W
+        taken[gi, gj] = True
+        villages.append({"id": 0, "island": int(f["island"]), "cell": [gi, gj], "km": km(gi, gj), "households": hh, "field": f["id"],
+                         "elev_m": round(float(g["height"][gi, gj]), 0), "water_dist_km": round(float(dist_water[gi, gj]) * res_km, 2),
+                         "shore_dist_km": round(float(dist_shore[gi, gj]) * res_km, 2), "on_arable": bool(arable[gi, gj]), "polder": True})
+
+
 RASTER_CODES = {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "泊场", "7": "蓄水池", "8": "取水点", "9": "镇", "10": "专业聚落",
                 "11": "撂荒田", "12": "废村", "13": "工棚 / 季节住", "14": "有人用（放牧 / 夏牧 / 庙 / 墓岛）", "15": "塘", "16": "闸",
-                "17": "大泊场（镇 / 邑治）", "18": "中转站（站址 / 烽火台的瞭望处）"}
+                "17": "大泊场（镇 / 邑治）", "18": "中转站（站址 / 烽火台的瞭望处）", "19": "废弃的水利（废村旁没人管的塘、渠首闸）"}
 SETTLE_NOTE = ("第三层，人口只读 ⑨；村 / 镇 / 专业聚落只有位置与户数（原则乙）。名字是 村NNN / 镇NN 占位。"
                "飞船随处可停：没有码头，每个村 / 专业聚落旁一块泊场（船台），镇 / 邑治另挨着一处大泊场（harbors）；岛与岛之间没有索桥，全靠船——"
                "但能控制的浮石船造起来有门槛，一般人本岛走路赶集、跨岛搭航船（boat_lines）。households = 村农户 + 散户 + 镇的非农户 + 专业聚落户 + 中转站户"
                "（工棚、季节住的专业聚落的户也在里面，人住在 home_village 那个村；中转站的户住在中转站）。"
                "已垦 = 此刻有人种的田（terrain.npz 的 cultivated）；宜垦 = 地本身能种（cultivable）；撂荒 = fallow_years > 0。"
-               "land_tenure：荒地有主、领照开垦（地在册，不等于都种着）——有村的岛归就近的村，没人住但有人用的归用它的村的大户，其余官荒归邑。")
+               "land_tenure：荒地有主、领照开垦（地在册，不等于都种着）——有村的岛归就近的村，没人住但有人用的归用它的村的大户，其余官荒归邑。"
+               "P6b：圩田按 polder_village_blocks² 圩一组成田（fields[].polder），走得到现有的村就挂在那个村上（villages[].polder_fields），走不到就在圩上落圩村（villages[].polder）；"
+               "水利每处都记管它的村（waterworks 的 village）。")
 
 
 def set_settlements(g: dict, S: dict) -> None:
@@ -403,14 +505,43 @@ def set_settlements(g: dict, S: dict) -> None:
         ws = S["waterworks"]["summary"]
         J["settlements"]["waterworks"] = {k: ws[k] for k in ("n_heads", "canal_km", "polder_canal_km", "commanded_km2", "n_ponds", "n_sluices",
                                                              "wetland_km2", "polder_km2", "n_polders")}
+        if "abandoned" in ws:                            # P6b：管水利的村、圩村、废弃的水利
+            J["settlements"]["waterworks"].update({k: ws[k] for k in ("manage_walk_km", "n_polder_villages", "abandoned")})
     lf = J.get("landcover")
     if lf is not None:
         lf["note_farmland"] = "可耕地 / 梯田 = 已垦（此刻有人种）；宜垦见 terrain.npz 的 cultivable，撂荒见 fallow_years（地表按年头：草坡 → 灌丛 → 原本的地表）"
+        if "landuse" in g:
+            landuse_summary(g, lf)
     cons = J["constraints"]["arable_frac"]
     n_land = max(1, int((g["island_id"] >= 0).sum()))
     cons["actual"] = round(float((g["cultivated"] > 0).sum()) / n_land, 4)
     cons["note"] = "已垦（在种）/ 陆地；行星层的可耕率是已垦的额度（P5）；宜垦另见 cultivable_share"
     cons["cultivable_share"] = round(float((g["cultivable"] > 0).sum()) / n_land, 4)
+
+
+def landuse_summary(g: dict, lf: dict) -> None:
+    """P6b（L31）：island.json 的地表摘要加原始 / 现状的面积与人工改造各类的面积（两个后端共用）。
+    natural_share / natural_km2：没有人以前的地表（landcover_natural）；current_km2：现状（landcover，share 是它的占比）；
+    landuse：人工改造各类的面积（km2）与各类原来是什么地表（from_km2）。"""
+    from .output import LANDCOVER_CLASSES
+    from .waterworks import LANDUSE_CLASSES, LANDUSE_NOTE
+    land = g["island_id"] >= 0
+    n_land = max(1, int(land.sum()))
+    cell_km2 = float(g["res_km"]) ** 2
+    nat = g["landcover_natural"][land]
+    cur = g["landcover"][land]
+    lu = g["landuse"][land]
+    cn = np.bincount(nat, minlength=12)
+    cc = np.bincount(cur, minlength=12)
+    lf["natural_share"] = {LANDCOVER_CLASSES[i]: round(float(cn[i]) / n_land, 4) for i in range(1, 12)}
+    lf["natural_km2"] = {LANDCOVER_CLASSES[i]: round(float(cn[i]) * cell_km2, 3) for i in range(1, 12)}
+    lf["current_km2"] = {LANDCOVER_CLASSES[i]: round(float(cc[i]) * cell_km2, 3) for i in range(1, 12)}
+    x = np.bincount(lu.astype(np.int64) * 12 + nat.astype(np.int64), minlength=12 * len(LANDUSE_CLASSES)).reshape(len(LANDUSE_CLASSES), 12)
+    lf["landuse"] = {"classes": LANDUSE_CLASSES,
+                     "km2": {LANDUSE_CLASSES[u]: round(float(x[u].sum()) * cell_km2, 3) for u in range(1, len(LANDUSE_CLASSES))},
+                     "from_km2": {LANDUSE_CLASSES[u]: {LANDCOVER_CLASSES[i]: round(float(x[u, i]) * cell_km2, 3) for i in range(1, 12) if x[u, i]}
+                                  for u in range(1, len(LANDUSE_CLASSES))},
+                     "changed_km2": round(float((nat != cur).sum()) * cell_km2, 3), "note": LANDUSE_NOTE}
 
 
 # ---------------------------------------------------------------- 第 2 步：水设施（P5 起没有索桥，也就没有桥头与导水槽）

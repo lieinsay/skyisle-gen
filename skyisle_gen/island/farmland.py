@@ -164,7 +164,7 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
     from .waterworks import polder_plan
     take1 = np.zeros(H * W, dtype=bool)
     take1[take] = True
-    PP = polder_plan(g, wc, wet, take1, n_quota - n_g) if wc is not None else \
+    PP = polder_plan(g, wc, wet, take1, n_quota - n_g, pit.ravel()) if wc is not None else \
         {"patches": [], "cells": none, "polder_id": np.zeros((H, W), dtype=np.int32), "wetland_cells": int(wet.sum())}
     pcells = PP["cells"]
     n_p = int(pcells.size)

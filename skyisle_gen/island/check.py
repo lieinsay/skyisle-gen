@@ -2,9 +2,10 @@
 
 IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-float / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap 为软项；
 资源 RES-site / RES-occ / RES-work / RES-geo 为硬项，RES-quarry 为软项；
-聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home / SET-farm / SET-use / SET-works / SET-market 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八；
-SET-farm / SET-use 是 P5 加的：宜垦 / 已垦 / 撂荒与定居门槛、没人住的岛有人用；SET-works 是 P6 加的：渠、塘、闸、圩田；
-SET-market 是 P7 加的：大泊场、航船、中转站；SET-town 按 P7 改成本岛走路 / 跨岛航船、没有「靠别的岛上的人撑起来又没有航船」的镇）。
+聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home / SET-farm / SET-use / SET-works / SET-market / SET-nature 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八；
+SET-farm / SET-use 是 P5 加的：宜垦 / 已垦 / 撂荒与定居门槛、没人住的岛有人用；SET-works 是 P6 加的：渠、塘、闸、圩田（P6b 加管它的村走得到、废弃的水利）；
+SET-market 是 P7 加的：大泊场、航船、中转站；SET-town 按 P7 改成本岛走路 / 跨岛航船、没有「靠别的岛上的人撑起来又没有航船」的镇；
+SET-nature 是 P6b 加的：原始地貌（landcover_natural）与人工改造（landuse）对得上）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
 """
 from __future__ import annotations
@@ -212,7 +213,9 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             {"households": S["households"], "parts": parts, "population": S["population"], "nonfarm": S.get("nonfarm_households")}, "相等", hh_ok and nf_ok)
         arable_km2 = float((g["cultivated"] > 0).sum()) * (J["raster"]["res_m"] / 1000.0) ** 2
         f_sum = sum(f["area_km2"] for f in S["fields"])
-        every = all(f.get("households", 0) >= 8 for f in S["fields"] if f.get("village") and f["village"] > 0)
+        # 旱地田块有村的都够 8 户；P6b 的圩田田块（polder）挂在村上或自成圩村，几户也算；每个村都有自己的田
+        every = all(f.get("households", 0) >= 8 for f in S["fields"] if f.get("village") and f["village"] > 0 and not f.get("polder")) and \
+            all(1 <= v["field"] <= len(S["fields"]) for v in S["villages"])
         add("SET-field", "每村有田；Σ 田块 = 已垦", {"fields_km2": round(f_sum, 3), "arable_km2": round(arable_km2, 3), "villages_have_field": every}, "< 1%",
             abs(f_sum - arable_km2) <= 0.01 * max(arable_km2, 1e-9) and every)
         bad = 0
@@ -312,6 +315,8 @@ def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
                 "note": None})
     if "waterworks" in S:
         out.append(_works_check(g, S))
+    if "landuse" in g and "landcover_natural" in g:
+        out.append(_nature_check(g, S))
     vids = {v["id"] for v in S["villages"]}
     bad_occ = [x["name"] for x in S["specials"] if x.get("occupancy") not in ("常住", "工棚", "季节住")
                or (x["occupancy"] != "常住" and S["villages"] and x.get("home_village") not in vids)
@@ -407,15 +412,106 @@ def _works_check(g: dict, S: dict) -> dict:
             if f in seen or not (1 <= f <= len(S["fields"])):
                 dup.append(f)
             seen.add(f)
-    vp = [p["village"] for p in WK["ponds"] if p.get("village") is not None]
+    vp = [p["village"] for p in WK["ponds"] if p.get("village") is not None and p["kind"] in ("村塘", "山塘") and not p.get("abandoned")]
     dup_pond = len(vp) - len(set(vp))
-    ok = not (bad_head or bad_canal or bad_pond or bad_sluice or bad_polder or dup or dup_pond)
+    far, unmanaged, bad_aband, bad_cmd = _works_manage(g, S, pid)
+    ok = not (bad_head or bad_canal or bad_pond or bad_sluice or bad_polder or dup or dup_pond or far or unmanaged or bad_aband or bad_cmd)
     ws = WK["summary"]
     return {"id": "SET-works", "name": "水利（P6）：渠首在常年河 / 溪涧上；谷口的渠除渠首外走在本岛陆地上（不上崖缘、湖、常年河）；塘、闸在本岛陆地上；"
-            "圩号栅格与圩的格数一致；一块田只归一处渠首；一个村至多一口塘",
+            "圩号栅格与圩的格数一致；一块田只归一处渠首；一个村至多一口村塘 / 山塘；P6b：每处都有管它的村（渠首、渠的每一点、塘、闸、圩的每一格（整格）"
+            "都在它走得到的范围内），渠首只灌那个村的田；废弃的（abandoned）没有管它的村、记着废村与撤空的年头",
             "value": {"bad_heads": bad_head[:10], "bad_canals": bad_canal[:10], "bad_ponds": bad_pond[:10], "bad_sluices": bad_sluice[:10],
                       "bad_polders": bad_polder[:10], "field_in_two_heads": dup[:10], "village_two_ponds": dup_pond,
-                      "heads": ws["n_heads"], "canal_km": ws["canal_km"], "ponds": ws["n_ponds"], "sluices": ws["n_sluices"], "polder_km2": ws["polder_km2"]},
+                      "too_far": far[:10], "unmanaged": unmanaged[:10], "bad_abandoned": bad_aband[:10], "head_field_not_village": bad_cmd[:10],
+                      "heads": ws["n_heads"], "canal_km": ws["canal_km"], "ponds": ws["n_ponds"], "sluices": ws["n_sluices"], "polder_km2": ws["polder_km2"],
+                      "abandoned": ws.get("abandoned")},
+            "threshold": "全 0", "pass": bool(ok), "hard": True, "note": None}
+
+
+def _works_manage(g: dict, S: dict, pid: np.ndarray) -> tuple[list, list, list, list]:
+    """P6b（L30）：每处水利管它的村在不在、够不够得着（走得到 = 村的格心到那一点 ≤ manage_walk_km；渠的点是格心或格边，圩量到每一格最远的那个角）；
+    渠首灌的田是不是那个村的；废弃的有没有废村与年头。P6b 之前的产物（summary 没有 manage_walk_km）不查。"""
+    WK = S["waterworks"]
+    ws = WK["summary"]
+    if "manage_walk_km" not in ws:
+        return [], [], [], []
+    res_km = float(g["res_km"])
+    walk = float(ws["manage_walk_km"]) / res_km + 1e-9
+    V = {v["id"]: v for v in S["villages"]}
+    R = {r["id"]: r for r in S.get("ruins", [])}
+    far, unmanaged, bad_aband, bad_cmd = [], [], [], []
+
+    def dist(vid, pts):
+        v = V[vid]
+        P = np.asarray(pts, dtype=np.float64).reshape(-1, 2)
+        return float(np.hypot(P[:, 0] - (v["cell"][0] + 0.5), P[:, 1] - (v["cell"][1] + 0.5)).max())
+
+    def one(kind, x, pts):
+        if x.get("abandoned"):
+            if x.get("village") is not None or x.get("ruin") not in R or int(x.get("abandoned_years", 0)) < 1:
+                bad_aband.append(f"{kind}{x['id']}")
+            return
+        vid = x.get("village")
+        if vid not in V:
+            unmanaged.append(f"{kind}{x['id']}")
+        elif dist(vid, pts) > walk:
+            far.append(f"{kind}{x['id']}")
+    for x in WK["heads"]:
+        one("渠首", x, [[x["cell"][0] + 0.5, x["cell"][1] + 0.5]])
+        if not x.get("abandoned") and x.get("village") in V and x["fields"] != [V[x["village"]]["field"]]:
+            bad_cmd.append(x["id"])
+    for x in WK["canals"]:
+        one("渠", x, x["pts"])
+    for x in WK["ponds"]:
+        one("塘", x, [[x["cell"][0] + 0.5, x["cell"][1] + 0.5]])
+    for x in WK["sluices"]:
+        one("闸", x, [[x["cell"][0] + 0.5, x["cell"][1] + 0.5]])
+    if WK["polders"]:
+        W = pid.shape[1]
+        flat = pid.ravel()
+        idx = np.flatnonzero(flat > 0)
+        o = idx[np.argsort(flat[idx], kind="stable")]
+        b = np.searchsorted(flat[o], np.arange(1, len(WK["polders"]) + 2))
+        for p in WK["polders"]:
+            cells = o[b[p["id"] - 1]:b[p["id"]]]
+            ii, jj = cells // W, cells % W
+            corners = np.concatenate([np.stack([ii + a, jj + c], axis=1) for a in (0, 1) for c in (0, 1)])
+            one("圩", p, corners)
+    return far, unmanaged, bad_aband, bad_cmd
+
+
+def _nature_check(g: dict, S: dict) -> dict:
+    """SET-nature（P6b，L31：原始地貌和人工地貌分开记）：landcover_natural 是没有人以前的地表、landuse 是人工改造——
+    圩田那格原来是湿地；别的田原来不是湿地、河、湖、崖缘；地表变了的格都说得清（landuse > 0）；landuse 与已垦 / 圩田 / 撂荒对得上；
+    没有农户（村、散户）的岛上没有田（强填的干群不查，同 SET-farm）、原始湿地 = 现状湿地（没人去排）。"""
+    from .waterworks import LANDUSE_CLASSES
+    iid = g["island_id"]
+    land = iid >= 0
+    nat, lu, lc = g["landcover_natural"], g["landuse"], g["landcover"]
+    ct, fy = g["cultivated"], g["fallow_years"]
+    pol = g["polder_id"] > 0 if "polder_id" in g else np.zeros_like(land)
+    LC_WET_, LC_CLIFF, LC_RIVER, LC_LAKE = 9, 1, 10, 11
+    bad_pol = int((pol & (nat != LC_WET_)).sum())
+    bad_field = int(((ct > 0) & ~pol & np.isin(nat, [LC_WET_, LC_CLIFF, LC_RIVER, LC_LAKE])).sum())
+    unexplained = int((land & (lc != nat) & (lu == 0)).sum())
+    bad_code = int(((pol != (lu == 4)) | ((ct > 0) & ~pol & ~np.isin(lu, [1, 2, 3])) | ((fy > 0) & (lu != 5)) | ((lu == 3) & (ct == 0))
+                    | (lu >= len(LANDUSE_CLASSES)) | (~land & (lu > 0))).sum())
+    farm = {v["island"] for v in S["villages"]} | {h["island"] for h in S["hamlets"]}
+    n = len(g["json"]["islands"])
+    nob = np.array([k not in farm for k in range(n)], dtype=bool)
+    nb = land & nob[np.where(land, iid, 0)]
+    nb_field = int((nb & (ct > 0)).sum())
+    nb_wet = int((nb & ((nat == LC_WET_) != (lc == LC_WET_))).sum())
+    forced = float(S["farmland"].get("forced_km2", 0.0)) > 0      # 强填的干群：分到一小块田的岛可能分不到户（邻岛的人来种，同 SET-farm），田不查
+    ok = not (bad_pol or bad_field or unexplained or bad_code or (nb_field and not forced) or nb_wet)
+    cell_km2 = float(g["res_km"]) ** 2
+    return {"id": "SET-nature", "name": "原始地貌与人工地貌（P6b）：圩田原来是湿地、别的田原来不是湿地 / 水 / 崖缘；地表变了的格都有人工改造码；"
+            "改造码与已垦 / 圩田 / 撂荒对得上；没有农户的岛上没有田、湿地原样",
+            "value": {"polder_not_wet": bad_pol, "field_bad_natural": bad_field, "unexplained_change": unexplained, "bad_landuse_code": bad_code,
+                      "field_on_empty_island": nb_field, "forced_km2": S["farmland"].get("forced_km2", 0.0), "wet_changed_on_empty_island": nb_wet,
+                      "wet_natural_km2": round(float((land & (nat == LC_WET_)).sum()) * cell_km2, 3),
+                      "wet_now_km2": round(float((land & (lc == LC_WET_)).sum()) * cell_km2, 3),
+                      "changed_km2": round(float((land & (lc != nat)).sum()) * cell_km2, 3)},
             "threshold": "全 0", "pass": bool(ok), "hard": True, "note": None}
 
 

@@ -484,6 +484,8 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         g["cultivated"] = R["settle_cultivated"]          # P5：已垦（在种）与撂荒年头
         g["fallow_years"] = R["settle_fallow"]
         g["polder_id"] = R["settle_polder"]                # P6：圩号
+        g["landcover_natural"] = R["settle_landcover_natural"]    # P6b：没有人以前的地表、人工改造
+        g["landuse"] = R["settle_landuse"]
         set_settlements(g, S)
         if "to_grass_km2" in S["clearing"]:
             J["landcover"]["note_clearing"] = "林地在村 / 镇 / 专业聚落半径内已开垦：内圈草坡（牧场草场）、外圈灌丛（薪炭林）"

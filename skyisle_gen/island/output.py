@@ -94,9 +94,10 @@ def write_terrain(out: Path, g: dict) -> None:
     g["json"]["raster"]["height_png_scale_m_per_unit"] = round(1.0 / scale, 6)
     arrays = {"height": h.astype(np.float32), "island_id": g["island_id"].astype(np.int16), "cliff": g["cliff"]}
     # P5：可耕地拆成 cultivable（宜垦 0 / 1 / 2 要修梯田）、cultivated（已垦、在种：0 / 1 田 / 2 梯田）、fallow_years（撂荒了几年，0 = 不是）；
-    # 旧的 arable（按额度画死的可耕地）不再写（含义变了就改键名）；rain_mm = 局地年降水（P4）；polder_id = 圩号（P6，0 = 不是圩田；圩田也算已垦）
+    # 旧的 arable（按额度画死的可耕地）不再写（含义变了就改键名）；rain_mm = 局地年降水（P4）；polder_id = 圩号（P6，0 = 不是圩田；圩田也算已垦）；
+    # P6b：landcover_natural = 没有人以前的地表（码同 landcover），landuse = 人工改造（waterworks.LANDUSE_CLASSES：0 没动过 … 7 采场）
     for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "river_width_m",
-              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "polder_id"):
+              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "polder_id", "landcover_natural", "landuse"):
         if k in g:
             arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)
@@ -328,13 +329,18 @@ def write_preview_main(out: Path, g: dict) -> Path:
             if "polder_id" in g:
                 ax.imshow(np.where(g["polder_id"][sl][sub] > 0, 1.0, np.nan), cmap="summer", vmin=0, vmax=2, alpha=0.75, interpolation="nearest")
             for kinds, col, lw in ((("干渠",), "#0aa5a0", 0.9), (("支渠",), "#30c8c0", 0.45), (("纵浦", "横塘", "排水渠"), "#1f5fd0", 0.45)):
-                segs = [np.array([[q[1] - oj - 0.5, q[0] - oi - 0.5] for q in c["pts"]]) for c in WK["canals"] if c["island"] == 0 and c["kind"] in kinds]
+                segs = [np.array([[q[1] - oj - 0.5, q[0] - oi - 0.5] for q in c["pts"]]) for c in WK["canals"]
+                        if c["island"] == 0 and c["kind"] in kinds and not c.get("abandoned")]
                 if segs:
                     ax.add_collection(LineCollection(segs, colors=col, linewidths=lw, zorder=5))
-            P = [p["cell"] for p in WK["ponds"] if p["island"] == 0]
-            if P:
-                P = np.array(P, dtype=float)
-                ax.scatter(P[:, 1] - oj, P[:, 0] - oi, s=2.5, c="#2a7fff", linewidths=0, zorder=6)
+            segs = [np.array([[q[1] - oj - 0.5, q[0] - oi - 0.5] for q in c["pts"]]) for c in WK["canals"] if c["island"] == 0 and c.get("abandoned")]
+            if segs:                             # P6b：废村旁没人管的废渠（灰虚线）
+                ax.add_collection(LineCollection(segs, colors="#8a8580", linewidths=0.6, linestyles="dashed", zorder=5))
+            for ab, col in ((False, "#2a7fff"), (True, "#8a8580")):
+                P = [p["cell"] for p in WK["ponds"] if p["island"] == 0 and bool(p.get("abandoned")) == ab]
+                if P:
+                    P = np.array(P, dtype=float)
+                    ax.scatter(P[:, 1] - oj, P[:, 0] - oi, s=2.5, c=col, linewidths=0, zorder=6)
     km = 10.0 * 1000.0 / res_m
     ax.plot([10, 10 + km], [h.shape[0] - 10, h.shape[0] - 10], color="w", lw=3)
     ax.text(10 + km / 2, h.shape[0] - 16, "10 km", color="w", ha="center", fontsize=9)
@@ -359,8 +365,9 @@ def write_preview_main(out: Path, g: dict) -> Path:
 
 SETTLE_PALETTE = [(0, 0, 0), (230, 200, 90), (210, 170, 60), (255, 255, 255), (255, 200, 200), (60, 200, 255), (0, 0, 0), (80, 120, 255), (120, 200, 255),
                   (255, 150, 40), (200, 90, 220), (170, 110, 90), (120, 90, 80), (150, 120, 200), (90, 200, 160), (40, 150, 230), (20, 40, 90),
-                  (64, 224, 255), (255, 64, 64)]
+                  (64, 224, 255), (255, 64, 64), (130, 120, 110)]
 # 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用（放牧、庙、墓岛）/ 15 塘 / 16 闸（P6）/ 17 大泊场（镇 / 邑治）/ 18 中转站（P7）；
+# 19 废弃的水利（P6b：废村旁没人管的塘、渠首闸）；
 # 6 原是桥头（P5 起没有索桥），空着
 
 
