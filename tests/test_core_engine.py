@@ -201,6 +201,36 @@ def test_sculpt_island_matches(age):
         assert np.array_equal(h2, h, equal_nan=True), (age, emc, np.nanmax(np.abs(h2 - h)))
 
 
+@pytest.mark.parametrize("n_seed", [0, 1, 2])
+def test_sculpt_island_multicore_matches(n_seed):
+    """多核嵌合（P4）：multicore_spec 抽的核数 / 主核 / 强度、造形、拟合后各核的载荷与载荷中心，与 numpy 版逐位相同（粗网格 f > 1 与 f = 1 两条路）。"""
+    from skyisle_gen.island.engine import flat_config
+    for emc in (40, 320):
+        c = _island_cfg(terrain__erosion_max_cells=emc, terrain__multicore_frac=1.0, terrain__multicore_three_frac=0.5)
+        area, res = 700.0, 0.8
+        key = f"island:{n_seed}:cores:0"
+        mask, inside, X, Y = T.island_shape(entity_rng(7, 21, "island:3:shape:0"), area, res, 1.6, 0.3, c["terrain"])
+        sp = T.multicore_spec(entity_rng(7, 21, key), area, 0.45, 0.9, 0, c["terrain"])
+        assert sp is not None
+        cores = []
+        h, kind, rim, peak = T.sculpt_island(entity_rng(7, 21, "island:3:terrain:0"), mask, inside, X, Y, 0.45, area, res,
+                                             900.0, 1500.0, 320.0, True, c["terrain"], sp, cores)
+        h2, kind2, rim2, peak2, cores2 = core.sculpt_island_cores(7, "island:3:shape:0", "island:3:terrain:0", key, area, res, 1.6, 0.3, 0.45,
+                                                                  900.0, 1500.0, 320.0, True, 0.9, 0, flat_config(c))
+        assert kind2 == kind and rim2 == rim and peak2 == peak
+        assert np.array_equal(h2, h, equal_nan=True), (emc, np.nanmax(np.abs(h2 - h)))
+        assert len(cores) == len(cores2) == sp["n"]
+        for a, b in zip(cores, cores2):
+            assert (a["seed"][0], a["seed"][1], a["strength"], a["cells"], a["peak"], a["load"], a["load_xy"][0], a["load_xy"][1],
+                    a["mean_above"]) == tuple(b)
+        assert sum(a["cells"] for a in cores) == int(mask.sum())
+    # 不在汇聚带、太小、新岛：不是多核（也不多抽随机数以外的东西）
+    c = _island_cfg(terrain__multicore_frac=1.0)
+    assert T.multicore_spec(entity_rng(7, 21, "k"), 700.0, 0.45, 0.9, 1, c["terrain"]) is None
+    assert T.multicore_spec(entity_rng(7, 21, "k"), 100.0, 0.45, 0.9, 0, c["terrain"]) is None
+    assert T.multicore_spec(entity_rng(7, 21, "k"), 700.0, 0.1, 0.9, 0, c["terrain"]) is None
+
+
 def test_territory_limits_match():
     from skyisle_gen.island.territory import limits
     rng = np.random.default_rng(4)
@@ -273,6 +303,37 @@ def test_small_world_backends_agree(small_ctx):
         same = all(np.array_equal(a[k], b[k], equal_nan=True) for k in GRIDS)
         Ja["meta"].pop("engine", None), Jb["meta"].pop("engine", None)
         assert same == (Ja == Jb), node                       # 栅格全同则 island.json 也全同（拼装与 Python 版同式）
+
+
+def test_p4_terrain_hydro_backends_identical(small_ctx):
+    """地貌 P4（新岛成拱、多核嵌合、谷收拢、局地雨、湿地）：强开多核之后两个后端的地形与水系逐位相同；局地雨的全群均值 = 行星层的年降水。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.hydro import build_hydro
+    from skyisle_gen.island.layout import boundary_axis
+    sets = ["island.terrain.multicore_frac=1.0", "island.terrain.multicore_kernel_full=0.01", "island.terrain.multicore_min_km2=30.0"]
+    isl3, plates = small_ctx.load_npz(3, "islands"), small_ctx.load_npz(3, "plates")
+    conv = [n for n in _nodes(small_ctx, 40) if boundary_axis(plates, float(isl3["lat"][n]), float(isl3["lon"][n]))[2] == 0]
+    seen_cores = seen_cap = False
+    for node in _nodes(small_ctx, 2) + conv[:2]:
+        gs = {}
+        for be in ("python", "cpp"):
+            c = isl.island_config(small_ctx, sets + [f"engine.backend={be}", "engine.threads=4"])
+            inp = isl._node_inputs(small_ctx, node)
+            g = isl.build_terrain(small_ctx, node, c, inp, res_m=300.0, log=lambda *a: None)
+            build_hydro(small_ctx, node, c, g, log=lambda *a: None)
+            gs[be] = g
+        a, b = gs["python"], gs["cpp"]
+        for k in GRIDS + ("rain_mm",):
+            assert np.array_equal(a[k], b[k], equal_nan=True), (node, k)
+        Ja, Jb = a["json"], b["json"]
+        Jb["meta"].pop("engine", None)
+        assert Ja == Jb, node
+        seen_cores |= any(i.get("cores") for i in Ja["islands"])
+        seen_cap |= sum(i.get("captures", 0) for i in Ja["islands"]) > 0
+        land = a["island_id"] >= 0
+        assert abs(float(a["rain_mm"][land].astype(np.float64).mean()) - Ja["hydro"]["precip_mm"]) <= 1.0
+    small_ctx.cfg["engine"]["backend"] = "python"
+    assert seen_cores and seen_cap
 
 
 def test_cpp_deterministic_and_thread_independent(small_ctx):
