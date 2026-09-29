@@ -302,6 +302,9 @@ class Handler(BaseHTTPRequestHandler):
                       ("floodplain", np.uint8), ("terrain_zone", np.uint8), ("resource", np.uint8)):
             if k in arrs:
                 out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
+        if "cultivable" in arrs:      # P5：田的编码与 farmland.png 同——1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒
+            from ..island.output import farmland_codes
+            out["farm_u8"] = base64.b64encode(pick(farmland_codes(arrs)).astype(np.uint8).tobytes()).decode("ascii")
         if "res_field" in arrs:       # 散资源的赋存场 [K, H, W]（品位 × 255），层序见 resources.json 的 fields.kinds
             rf = np.ascontiguousarray(arrs["res_field"][:, ::step, ::step]).astype(np.uint8)
             out["res_field_u8"] = base64.b64encode(rf.tobytes()).decode("ascii")

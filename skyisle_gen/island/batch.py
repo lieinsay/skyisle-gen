@@ -51,7 +51,7 @@ def run_batch(ctx, sample: int = 30, year: int = 0, sets: list[str] | None = Non
         fails = [i["id"] for i in items if not i["pass"]]
         row = {"node": node, "seconds": round(time.perf_counter() - t0, 1), "res_m": J["meta"]["res_m"], "rows": J["raster"]["rows"], "cols": J["raster"]["cols"],
                "area_km2": J["constraints"]["area_km2"]["target"], "main_km2": J["constraints"]["main_area_km2"]["target"],
-               "n_islands": len(J["islands"]), "bridges": J["layout"]["n_bridges"], "ferries": J["layout"]["n_ferries"],
+               "n_islands": len(J["islands"]), "ferries": J["layout"]["n_ferries"],
                "age_zh": J["meta"]["age_zh"], "lat": round(J["meta"]["lat"], 1), "season_type": C["season_type_zh"],
                "season_range_c": C["annual"]["season_range_c"], "precip_mm": C["annual"]["precip_mm"],
                "lakes": J["hydro"]["n_lakes"], "large_basins": J["hydro"]["main_basins"].get("n_large", 0),

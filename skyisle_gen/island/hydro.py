@@ -266,6 +266,9 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
         a = a.reshape(H, W)
         arable[a] = 1
         arable[a & (slope >= float(lc["terrace_slope_deg"]))] = 2
+    # P5：上面按行星层额度取的是「上等地」（资源层照旧避开它）；宜垦另记，已垦在聚落层定（farmland.py）
+    from .farmland import cultivable_land
+    cultivable_land(g, lc, cover, arable, suit, slope, T, soil, wet, near_water)
     cover[arable == 1] = LC_ARABLE
     cover[arable == 2] = LC_TERRACE
     cover[river > 0] = LC_RIVER

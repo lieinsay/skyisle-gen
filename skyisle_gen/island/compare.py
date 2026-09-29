@@ -76,11 +76,12 @@ def _stats(g: dict, items: list[dict], secs: float, out: Path) -> dict:
         "longest_river_km": max([r["length_km"] for r in H.get("rivers", [])] or [0.0]),
         "n_rivers": H.get("n_rivers", 0), "n_lakes": H.get("n_lakes", 0),
         "arable": C["arable_frac"].get("actual"), "arable_target": C["arable_frac"]["target"],
-        "landcover": J.get("landcover", {}).get("share", {}), "bridges": J["layout"]["n_bridges"],
+        "landcover": J.get("landcover", {}).get("share", {}), "cultivable": C["arable_frac"].get("cultivable_share"),
         "constrained": bool(C.get("territory", {}).get("constrained")),
         # P6b：聚落、资源、天气、季型
         "n_villages": S.get("n_villages", 0), "n_hamlets": S.get("n_hamlets", 0), "households": S.get("households", 0),
         "n_towns": len(S.get("towns", [])), "n_specials": len(S.get("specials", [])),
+        "n_ruins": len(S.get("ruins", [])), "n_uses": len(S.get("uses", [])),
         "res_points": sum(1 for d in deps if d["form"] == "point"),
         "res_patches": sum(1 for d in deps if d["form"] == "patch" and not d.get("cleared")),
         "res_occurrences": len(R.get("occurrences", [])), "res_workings": len(R.get("workings", [])),

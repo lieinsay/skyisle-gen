@@ -1,4 +1,4 @@
-"""5.1 群内布局：岛数、大小（Zipf）、位置（泊松盘 + 主岛引力 + 板块走向）、台面高度与目标起伏、索桥 / 短渡、导水槽网络。
+"""5.1 群内布局：岛数、大小（Zipf）、位置（泊松盘 + 主岛引力 + 板块走向）、台面高度与目标起伏、短渡（P5 起没有索桥与导水槽）。
 
 只依赖行星产物里这个节点的标量（area_km2、main_area_km2、height_m、layered、age、板块边界核与类型），
 随机数来自 rng.entity_rng(seed, ISLAND_STREAM, f"island:{node}:layout")。
@@ -258,14 +258,13 @@ def shoreline_gaps(masks_pos: list[tuple[np.ndarray, int, int]], res_km: float, 
     return out
 
 
-def links(gaps: dict[tuple[int, int], float], rims: np.ndarray, n: int, c: dict) -> tuple[list[dict], list[tuple[int, int]]]:
-    """索桥：岸距 ≤ bridge_max_km 且岸缘高差 ≤ bridge_max_dh_m；否则短渡。保证连通（不够就补最近的短渡）。
-    另返回导水槽网络：只走索桥边、以主岛为根的最小生成树。"""
-    bmax, dh = float(c["bridge_max_km"]), float(c["bridge_max_dh_m"])
+def links(gaps: dict[tuple[int, int], float], rims: np.ndarray, n: int, c: dict) -> list[dict]:
+    """短渡（飞船航线）：岸距 ≤ ferry_max_km 的岛对；保证连通（不够就补最近的短渡，标 fallback）。
+    P5（用户定）：岛与岛之间没有索桥，全靠船——前工业时代架不了几十米以上的桥，有船就更不必；导水槽只沿索桥走，也随之没了。
+    岛上跨溪涧的短桥（营建器的 bridges，20 m 以内）不受影响。"""
     out = []
     for (i, j), g in sorted(gaps.items()):
-        kind = "bridge" if (g <= bmax and abs(rims[i] - rims[j]) <= dh) else "ferry"
-        out.append({"a": i, "b": j, "gap_km": round(g, 3), "kind": kind, "dh_m": round(float(abs(rims[i] - rims[j])), 1)})
+        out.append({"a": i, "b": j, "gap_km": round(g, 3), "kind": "ferry", "dh_m": round(float(abs(rims[i] - rims[j])), 1)})
     # 连通性回退
     from ..graph import weak_components
     def comps():
@@ -283,24 +282,4 @@ def links(gaps: dict[tuple[int, int], float], rims: np.ndarray, n: int, c: dict)
             break
         out.append({"a": best[0], "b": best[1], "gap_km": round(best[2], 3), "kind": "ferry", "dh_m": round(float(abs(rims[best[0]] - rims[best[1]])), 1), "fallback": True})
         comp = comps()
-    # 导水槽：Prim 从主岛出发，只走索桥
-    adj = {i: [] for i in range(n)}
-    for e in out:
-        if e["kind"] == "bridge":
-            adj[e["a"]].append((e["gap_km"], e["b"]))
-            adj[e["b"]].append((e["gap_km"], e["a"]))
-    import heapq
-    seen = {0}
-    heap = [(g, 0, j) for g, j in adj[0]]
-    heapq.heapify(heap)
-    tree = []
-    while heap:
-        g, i, j = heapq.heappop(heap)
-        if j in seen:
-            continue
-        seen.add(j)
-        tree.append((i, j))
-        for g2, k in adj[j]:
-            if k not in seen:
-                heapq.heappush(heap, (g2, j, k))
-    return out, tree
+    return out

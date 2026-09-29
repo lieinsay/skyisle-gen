@@ -258,11 +258,11 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     for i in islands_json:
         i["bbox_cells"][0] -= r_lo
         i["bbox_cells"][1] -= c_lo
-    # 岸线间距 → 索桥 / 短渡 / 导水槽
+    # 岸线间距 → 短渡（P5 起没有索桥与导水槽）
     ctr_cells = np.array([[(i["center_km"][0] - x0) / res_km, -(i["center_km"][1] - y0) / res_km] for i in islands_json])
     radii = np.array([p.max() for p in profiles])
     gaps = shoreline_gaps(masks_pos, res_km, ctr_cells, radii, float(lay["ferry_max_km"]))
-    lk, tree = links(gaps, rims, n, lay)
+    lk = links(gaps, rims, n, lay)
     cliff = land & ~binary_erode(land, int(ter["cliff_cells"]))
     i0 = islands_json[0]
     log(f"  地形 {n} 岛 {H}×{W} @ {res_m_eff:.0f} m，{time.perf_counter() - t0:.1f} s；主岛 岸缘 {i0['rim_m']:.0f} → 峰 {i0['peak_m']:.0f} m"
@@ -297,10 +297,8 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
         terr["note"] = "势力范围（territory.py）：与每个邻群按等效半径分界、各退 gap/2；violation_km ≤ 0 = 没越界（负值是最小余量）"
     constraints["territory"] = terr
     J = {"meta": meta, "raster": raster, "constraints": constraints, "islands": islands_json, "links": lk,
-         "channels": [[int(a), int(b)] for a, b in tree],
-         "layout": {"n_bridges": sum(1 for e in lk if e["kind"] == "bridge"), "n_ferries": sum(1 for e in lk if e["kind"] == "ferry"),
-                    "gap_median_km": round(float(np.median([e["gap_km"] for e in lk])), 2) if lk else None,
-                    "channel_islands": len(tree) + 1}}
+         "layout": {"n_ferries": sum(1 for e in lk if e["kind"] == "ferry"),
+                    "gap_median_km": round(float(np.median([e["gap_km"] for e in lk])), 2) if lk else None}}
     return {"height": height, "island_id": island_id, "cliff": cliff, "json": J, "rims": rims, "res_km": res_km,
             "masks_pos": masks_pos, "inp": inp}
 

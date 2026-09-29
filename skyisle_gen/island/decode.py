@@ -56,10 +56,6 @@ HOME_NOTE = {"seat_side": "人多、近航线：邑治与主泊场（仓场）�
              "highland": "主岛能落脚的最高处，俯瞰全群"}
 WORKS_ZH = {"stone": WORK_ZH["stone"], "clay": WORK_ZH["clay"], "gravel": WORK_ZH["gravel"], "placer": WORK_ZH["placer"]}
 POP_SRC_ZH = {"polity": "⑨ polity.npz", "arable": "可耕地 × 人口密度（无 ⑨）"}
-CITY_NOTE = "城居人口 = 本邑人口 × 城居率 + 邦人口 × 集聚率，只在聚落层算，不进 ⑨；郭 = 索桥可达且离城 ≤ city_guo_km 的村；崖缘即城墙、桥头即城门"
-RASTER_CODES = {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "泊场", "6": "桥头", "7": "蓄水池", "8": "取水点", "9": "镇", "10": "专业聚落"}
-SETTLE_NOTE = ("第三层，人口只读 ⑨；村 / 镇 / 专业聚落只有位置与户数（原则乙）。名字是 村NNN / 镇NN 占位。"
-               "飞船随处可停：没有码头，每个聚落旁一块泊场；households = 村农户 + 散户 + 镇的非农户 + 专业聚落户。")
 
 
 def _sub(code):
@@ -162,6 +158,8 @@ def _name(code):
     if kind == "special":
         sk, _, sid = rest.partition(":")
         return f"{SPECIAL_ZH[sk]}{int(sid):02d}"
+    if kind == "ruin":
+        return f"废村{int(rest):02d}"
     raise ValueError(code)
 
 
@@ -201,6 +199,8 @@ def _landing_kind(code: str) -> str:
 
 
 def settlements(Sj: dict, climate_zh: dict | None) -> dict:
+    from .farmland import OWNER_ZH, SPECIAL_OCC_ZH, STATUS_ZH, USE_OCC_ZH, USE_ZH, ruin_note, use_note
+    from .settle import CITY_NOTE, RASTER_CODES, SETTLE_NOTE
     S = dict(Sj)
     S["population_source"] = POP_SRC_ZH[Sj["population_source"]]
     S["villages"] = [_village(v) for v in Sj["villages"]]
@@ -218,6 +218,7 @@ def settlements(Sj: dict, climate_zh: dict | None) -> dict:
         x["subtype"] = _sub(x["subtype"])
         x["note"] = _special_note(x["note"])
         x["name"] = _name(x["name"])
+        x["occupancy"] = SPECIAL_OCC_ZH[x["occupancy"]]
         specials.append(x)
     S["specials"] = specials
     lands = []
@@ -247,6 +248,18 @@ def settlements(Sj: dict, climate_zh: dict | None) -> dict:
         city["note"] = CITY_NOTE
         S["city"] = city
     S["workings"] = {WORKS_ZH[k]: v for k, v in Sj["workings"].items()}
+    # P5：废村、有人用的岛、各岛的住法与荒地归谁
+    S["ruins"] = [dict(r, name=_name(r["name"]), note=ruin_note(r["note"][1], r["note"][2], r["note"][3])) for r in Sj["ruins"]]
+    uses = []
+    for u in Sj["uses"]:
+        u = dict(u)
+        n = u["note"]
+        u["note"] = use_note(n[0], *n[1:])
+        u["kind"] = USE_ZH[u["kind"]]
+        u["occupancy"] = USE_OCC_ZH[u["occupancy"]]
+        uses.append(u)
+    S["uses"] = uses
+    S["land_tenure"] = [dict(t, status=STATUS_ZH[t["status"]], owner=OWNER_ZH[t["owner"]]) for t in Sj["land_tenure"]]
     S["raster_codes"] = dict(RASTER_CODES)
     S["note"] = SETTLE_NOTE
     return S

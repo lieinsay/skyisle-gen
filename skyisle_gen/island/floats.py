@@ -1,7 +1,7 @@
 """浮高的全行星统计（`skyisle island floats --run out/seed42 [--jobs N]`；DESIGN-NOTES 四点二十八）。
 
 每群只跑布局 + 地形（build_terrain：浮高在这一步定，往下的要等地形拟合出岸缘才按余量缩），收全部非主岛的
-浮高 δ、岛龄差（岛龄 − 主岛岛龄）、面积、平移后的岸缘 / 台面，外加每群的索桥数与导水槽连到的岛数（浮高让岸缘高差变大、索桥变少）。
+浮高 δ、岛龄差（岛龄 − 主岛岛龄）、面积、平移后的岸缘 / 台面（P5 起没有索桥与导水槽，原来每群的索桥数一栏删掉）。
 写 islands/float_stats.json（摘要 + 与标定区间的对照）与 islands/float_stats.npz（逐岛数组）；不在标定区间 → 退出码 1。
 cpp 后端 8000 群 30 进程约一两分钟；python 后端慢十来倍。
 """
@@ -36,7 +36,7 @@ def _worker(args):
     a0 = float(I[0]["age"])
     rows = [(node, int(i["id"]), float(i["area_km2"]), float(i["age"]) - a0, float(i["float_m"]), float(i["rim_m"]), float(i["surface_m"]))
             for i in I[1:]]
-    grp = (node, float(inp["height_m"]), len(I), int(J["layout"]["n_bridges"]), int(J["layout"]["channel_islands"]))
+    grp = (node, float(inp["height_m"]), len(I))
     return rows, grp
 
 
@@ -94,7 +94,7 @@ def run_floats(ctx, jobs: int = 1, sets: list[str] | None = None, nodes: list[in
                 log(f"  {i + 1}/{len(nodes)}  {el / 60:.1f} min")
     A = np.array([r[:2] for r in rows], dtype=np.int32).reshape(-1, 2)
     F = np.array([r[2:] for r in rows], dtype=np.float64).reshape(-1, 5)
-    G = np.array(grps, dtype=np.float64).reshape(-1, 5)
+    G = np.array(grps, dtype=np.float64).reshape(-1, 3)
     area, dage, d, rim, surf = F.T
     summ = summarize(d, dage, rim, fc) if d.size else {"n": 0}
     # 按主岛台面分档：低台面的群往下挪得少
@@ -111,15 +111,13 @@ def run_floats(ctx, jobs: int = 1, sets: list[str] | None = None, nodes: list[in
     out = {"run": ctx.out_dir.name, "seed": ctx.seed, "groups": len(grps), "float": {k: v for k, v in fc.items()},
            "calib_targets": {k: list(v) if isinstance(v, tuple) else v for k, v in CALIB.items()},
            "non_main": summ, "by_main_surface": by_h,
-           "bridges": int(G[:, 3].sum()) if G.size else 0, "channel_islands": int(G[:, 4].sum()) if G.size else 0,
            "islands": int(G[:, 2].sum()) if G.size else 0, "minutes": round((time.time() - t0) / 60.0, 2)}
     root = ctx.out_dir / "islands"
     root.mkdir(parents=True, exist_ok=True)
     tag = "" if fc.get("enabled") else "_off"
     (root / f"float_stats{tag}.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     np.savez_compressed(root / f"float_stats{tag}.npz", node=A[:, 0], island=A[:, 1], area_km2=area, dage=dage, float_m=d, rim_m=rim,
-                        surface_m=surf, group_node=G[:, 0].astype(np.int32), group_height_m=G[:, 1], group_islands=G[:, 2].astype(np.int32),
-                        group_bridges=G[:, 3].astype(np.int32), group_channel_islands=G[:, 4].astype(np.int32))
+                        surface_m=surf, group_node=G[:, 0].astype(np.int32), group_height_m=G[:, 1], group_islands=G[:, 2].astype(np.int32))
     s = summ
     if s.get("n"):
         log(f"[floats] 非主岛 {s['n']}：往上 {s['up_share']:.1%}，|δ| 中位 {s['abs_median_m']:.0f} m、p90 {s['abs_p90_m']:.0f}、p99 {s['abs_p99_m']:.0f}，"
@@ -127,6 +125,6 @@ def run_floats(ctx, jobs: int = 1, sets: list[str] | None = None, nodes: list[in
             f"δ 与 Δ岛龄秩相关 {s['spearman_age']:+.3f}；岸缘最低 {s['rim_min_m']:.1f} m")
         for b in by_h:
             log(f"  主岛台面 {b['main_surface_m']}：{b['n']} 岛，往上 {b['up_share']:.0%}，|δ| 中位 {b['abs_median_m']:.0f}，往下中位 {b['down_median_m']}")
-    log(f"[floats] 索桥 {out['bridges']}，导水槽连到 {out['channel_islands']} 岛（共 {out['islands']} 岛）；"
+    log(f"[floats] 共 {out['islands']} 岛；"
         f"标定 {'全在区间里' if s.get('calib_pass') else '有不在区间的：' + str([k for k, v in s.get('calib', {}).items() if not v])} → {root / f'float_stats{tag}.json'}")
     return 0 if s.get("calib_pass") or not fc.get("enabled") else 1

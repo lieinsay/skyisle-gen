@@ -84,7 +84,7 @@ def _winter_wind(C: dict) -> dict:
 
 
 def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
-    """上游锚点，换成窗口平面坐标（m）：本聚落的泊场（在前）与出村大路的去向（同岛的邻村、集镇 / 治所、主泊场、桥头）。"""
+    """上游锚点，换成窗口平面坐标（m）：本聚落的泊场（在前）与出村大路的去向（同岛的邻村、集镇 / 治所、主泊场；P5 起没有索桥，也就没有桥头）。"""
     def local(km):
         return [round(float(km[0]) * 1000.0 - frame_x, 2), round(float(km[1]) * 1000.0 - frame_y, 2)]
 
@@ -117,10 +117,14 @@ def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
     for L in S.get("landings", []):
         if L.get("main") and L.get("island") == isl:
             add(L["km"], 2.0, "主泊场", 8.0)
-    for bh in S.get("bridgeheads", []):
-        if bh.get("island") == isl:
-            add(bh["km"], 1.2, "桥头", 4.0)
     return {"landings": landings, "exits": exits}
+
+
+def _fields(T) -> np.ndarray:
+    """群栅格上的田（0 / 1 田 / 2 梯田）：已垦 + 撂荒（P5）；P5 之前的产物读 arable。"""
+    if "cultivated" in T.files:
+        return np.where(T["fallow_years"] > 0, T["cultivable"], T["cultivated"])
+    return T["arable"]
 
 
 def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, half_m: float | None = None,
@@ -170,8 +174,9 @@ def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, hal
         "island": np.ascontiguousarray(T["island_id"][sl], dtype=np.int16),
         "lake": np.ascontiguousarray(T["lake"][sl]),
         "floodplain": np.ascontiguousarray(T["floodplain"][sl]),
-        "arable": np.ascontiguousarray(T["arable"][sl] >= 1),
-        "terrace": np.ascontiguousarray(T["arable"][sl] == 2),
+        # P5：田 = 已垦（在种）加撂荒的（旧田埂还在，不在上面盖房）；梯田按宜垦的「要修梯田」标记。P5 之前的产物只有 arable
+        "arable": np.ascontiguousarray(_fields(T)[sl] >= 1),
+        "terrace": np.ascontiguousarray(_fields(T)[sl] == 2),
         "landcover": np.ascontiguousarray(T["landcover"][sl]),
         "river_depth": np.ascontiguousarray(np.where(riv, T["river_depth_m"][sl], 0.0), dtype=np.float64),
         "coarse_res_m": cres, "center_r": rc - r0, "center_c": cc - c0, "frame_x": frame_x, "frame_y": frame_y,

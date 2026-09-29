@@ -252,12 +252,11 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print) -> dict:
     rims = np.asarray(R["rims"], dtype=np.float64)
     lk = []
     for e in R["links"]:
-        d = {"a": int(e["a"]), "b": int(e["b"]), "gap_km": round(float(e["gap"]), 3), "kind": "bridge" if e["bridge"] else "ferry",
+        d = {"a": int(e["a"]), "b": int(e["b"]), "gap_km": round(float(e["gap"]), 3), "kind": "ferry",
              "dh_m": round(float(e["dh"]), 1)}
         if e["fallback"]:
             d["fallback"] = True
         lk.append(d)
-    tree = [(int(a), int(b)) for a, b in R["tree"]]
     i0 = islands_json[0]
     secs = R["seconds"]
     log(f"  地形 {n} 岛 {H}×{W} @ {res_m_eff:.0f} m，{secs[1]:.1f} s（C++，布局 {secs[0]:.1f} s）；主岛 岸缘 {i0['rim_m']:.0f} → 峰 {i0['peak_m']:.0f} m"
@@ -297,10 +296,8 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print) -> dict:
         "territory": terr,
     }
     J = {"meta": meta, "raster": raster, "constraints": constraints, "islands": islands_json, "links": lk,
-         "channels": [[int(a), int(b)] for a, b in tree],
-         "layout": {"n_bridges": sum(1 for e in lk if e["kind"] == "bridge"), "n_ferries": sum(1 for e in lk if e["kind"] == "ferry"),
-                    "gap_median_km": round(float(np.median([e["gap_km"] for e in lk])), 2) if lk else None,
-                    "channel_islands": len(tree) + 1}}
+         "layout": {"n_ferries": sum(1 for e in lk if e["kind"] == "ferry"),
+                    "gap_median_km": round(float(np.median([e["gap_km"] for e in lk])), 2) if lk else None}}
     masks_pos = [(mk, int(r0), int(c0)) for mk, r0, c0 in R["masks_pos"]]
     g = {"height": height, "island_id": island_id, "cliff": cliff, "json": J, "rims": rims, "res_km": res_km,
          "masks_pos": masks_pos, "inp": inp}
@@ -377,6 +374,8 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
     g.update({"flowacc_km2": R["flowacc_km2"], "river": river, "stream": R["stream"], "lake": lake,
               "landcover": R["landcover"], "arable": R["arable"], "slope_deg": R["slope_deg"], "filled": R["filled"],
               "recv_i": R["recv_i"], "recv_j": R["recv_j"], "route_h": R["route_h"]})
+    if "cultivable" in R:                  # P5：宜垦（arable 是额度内的上等地）
+        g["cultivable"] = R["cultivable"]
     cover, arable = R["landcover"], R["arable"]
     n_land = int(land.sum())
     share = {LANDCOVER_CLASSES[i]: round(float(((cover == i) & land).sum()) / max(1, n_land), 4) for i in range(1, 12)}
@@ -445,6 +444,8 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         g["settle_pop"] = float(R["settle_pop"])
         g["settle_raster"] = R["settle_raster"]
         g["settle_fields"] = R["settle_fields"]
+        g["cultivated"] = R["settle_cultivated"]          # P5：已垦（在种）与撂荒年头
+        g["fallow_years"] = R["settle_fallow"]
         set_settlements(g, S)
         if "to_grass_km2" in S["clearing"]:
             J["landcover"]["note_clearing"] = "林地在村 / 镇 / 专业聚落半径内已开垦：内圈草坡（牧场草场）、外圈灌丛（薪炭林）"

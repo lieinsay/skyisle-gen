@@ -2,7 +2,8 @@
 
 IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-float / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap 为软项；
 资源 RES-site / RES-occ / RES-work / RES-geo 为硬项，RES-quarry 为软项；
-聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八）。
+聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home / SET-farm / SET-use 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八；
+SET-farm / SET-use 是 P5 加的：宜垦 / 已垦 / 撂荒与定居门槛、没人住的岛有人用）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
 """
 from __future__ import annotations
@@ -58,7 +59,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
          "relief_target_m": pk.get("relief_target_m")}, "≤ max(10 m, 2%)", e_h <= tol_h)
     ar = cons["arable_frac"]
     e_ar = abs(ar.get("actual", -1) - ar["target"])
-    add("IS-arable", "可耕地 / 陆地 = arable_frac", round(e_ar, 5), "< 0.005", e_ar < 0.005)
+    add("IS-arable", "已垦（在种）/ 陆地 = arable_frac（P5：行星层的可耕率是已垦的额度）", round(e_ar, 5), "< 0.005", e_ar < 0.005)
     rv = cons["has_river"]
     small_ok = all(not i.get("has_perennial_river", False) for i in J["islands"][1:])
     add("IS-river", "主岛有常年河 ⇔ has_river；小岛只有溪涧", {"main": rv.get("actual"), "target": rv["target"], "small_islands_ok": small_ok},
@@ -134,13 +135,14 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
                 bad_occ.append(o["id"])
         add("RES-occ", "岩类（金属矿 / 石料 / 硫磺）的赋存场不出岩类可放区；赋存区的峰值格在所属岛陆地、不在水面、品位 ≥ 阈值",
             {"rock_outside_cells": outside, "bad_occ": bad_occ[:10], "n": len(R["occurrences"])}, "全 0", not bad_occ and not any(outside.values()))
-        # 采场：不上田、不上林（林坡上的岩类采场已改裸岩）、不在水上崖上，在本类场里且挂着同类的赋存区
+        # 采场：不上田（在种与撂荒的都不上；P5 之前是按额度画死的可耕地）、不上林（林坡上的岩类采场已改裸岩）、不在水上崖上，在本类场里且挂着同类的赋存区
+        farm = ((g["cultivated"] > 0) | (g["fallow_years"] > 0)) if "cultivated" in g else (g["arable"] > 0)
         bad_w = []
         for w in R["workings"]:
             i, j_ = w["cell"]
             o = R["occurrences"][w["occurrence"]] if 0 <= w["occurrence"] < len(R["occurrences"]) else None
             if (o is None or o["kind"] != w["kind"] or g["island_id"][i, j_] != w["island"] or water[i, j_] or g["cliff"][i, j_]
-                    or g["arable"][i, j_] > 0 or g["landcover"][i, j_] == 4 or RF[FIELD_KINDS.index(w["kind"])][i, j_] == 0):
+                    or farm[i, j_] or g["landcover"][i, j_] == 4 or RF[FIELD_KINDS.index(w["kind"])][i, j_] == 0):
                 bad_w.append(w["id"])
         add("RES-work", "采场（矿坑 / 硫磺坑 / 淘金点 / 采石场 / 土坑 / 采砂场）不在耕地、林地、水面、崖缘上，落在本类的赋存场里、挂着同类赋存区",
             {"bad": bad_w[:10], "n": len(R["workings"])}, "bad = 0", not bad_w)
@@ -187,13 +189,15 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
              "min_m": min(vals, default=0.0), "rim_min_m": min((float(i["rim_m"]) for i in rest), default=None),
              "out_of_range": out_rng[:10], "rim_below_floor": low[:10]},
             f"主岛 0；δ ∈ [−{dn:.0f}, +{up:.0f}] m；岸缘 ≥ {floor:.0f} m", fl[0] == 0.0 and not out_rng and not low)
-    # IS-link：索桥 + 短渡连通
+    # IS-link：短渡连通（P5 起没有索桥）
     from ..graph import weak_components
     n = len(J["islands"])
     src = np.array([e["a"] for e in J["links"]], dtype=np.int64)
     dst = np.array([e["b"] for e in J["links"]], dtype=np.int64)
     ncomp = int(weak_components(n, src, dst).max()) + 1 if n > 1 else 1
-    add("IS-link", "群内任意两岛经索桥 + 短渡连通", {"components": ncomp, "islands": n}, "1 个分量", ncomp == 1)
+    no_bridge = all(e.get("kind") == "ferry" for e in J["links"]) and "channels" not in J
+    add("IS-link", "群内任意两岛经短渡连通；没有索桥与导水槽（P5）", {"components": ncomp, "islands": n, "no_bridge": no_bridge}, "1 个分量、无索桥",
+        ncomp == 1 and no_bridge)
     # ---- 聚落（PLAN-SETTLE 第六节）
     S = g.get("settle")
     if S is not None:
@@ -203,10 +207,10 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
         nf_ok = S.get("households_in_towns_market", 0) + S.get("households_in_specials", 0) == S.get("nonfarm_households", 0) or not S["villages"]
         add("SET-pop", "村农户 + 散户 + 镇非农户 + 专业聚落户 = 总户数 = 群人口 / 户均（只读 ⑨）；镇 + 专业 = 非农户",
             {"households": S["households"], "parts": parts, "population": S["population"], "nonfarm": S.get("nonfarm_households")}, "相等", hh_ok and nf_ok)
-        arable_km2 = float((g["arable"] > 0).sum()) * (J["raster"]["res_m"] / 1000.0) ** 2
+        arable_km2 = float((g["cultivated"] > 0).sum()) * (J["raster"]["res_m"] / 1000.0) ** 2
         f_sum = sum(f["area_km2"] for f in S["fields"])
         every = all(f.get("households", 0) >= 8 for f in S["fields"] if f.get("village") and f["village"] > 0)
-        add("SET-field", "每村有田；Σ 田块 = 可耕地", {"fields_km2": round(f_sum, 3), "arable_km2": round(arable_km2, 3), "villages_have_field": every}, "< 1%",
+        add("SET-field", "每村有田；Σ 田块 = 已垦", {"fields_km2": round(f_sum, 3), "arable_km2": round(arable_km2, 3), "villages_have_field": every}, "< 1%",
             abs(f_sum - arable_km2) <= 0.01 * max(arable_km2, 1e-9) and every)
         bad = 0
         for v in S["villages"] + S.get("specials", []):
@@ -221,7 +225,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             sep_share = float((d.min(axis=1) >= 1.0 - 1e-9).mean())
             bad += int((d.min() <= 0.05))
         add("SET-site", "村不在崖缘 / 水面 / 别的岛上、不同格；1 km 间距（软，报告占比）", {"bad": bad, "sep_1km_share": round(sep_share, 3)}, "bad = 0", bad == 0)
-        # SET-land：飞船随处可停——每个村 / 镇 / 专业聚落有一块泊场，在同岛、不在水面崖缘上；索桥两端各一桥头
+        # SET-land：飞船随处可停——每个村 / 镇 / 专业聚落有一块泊场，在同岛、不在水面崖缘上（P5 起没有索桥，也没有桥头）
         lands = {L_["id"]: L_ for L_ in S.get("landings", [])}
         miss, bad_l, steep = 0, 0, 0
         for v in S["villages"] + S.get("specials", []):
@@ -233,16 +237,17 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             if g["island_id"][i, j_] != v["island"] or g["lake"][i, j_] or g["river"][i, j_] > 0 or g["cliff"][i, j_]:
                 bad_l += 1
             steep += not L_["flat"]
-        n_bridge = sum(1 for e in J["links"] if e["kind"] == "bridge")
-        add("SET-land", "每个村 / 镇 / 专业聚落有泊场（同岛、非水非崖；坡 > 4° 的只报告）；索桥两端各一桥头",
-            {"missing": miss, "bad": bad_l, "not_flat": steep, "bridgeheads": len(S["bridgeheads"]), "bridges": n_bridge},
-            "无缺", miss == 0 and bad_l == 0 and len(S["bridgeheads"]) == 2 * n_bridge)
+        add("SET-land", "每个村 / 镇 / 专业聚落有泊场（同岛、非水非崖；坡 > 4° 的只报告）；没有桥头",
+            {"missing": miss, "bad": bad_l, "not_flat": steep, "bridgeheads": len(S.get("bridgeheads", []))},
+            "无缺", miss == 0 and bad_l == 0 and "bridgeheads" not in S)
         T_ = S.get("towns", [])
         vt = [v for v in S["villages"] if v.get("market_town")]
         seat_town = any(t_.get("seat") for t_ in T_)
         add("SET-town", "有村就有镇、邑治是镇、每个村归一个镇", {"towns": len(T_), "villages": len(S["villages"]), "assigned": len(vt), "seat_is_town": seat_town},
             "全满足", not S["villages"] or (len(T_) >= 1 and seat_town and len(vt) == len(S["villages"])))
         add("SET-water", "村 1 km 内有水源的占比", S["water_ok_share"], "≥ 0.8", S["water_ok_share"] >= 0.8, hard=False)
+        if "farmland" in S:
+            items.extend(_farm_checks(g, S, c))
         kinds = [h["kind"] for h in S["home_candidates"]]
         add("SET-home", "主家候选 2–3 个、类型各异", kinds, "2–3 个", 2 <= len(kinds) <= 3 and len(kinds) == len(set(kinds)))
     if det_hashes is not None:
@@ -252,6 +257,50 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
     ok, bad = static_isolation()
     add("IS-iso", "stages/ 不 import skyisle_gen.island（第三层不回灌）", {"offenders": bad}, "无", ok)
     return items
+
+
+def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
+    """SET-farm / SET-use（P5）。"""
+    out = []
+    J = g["json"]
+    iid = g["island_id"]
+    cv, ct, fy = g["cultivable"], g["cultivated"], g["fallow_years"]
+    cell_km2 = (J["raster"]["res_m"] / 1000.0) ** 2
+    sc = (c or {}).get("settle") or {}
+    min_hh = float(S["farmland"].get("settle_min_hh", sc.get("settle_min_hh", 0)))
+    lph = float(S["land_per_household_km2"])
+    bad_sub = int(((ct > 0) & (cv == 0)).sum())
+    bad_ter = int(((ct > 0) & (ct != cv)).sum())
+    bad_fal = int(((fy > 0) & ((cv == 0) | (ct > 0))).sum())
+    n = len(J["islands"])
+    ct_isl = np.bincount(iid[(iid >= 0) & (ct > 0)], minlength=n) * cell_km2
+    farm_isl = {v["island"] for v in S["villages"]} | {h["island"] for h in S["hamlets"]}
+    forced = float(S["farmland"].get("forced_km2", 0.0)) > 0
+    small = [k for k in sorted(farm_isl) if ct_isl[k] < min_hh * lph * (1 - 1e-9) - 1e-9] if not forced else []
+    # 强填（留下的宜垦片不够额度：干群、冷群里宜垦几乎只剩额度那点地，额度只好补进过不了门槛的碎片）时不查门槛与「有田就有人」：
+    # 分到一小块田的岛按面积分户可能分不到一户（邻岛的人来种）
+    no_field = [k for k in range(n) if ct_isl[k] > 0 and k not in farm_isl] if not forced else []
+    bad_ruin = [r["id"] for r in S.get("ruins", []) if r["abandoned_years"] < 1 or iid[r["cell"][0], r["cell"][1]] != r["island"]
+                or g["cliff"][r["cell"][0], r["cell"][1]] or g["lake"][r["cell"][0], r["cell"][1]] or g["river"][r["cell"][0], r["cell"][1]] > 0]
+    out.append({"id": "SET-farm", "name": "已垦 ⊂ 宜垦（梯田标记一致）、撂荒 ⊂ 宜垦且不与已垦重叠；有农户的岛已垦都够 settle_min_hh 户（定居门槛）、"
+                "有已垦的岛都有村或散户（这两条强填时不查）；废村在自己的岛上、撤空了 ≥ 1 年",
+                "value": {"not_cultivable": bad_sub, "terrace_mismatch": bad_ter, "bad_fallow": bad_fal, "below_threshold": small[:10],
+                          "fields_without_people": no_field[:10], "bad_ruins": bad_ruin[:10], "forced_km2": S["farmland"].get("forced_km2", 0.0),
+                          "cultivable_km2": S["farmland"]["cultivable_km2"], "cultivated_km2": S["farmland"]["cultivated_km2"]},
+                "threshold": "全 0", "pass": bool(not (bad_sub or bad_ter or bad_fal or small or no_field or bad_ruin)), "hard": True, "note": None})
+    vids = {v["id"] for v in S["villages"]}
+    bad_occ = [x["name"] for x in S["specials"] if x.get("occupancy") not in ("常住", "工棚", "季节住")
+               or (x["occupancy"] != "常住" and S["villages"] and x.get("home_village") not in vids)
+               or (x["occupancy"] == "工棚" and x["island"] in farm_isl)]
+    res_isl = farm_isl | {x["island"] for x in S["specials"] if x.get("occupancy") == "常住"}
+    bad_use = [u["id"] for u in S.get("uses", []) if u["island"] in res_isl or u["island"] == 0 or iid[u["cell"][0], u["cell"][1]] != u["island"]]
+    T = S.get("land_tenure", [])
+    bad_ten = [t["island"] for t in T if t["owner"] not in ("村", "大户", "官荒") or (t["owner"] == "村") != (t["island"] in farm_isl)]
+    out.append({"id": "SET-use", "name": "专业聚落的住法是 常住 / 工棚 / 季节住，工棚与季节住有 home_village、工棚不在有村的岛上；有人用的岛（放牧 / 烽火台 / 庙 / 墓岛）"
+                "都没人常住；每岛一条荒地归属（有农户的岛归村，其余归大户或官荒）",
+                "value": {"bad_occupancy": bad_occ[:10], "bad_uses": bad_use[:10], "bad_tenure": bad_ten[:10], "tenure_rows": len(T), "islands": n},
+                "threshold": "全 0、每岛一条", "pass": bool(not (bad_occ or bad_use or bad_ten) and len(T) == n), "hard": True, "note": None})
+    return out
 
 
 def exit_code(items: list[dict]) -> int:

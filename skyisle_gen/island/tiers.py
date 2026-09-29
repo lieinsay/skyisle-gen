@@ -171,7 +171,7 @@ def landings(g, sc, settlements: list[tuple[str, dict]], km, res_km) -> list[dic
     slope = g["slope_deg"]
     water = (g["river"] > 0) | g["lake"]
     flat = (island_id >= 0) & ~water & ~g["cliff"] & (slope <= float(sc["landing_slope_max_deg"]))
-    open_ = ~(g["arable"] > 0) & (g["landcover"] != LC_FOREST)
+    open_ = ~(g["cultivated"] > 0) & (g["landcover"] != LC_FOREST)
     reach = int(sc["landing_reach_cells"])
     out = []
     for kind, s in settlements:
@@ -200,7 +200,8 @@ def landings(g, sc, settlements: list[tuple[str, dict]], km, res_km) -> list[dic
 
 
 def clear_forest(g, sc, villages, hamlets, specials, res_km) -> dict:
-    """村周开垦：林地在聚落半径内改成草坡（内圈）/ 灌丛（外圈，薪炭林）；同步地表占比与林木资源。返回摘要。"""
+    """村周开垦：林地在聚落半径内改成草坡（内圈）/ 灌丛（外圈，薪炭林）；同步地表占比与林木资源。返回摘要。
+    P5：工棚（白天来、晚上走）不开垦；季节住的烧炭营照旧（伐木本就是它的活）。"""
     island_id = g["island_id"]
     land = island_id >= 0
     H, W = land.shape
@@ -208,7 +209,7 @@ def clear_forest(g, sc, villages, hamlets, specials, res_km) -> dict:
     cover = g["landcover"]
     seed = np.zeros((H, W), dtype=bool)
     rad = np.zeros((H, W))
-    for s in villages + hamlets + specials:
+    for s in villages + hamlets + [x for x in specials if x.get("occupancy") != "工棚"]:
         hh = s["households"] + s.get("households_market", 0)
         r = float(np.clip(float(sc["clear_base_km"]) * math.sqrt(max(hh, 1) / 40.0), float(sc["clear_min_km"]), float(sc["clear_max_km"])))
         if s.get("town"):
@@ -252,7 +253,7 @@ def village_workings(g, sc, villages, specials, km, res_km) -> dict:
     """村的采场（开垦之后，DESIGN-NOTES 四点二十一）：石料 / 黏土 / 砂砾就近取，窑村在自己的黏土区里开土坑，砂金区各一处淘金点。
     往 g["resources"]["workings"] 里加采场、给村记 workings；返回摘要。每村（按户数降序）先合用 working_share_km 内已有的同类采场，
     否则在 *_reach_km 内按 品位 × exp(−距离 / working_decay_km) 挑格——挑中的格离已有采场也在 working_share_km 内就合用那一处，不另开。
-    格必须在该类的赋存区里、非耕、非水非崖；沉积类（黏土 / 砂砾 / 砂金）不上林，石料可在林坡上（那格改裸岩）。跨岛也行（飞船）。"""
+    格必须在该类的赋存区里、非耕（在种与撂荒的田都不算）、非水非崖；沉积类（黏土 / 砂砾 / 砂金）不上林，石料可在林坡上（那格改裸岩）。跨岛也行（飞船）。"""
     from .resources import FIELD_KINDS, WORK_ZH, _group_cells, open_working
     R = g.get("resources")
     if not R or "occ_lab" not in g:
@@ -261,7 +262,7 @@ def village_workings(g, sc, villages, specials, km, res_km) -> dict:
     land = island_id >= 0
     H, W = land.shape
     water = (g["river"] > 0) | g["lake"]
-    base_ok = land & ~water & ~g["cliff"] & (g["arable"] == 0)
+    base_ok = land & ~water & ~g["cliff"] & (g["cultivated"] == 0) & (g["fallow_years"] == 0)
     RF = g["res_field"]
     occ = R["occurrences"]
     works = R["workings"]
