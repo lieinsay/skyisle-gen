@@ -627,12 +627,14 @@ edge_tilt_m_per_km = 1.5      # 路由面朝岸缘的微倾（m/km，最远算�
 edge_tilt_km = 4.0
 runoff_coef = 0.45            # 年径流 / 年降水
 # 局地雨（P4，L11 的生成器那半；DESIGN-NOTES 四点三十五）：河的流量、地表的湿度、湿地都按局地雨算——
-# 雨 ∝ (1 + oro_per_km × clip((高程 − 台面) / 1 km, oro_lo_km, oro_hi_km))（与游戏 src/weather 的地形雨同形同数）
+# 雨 ∝ (1 + oro_rise_per_km × min((高程 − 本岛岸缘) / 1 km, oro_rise_max_km))
 #    × (1 + windward_gain × clip(G / windward_ref_m_per_km, −1, 1))（G = 顺风方向的地势升降，m/km，在 windward_smooth_km 见方的块均值上量：雨影是山脉尺度的事，不是单个坡向），
-# 再按全群陆地的均值归一——群的雨总量是行星层给的，山只把它重新分。两个系数都 0 = 旧式（全群一个年降水）
-oro_per_km = 0.4
-oro_lo_km = -0.3
-oro_hi_km = 1.5
+# 再按全群陆地的均值归一——群的雨总量是行星层给的，山只把它重新分。两个系数都 0 = 旧式（全群一个年降水）。
+# 海拔项按本岛的起伏（用户 09-29 定）：地形雨是山逼着气流抬升才多下的，整座岛浮得高并不逼气流上升，只让它冷、不让它湿。
+# 旧键 oro_per_km / oro_lo_km / oro_hi_km（按「高程 − 主岛台面」、夹 [−0.3, 1.5] km，与游戏 weather 同口径）作废；岸缘以下没有陆地，下限就是 0；
+# 上限 2 km：起伏两千米以上的高峰不再更湿（岸缘 → 峰的雨量比与旧口径同量级，约 1.8 倍）
+oro_rise_per_km = 0.4
+oro_rise_max_km = 2.0
 windward_gain = 0.3
 windward_smooth_km = 3.0
 windward_ref_m_per_km = 50.0
