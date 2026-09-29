@@ -7,7 +7,9 @@
      只有专业聚落；有人用、没人住（工棚 / 季节住 / 放牧 / 烽火台 / 庙 / 墓岛 / 废村）；
   4. 有人用、没人住的岛，按用途列；索桥与桥头的个数；
   5. 人住在哪：总户数里住在主岛、主岛以外 ≥ 30 km² 的岛、< 30 km² 的岛各几成（村与镇的户、散户、常住的专业聚落在本岛；
-     工棚与季节住的专业聚落的人住在 home_village 那个村）——总人口不变，看的是住处。
+     工棚与季节住的专业聚落的人住在 home_village 那个村）——总人口不变，看的是住处；
+  6. 水利（P6 起，settlements.json 的 waterworks）：渠首几处（季节性几处）、谷口的渠多少 km、灌多少田（占已垦几成）、
+     塘几口（村塘 / 山塘 / 圩塘 / 堰塘）、闸几座（渠首闸 / 圩闸 / 排水闸）、湿地多少、圩田多少 km²（占湿地几成、几圩几片、水田几成）、纵浦横塘与圩堤多长。
 P5 之前的产物（没有 cultivable / uses / ruins，专业聚落都算常住）也能量：宜垦记「—」，已垦按旧的 arable。
 
 用法（仓库根下）：
@@ -173,6 +175,16 @@ def group(d: Path, node: int, run: Path | None) -> dict:
                          "fallow_km2": r.get("fallow_km2")} for r in S["ruins"]]
     if S.get("uses") is not None:
         out["uses"] = Counter(u["kind"] for u in S["uses"])
+    WK = S.get("waterworks")
+    if WK is not None:
+        ws = WK["summary"]
+        main_km = sum(c["length_km"] for c in WK["canals"] if c["kind"] == "干渠")
+        out["works"] = {**{k: ws[k] for k in ("n_heads", "n_heads_seasonal", "canal_km", "polder_canal_km", "drain_km", "commanded_km2", "commanded_share",
+                                                "n_ponds", "ponds", "n_sluices", "sluices", "wetland_km2", "polder_km2", "polder_share", "n_polders",
+                                                "n_polder_patches", "dike_km")},
+                        "main_canal_km": round(main_km, 1), "paddy_share": round(sum(p["paddy"] for p in WK["polders"]) / max(1, len(WK["polders"])), 3),
+                        "heads_main_island": sum(1 for h in WK["heads"] if h["island"] == 0),
+                        "canal_km_per_100km2": round(100.0 * ws["canal_km"] / max(1e-9, out["land_km2"]), 2)}
     return out
 
 
@@ -225,6 +237,23 @@ def print_tables(G: list[dict]) -> None:
         print(f"- #{g['node']}：{'、'.join(f'{k} {v}' for k, v in u.items()) or '无'}；索桥 {g.get('n_bridges', 0)} / 桥头 {g.get('n_bridgeheads', 0)}")
 
 
+def print_works(G: list[dict]) -> None:
+    print("\n## 水利（P6：谷口的渠和塘、湿地排成圩田；settlements.json 的 waterworks）\n")
+    print("| 群 | 渠首（季节性） | 谷口的渠 km（干渠）| 每 100 km² 陆地 | 灌田 km²（占已垦） | 塘：村塘 / 山塘 / 圩塘 / 堰塘 | 闸：渠首 / 圩 / 排水 | 湿地 km²（改前） | 圩田 km²（占湿地） | 圩 / 片（水田） | 纵浦横塘 / 排水渠 / 圩堤 km |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    for g in G:
+        w = g.get("works")
+        if not w:
+            print(f"| #{g['node']} | — | — | — | — | — | — | {g['wetland_km2']:.1f} | — | — | — |")
+            continue
+        p, sl = w["ponds"], w["sluices"]
+        print(f"| #{g['node']} | {w['n_heads']}（{w['n_heads_seasonal']}） | {w['canal_km']:.0f}（{w['main_canal_km']:.0f}） | {w['canal_km_per_100km2']:.1f} | "
+              f"{w['commanded_km2']:.0f}（{w['commanded_share']:.0%}） | {w['n_ponds']}：{p.get('村塘', 0)} / {p.get('山塘', 0)} / {p.get('圩塘', 0)} / {p.get('堰塘', 0)} | "
+              f"{w['n_sluices']}：{sl.get('渠首闸', 0)} / {sl.get('圩闸', 0)} / {sl.get('排水闸', 0)} | {w['wetland_km2']:.1f} | "
+              f"{w['polder_km2']:.1f}（{w['polder_share']:.0%}） | {w['n_polders']} / {w['n_polder_patches']}（{w['paddy_share']:.0%}） | "
+              f"{w['polder_canal_km']:.0f} / {w['drain_km']:.1f} / {w['dike_km']:.0f} |")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("root", help="岛群目录的上级（里面是 <节点>/island.json …），如 out/seed42/islands")
@@ -236,6 +265,7 @@ def main(argv=None):
     run = Path(a.run) if a.run else None
     G = [group(root / n, int(n), run) for n in a.nodes.split(",") if (root / n / "island.json").exists()]
     print_tables(G)
+    print_works(G)
     if a.json:
         Path(a.json).write_text(json.dumps(G, ensure_ascii=False, indent=1), encoding="utf-8")
     return 0
