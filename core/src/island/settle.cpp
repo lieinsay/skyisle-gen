@@ -58,7 +58,7 @@ struct Village {                     // 村与散户
 
 struct Special {
     int id = 0;
-    std::string kind;                // ore_town / ore_village / floatstone_village / kiln_village / charcoal_camp / hotspring
+    std::string kind;                // ore_town / ore_village / floatstone_village / kiln_village / charcoal_camp / hotspring / salt_village
     int resource = -1, occurrence = -1;
     std::string subtype;
     int island = 0, ci = 0, cj = 0;
@@ -663,6 +663,31 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 w.note.push("hotspring");
                 want.push_back(w);
             }
+        // 盐井村（P3）：每个开了盐井的岩盐区一个，落在盐井旁——汲卤煮盐要常年的人手和柴，盐是头等的货、外运，吃粮靠外运
+        for (const Occurrence& o : R.occ) {
+            if (o.kind != RK_SALT) continue;
+            const Working* well = nullptr;
+            for (const Working& wk : R.works)
+                if (wk.occurrence == o.id) {
+                    well = &wk;
+                    break;
+                }
+            if (!well) continue;
+            Want w;
+            w.kind = "salt_village";
+            w.occurrence = o.id;
+            w.subtype = o.subtype;
+            w.island = o.island;
+            w.ai = well->ci;
+            w.aj = well->cj;
+            w.hh = std::min(sc("salt_hh_max"), sc("salt_hh_per_km2") * o.area_km2 * gw(o.grade));
+            w.note = Json::arr();
+            w.note.push("salt");
+            w.note.push(o.subtype);
+            w.note.push(o.area_km2);
+            w.note.push(o.grade);
+            want.push_back(w);
+        }
         if (!want.empty()) {
             // _near_site：cell 附近同岛可落脚的格里最近的；没有就退到非水非崖的陆地；再没有就不设
             for (Want& w : want) {
@@ -713,7 +738,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 specials.push_back(s);
             }
             for (const Special& s : specials)
-                if (s.kind == "ore_town" || s.kind == "ore_village")
+                if (s.kind == "ore_town" || s.kind == "ore_village" || s.kind == "salt_village")
                     for (Working& wk : R.works)
                         if (wk.occurrence == s.occurrence) wk.special = s.id;
         }

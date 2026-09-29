@@ -344,11 +344,11 @@ nb::dict resources_dict(Group& g) {
     d["terrain_zone"] = grid_np(Grid<uint8_t>(g.zone));
     d["patch_id"] = grid_np(GridI(g.patch_id));
     d["resource"] = grid_np(Grid<uint8_t>(g.resource));
-    std::vector<uint8_t> rf(6 * H * W);
-    for (int f = 0; f < 6; ++f) std::copy(g.res_field[f].v.begin(), g.res_field[f].v.end(), rf.begin() + static_cast<size_t>(f) * H * W);
-    d["res_field"] = to_np(std::move(rf), {static_cast<size_t>(6), H, W});
+    std::vector<uint8_t> rf(static_cast<size_t>(FK_COUNT) * H * W);
+    for (int f = 0; f < FK_COUNT; ++f) std::copy(g.res_field[f].v.begin(), g.res_field[f].v.end(), rf.begin() + static_cast<size_t>(f) * H * W);
+    d["res_field"] = to_np(std::move(rf), {static_cast<size_t>(FK_COUNT), H, W});
     nb::list occ_lab;
-    for (int f = 0; f < 6; ++f) occ_lab.append(grid_np(GridI(g.occ_lab[f])));
+    for (int f = 0; f < FK_COUNT; ++f) occ_lab.append(grid_np(GridI(g.occ_lab[f])));
     d["occ_lab"] = occ_lab;
     nb::list deps, occs, works, cells;
     for (const Deposit& x : g.res.deposits) deps.append(json_py(deposit_json(x)));
@@ -361,7 +361,6 @@ nb::dict resources_dict(Group& g) {
     d["occurrences"] = occs;
     d["workings"] = works;
     d["occ_cells"] = cells;
-    d["old_limestone"] = g.res.old_limestone;
     d["geo_ore"] = g.res.geo_ore;
     d["fs_rate"] = g.res.fs_rate;
     d["kernel"] = g.res.kernel_j;

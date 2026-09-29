@@ -11,12 +11,12 @@
 
 namespace skyisle::island {
 
-// 资源类：编码 = RES_KINDS 的序号 + 1（resource 栅格的值）
+// 资源类：编码 = RES_KINDS 的序号 + 1（resource 栅格的值）。P3（没有火山，2026-09-29）在末尾加了岩盐、盐泉、贝壳化石，前 13 类的编码不变
 enum ResKind { RK_NONE = 0, RK_TIMBER, RK_SPRING, RK_CLAY, RK_PEAT, RK_GRAVEL, RK_PLACER, RK_STONE, RK_FLOATSTONE, RK_ORE,
-               RK_HOTSPRING, RK_SULFUR, RK_CAVE, RK_GUANO, RK_COUNT };
+               RK_HOTSPRING, RK_SULFUR, RK_CAVE, RK_GUANO, RK_SALT, RK_SALTSPRING, RK_FOSSIL, RK_COUNT };
 enum ResForm { FORM_POINT, FORM_PATCH, FORM_FIELD };
-// res_field 的层序（FIELD_KINDS）
-enum FieldKind { FK_ORE = 0, FK_SULFUR, FK_PLACER, FK_CLAY, FK_GRAVEL, FK_STONE, FK_COUNT };
+// res_field 的层序（FIELD_KINDS）；岩盐是 P3 加的第 7 层
+enum FieldKind { FK_ORE = 0, FK_SULFUR, FK_PLACER, FK_CLAY, FK_GRAVEL, FK_STONE, FK_SALT, FK_COUNT };
 enum Zone { Z_VOID = 0, Z_ALPINE, Z_MOUNTAIN, Z_HILL, Z_PLAIN, Z_VALLEY, Z_CLIFF, Z_WATER };
 
 const char* res_key(int kind);        // "timber" …

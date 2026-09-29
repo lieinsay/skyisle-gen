@@ -182,10 +182,9 @@ struct Resources {
     std::vector<Deposit> deposits;
     std::vector<Occurrence> occ;
     std::vector<Working> works;
-    bool old_limestone = false;
     double geo_ore = 0, fs_rate = 0, kernel_j = 0;
     int r_cells = 1;
-    std::array<double, 6> thr{};   // 各类散的赋存区阈值（层序同 res_field）
+    std::array<double, 7> thr{};   // 各类散的赋存区阈值（层序同 res_field；P3 起 7 层，第 7 层岩盐）
 };
 
 // ---------------------------------------------------------------- 四季与逐日天气的记录（climate.hpp）
@@ -270,8 +269,8 @@ struct Group {
     bool has_resources = false;
     Grid<uint8_t> zone;                              // terrain_zone
     GridI patch_id;                                  // −1 = 无
-    std::array<GridI, 6> occ_lab;                    // 各类散的赋存区号（−1 = 无），层序同 res_field
-    std::array<Grid<uint8_t>, 6> res_field;          // 品位 × 255
+    std::array<GridI, 7> occ_lab;                    // 各类散的赋存区号（−1 = 无），层序同 res_field
+    std::array<Grid<uint8_t>, 7> res_field;          // 品位 × 255（金属矿、硫磺、砂金、黏土、砂砾、石料、岩盐）
     Grid<uint8_t> resource;                          // 主导类（显示用）
     Resources res;
     double sec_resources = 0;
