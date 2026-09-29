@@ -171,7 +171,9 @@ def test_island_deterministic_and_consistent(small_ctx):
         # P5：宜垦 / 已垦 / 撂荒——已垦 ⊂ 宜垦（梯田标记一致）、撂荒 ⊂ 宜垦且不与已垦重叠；宜垦 > 已垦 = 行星层额度；旧的 arable 不再写
         assert "arable" not in z.files and (out / "farmland.png").exists() and not (out / "arable.png").exists()
         cv, ct, fy = z["cultivable"], z["cultivated"], z["fallow_years"]
-        assert not ((ct > 0) & (ct != cv)).any() and not ((fy > 0) & ((cv == 0) | (ct > 0))).any()
+        pol = z["polder_id"] > 0                                  # P6：圩田是排干的湿地，不在宜垦里、记 1
+        assert not ((ct > 0) & (ct != cv) & ~pol).any() and not ((fy > 0) & ((cv == 0) | (ct > 0))).any()
+        assert (ct[pol] == 1).all() and (cv[pol] == 0).all()
         assert (cv > 0).sum() > (ct > 0).sum() > 0
         F = S["farmland"]
         assert F["cultivated_km2"] == F["quota_km2"] and F["cultivable_km2"] > F["cultivated_km2"]
@@ -216,6 +218,28 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert z["island_id"][h["cell"][0], h["cell"][1]] == h["island"]
         land_isl = {L["island"] for L in S["landings"]}
         assert all(o["island"] in land_isl and o["island"] != 0 for o in S["outposts"])
+        # P6 水利：渠首在常年河 / 溪涧上，谷口的渠除渠首外走在本岛陆地上；一块田只归一处渠首；每村至多一口塘；塘、闸在本岛陆地上；
+        # 圩号栅格与圩的格数一致，圩田在额度之内（上面已垦 = 额度照旧成立）
+        W = S["waterworks"]
+        wet = z["landcover"] == 9
+        for h in W["heads"]:
+            i, j = h["cell"]
+            assert (z["river"][i, j] > 0 or z["stream"][i, j] > 0) and z["island_id"][i, j] == h["island"] and h["served_km2"] > 0
+        for cn in W["canals"]:
+            if cn["kind"] in ("干渠", "支渠"):
+                for r_, q_ in cn["pts"][1:]:
+                    i, j = int(r_), int(q_)
+                    assert z["island_id"][i, j] == cn["island"] and not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0 and not wet[i, j]
+        cmd = [f for h in W["heads"] for f in h["fields"]]
+        assert len(cmd) == len(set(cmd))
+        vp = [p["village"] for p in W["ponds"] if p.get("village") is not None]
+        assert len(vp) == len(set(vp)) and set(vp) <= {v["id"] for v in S["villages"]}
+        for x in W["ponds"] + W["sluices"]:
+            i, j = x["cell"]
+            assert z["island_id"][i, j] == x["island"] and not z["cliff"][i, j] and not z["lake"][i, j]
+        cnt = np.bincount(z["polder_id"].ravel(), minlength=len(W["polders"]) + 1)
+        assert all(int(cnt[p["id"]]) == p["cells"] for p in W["polders"]) and int(pol.sum()) == sum(p["cells"] for p in W["polders"])
+        assert abs(W["summary"]["polder_km2"] - S["farmland"]["polder_km2"]) < 1e-9 and W["summary"]["polder_km2"] <= W["summary"]["wetland_km2"]
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)

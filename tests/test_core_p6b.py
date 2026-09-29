@@ -209,6 +209,35 @@ def test_generate_p5_farmland_identical(small_ctx, tmp_path):
     assert {"烽火台", "庙", "墓岛", "废村", "工棚", "保底"} <= seen and seen & {"放牧", "夏牧"}, seen
 
 
+def test_generate_p6_waterworks_identical(small_ctx, tmp_path):
+    """P6（水利：谷口的渠、村塘 / 山塘 / 堰塘、圩田的纵浦横塘与圩塘、闸）：默认门槛下小世界里已有圩田、季节性渠首；再强开一遍圩田
+    （压力门槛 0、片与圩的下限放小：整片湿地排干），两个后端的整套产物仍逐字节相同，圩田在额度之内（已垦 = 额度），各种渠、塘、闸与水田 / 泽田都走到。"""
+    from skyisle_gen import island as isl
+    forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
+    base = ["island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1"]
+    seen = set()
+    for extra in ([], forced):
+        for node in _nodes(small_ctx, 2):
+            outs = {}
+            for b in ("python", "cpp"):
+                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
+                                      return_state=True, out_root=tmp_path / b)
+                small_ctx.cfg["engine"]["backend"] = "python"
+                outs[b] = (_products(out), g)
+            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
+            assert sorted(pa) == sorted(pb)
+            assert not [k for k in pa if pa[k] != pb[k]], node
+            assert ga["settle"] == gb["settle"]
+            S = gb["settle"]
+            W = S["waterworks"]
+            assert S["farmland"]["cultivated_km2"] == S["farmland"]["quota_km2"]
+            seen |= {p["kind"] for p in W["ponds"]} | {x["kind"] for x in W["sluices"]} | {c["kind"] for c in W["canals"]}
+            seen |= {"季节性渠首"} if W["summary"]["n_heads_seasonal"] else set()
+            seen |= {"水田" if p["paddy"] else "泽田" for p in W["polders"]}
+    isl.island_config(small_ctx, base)                      # --set 会留在 ctx 上：改回默认
+    assert {"村塘", "山塘", "圩塘", "堰塘", "渠首闸", "圩闸", "排水闸", "干渠", "支渠", "纵浦", "横塘", "排水渠", "季节性渠首", "水田", "泽田"} <= seen, seen
+
+
 def test_generate_cpp_thread_independent(small_ctx, tmp_path):
     node = _nodes(small_ctx, 1)[0]
     a, _ = _gen(small_ctx, node, "cpp", tmp_path / "t1", threads=1)
