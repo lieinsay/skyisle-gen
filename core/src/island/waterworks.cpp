@@ -215,6 +215,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
     const double qk = wc("canal_q_per_km2");
     const double wmin = wc("canal_width_min_m");
     const int s_lat = std::max(1, static_cast<int>(std::nearbyint(wc("canal_lateral_km") / res_km)));
+    const double b0 = wc("canal_base_km"), bk = wc("canal_km_per_km2");
     std::vector<uint8_t> cmd(static_cast<size_t>(nf) + 1, 0);
     std::vector<std::array<int, 2>> head_cells, tried;
     struct HeadRec {
@@ -276,6 +277,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
         heap.push({0.0, static_cast<int64_t>(cc)});
         std::map<int, int64_t> cnt;
         std::map<int, int32_t> entry;
+        std::map<int, double> ecost;
         std::vector<std::pair<int32_t, int>> rc;
         while (!heap.empty()) {
             const double d = heap.top().first;
@@ -296,6 +298,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
                     else {
                         cnt[F] = 1;
                         entry[F] = q;
+                        ecost[F] = d;
                     }
                 }
             }
@@ -318,30 +321,61 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
                 }
             }
         }
-        std::vector<int> newly;
+        std::vector<int> cand_f;
         for (const auto& kv : cnt)
-            if (static_cast<double>(kv.second) >= frac * static_cast<double>(f_cells[kv.first])) newly.push_back(kv.first);
-        int64_t tot = 0;
-        for (int F : newly) tot += f_cells[F];
-        if (tot < min_cmd) continue;
-        const int hid = static_cast<int>(heads.size()) + 1;
-        head_cells.push_back({ci, cj});
+            if (static_cast<double>(kv.second) >= frac * static_cast<double>(f_cells[kv.first])) cand_f.push_back(kv.first);
+        // 渠通到每块田的入口，再按格点铺进田里（格点以渠首为原点）：渠网从渠首散开成扇
         std::map<int, std::vector<int32_t>> lat;
-        for (int F : newly) lat[F];
+        for (int F : cand_f) lat[F];
         for (const auto& qf : rc) {
             auto it = lat.find(qf.second);
             if (it == lat.end() || qf.first == entry[qf.second]) continue;
             const int qi = qf.first / W, qj = qf.first % W;
             if ((qi - ci) % s_lat == 0 && (qj - cj) % s_lat == 0) it->second.push_back(qf.first);
         }
+        for (auto& kv : lat) std::sort(kv.second.begin(), kv.second.end());
+        // 修渠划不划算：按入口的工从近到远，一块田要从已经挖好的渠上新接出去的渠 ≤ canal_base_km + canal_km_per_km2 × 田的面积 才修
+        std::vector<int> byc(cand_f);
+        std::stable_sort(byc.begin(), byc.end(), [&](int a, int b) {
+            if (ecost[a] != ecost[b]) return ecost[a] < ecost[b];
+            return a < b;
+        });
+        std::set<int32_t> intree{cc};
+        auto up = [&](int32_t q) { return par[static_cast<size_t>(q / W - r0) * ww + (q % W - c0)]; };
+        std::vector<int> newly;
+        for (int F : byc) {
+            int32_t q = entry[F];
+            int64_t n1 = 0, n2 = 0;
+            while (!intree.count(q)) {
+                const int32_t p = up(q);
+                if (p / W != q / W && p % W != q % W) ++n2;
+                else ++n1;
+                q = p;
+            }
+            if ((static_cast<double>(n1) + static_cast<double>(n2) * SQRT2) * res_km > b0 + bk * (static_cast<double>(f_cells[F]) * cell_km2)) continue;
+            newly.push_back(F);
+            std::vector<int32_t> tl{entry[F]};
+            tl.insert(tl.end(), lat[F].begin(), lat[F].end());
+            for (int32_t t : tl) {
+                int32_t q2 = t;
+                while (!intree.count(q2)) {
+                    intree.insert(q2);
+                    q2 = up(q2);
+                }
+            }
+        }
+        std::sort(newly.begin(), newly.end());
+        int64_t tot = 0;
+        for (int F : newly) tot += f_cells[F];
+        if (tot < min_cmd) continue;
+        const int hid = static_cast<int>(heads.size()) + 1;
+        head_cells.push_back({ci, cj});
         std::map<int32_t, int64_t> served;
         std::map<int32_t, std::set<int32_t>> children;
         for (int F : newly) {
             cmd[F] = 1;
             std::vector<int32_t> tl{entry[F]};
-            std::vector<int32_t> lf = lat[F];
-            std::sort(lf.begin(), lf.end());
-            tl.insert(tl.end(), lf.begin(), lf.end());
+            tl.insert(tl.end(), lat[F].begin(), lat[F].end());
             const int64_t nt = static_cast<int64_t>(tl.size());
             const int64_t base = f_cells[F] / nt, rem = f_cells[F] % nt;
             for (int64_t ti = 0; ti < nt; ++ti) {
