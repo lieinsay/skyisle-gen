@@ -5,7 +5,9 @@
   2. 田：陆地、宜垦、已垦（在种）、撂荒；已垦离最近的村 / 聚落多远（中位 / P90 / 最大）；人口（⑨ 与聚落层 Σ 户 × 户均）；
   3. 小岛有没有人（主岛除外，按 < 10 / 10–30 / 30–100 / > 100 km² 分档）：有人住 = 有常住的村、散户或专业聚落；有村 = 有农村（村或散户）；
      只有专业聚落；有人用、没人住（工棚 / 季节住 / 放牧 / 烽火台 / 庙 / 墓岛 / 废村）；
-  4. 有人用、没人住的岛，按用途列；索桥与桥头的个数。
+  4. 有人用、没人住的岛，按用途列；索桥与桥头的个数；
+  5. 人住在哪：总户数里住在主岛、主岛以外 ≥ 30 km² 的岛、< 30 km² 的岛各几成（村与镇的户、散户、常住的专业聚落在本岛；
+     工棚与季节住的专业聚落的人住在 home_village 那个村）——总人口不变，看的是住处。
 P5 之前的产物（没有 cultivable / uses / ruins，专业聚落都算常住）也能量：宜垦记「—」，已垦按旧的 arable。
 
 用法（仓库根下）：
@@ -138,6 +140,22 @@ def group(d: Path, node: int, run: Path | None) -> dict:
         rows.append({"bin": bin_label(lo, hi), "n": len(ids), "lived": len(lived), "village": len(vil), "only_special": len(only),
                      "used_not_lived": len(used)})
     out["small_islands"] = rows
+    # 人住在哪（户）：村（含镇的非农户）、散户、常住的专业聚落在本岛；工棚、季节住的住在 home_village 的岛
+    vil_isl = {v["id"]: v["island"] for v in S["villages"]}
+    res = Counter()
+    for v in S["villages"]:
+        res[v["island"]] += v["households"] + v.get("households_market", 0)
+    for v in S["hamlets"]:
+        res[v["island"]] += v["households"]
+    for x in S.get("specials", []):
+        k = x["island"]
+        if x.get("occupancy") in NONRES and x.get("home_village") in vil_isl:
+            k = vil_isl[x["home_village"]]
+        res[k] += x["households"]
+    area = {i["id"]: i["area_km2"] for i in I}
+    out["residence_households"] = {"total": sum(res.values()), "main": res[0],
+                                   "big": sum(v for k, v in res.items() if k != 0 and area[k] >= 30.0),
+                                   "small": sum(v for k, v in res.items() if k != 0 and area[k] < 30.0)}
     by_use = Counter()
     for k, us in uses.items():
         if k == 0 or farm[k] or hamlet[k] or spec_res[k]:
@@ -193,6 +211,14 @@ def print_tables(G: list[dict]) -> None:
             n = r["n"]
             cells.append(f"{n} 座：住 {pct(r['lived'], n)}，村 {pct(r['village'], n)}，只专业 {pct(r['only_special'], n)}，用 {pct(r['used_not_lived'], n)}")
         print(f"| #{g['node']} | " + " | ".join(cells) + " |")
+    print("\n## 人住在哪（总户数里住在各处的占比；工棚、季节住的人算在他们住的村）\n")
+    print("| 群 | 总户数 | 主岛 | 主岛以外 ≥ 30 km² 的岛 | < 30 km² 的岛 |")
+    print("|---|---|---|---|---|")
+    for g in G:
+        r = g.get("residence_households")
+        if r:
+            t = max(1, r["total"])
+            print(f"| #{g['node']} | {r['total']} | {r['main'] / t:.1%} | {r['big'] / t:.1%} | {r['small'] / t:.1%} |")
     print("\n## 有人用、没人住的岛（按用途；一岛多用途各记一次）；索桥 / 桥头\n")
     for g in G:
         u = g.get("used_not_lived_by_use") or {}
