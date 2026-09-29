@@ -108,6 +108,11 @@ a{color:var(--acc2)}
     <div id="islandList" class="small"></div>
     <div class="btnrow"><button id="btnFit">全群</button><button id="btnMain">主岛</button></div>
   </div>
+  <div class="sec"><h3>营建聚落</h3>
+    <div class="row"><select id="townSite" title="村（按户数排）与散户；集镇、城在 PLAN-TOWN 第四步，专业聚落在第六步"></select></div>
+    <div class="btnrow"><button id="btnTown" title="在营建调试台里按风格排出这个聚落的路、宅院与房子（新标签页）">营建此聚落 ↗</button></div>
+    <div class="small">地图上双击村子、散户也行。</div>
+  </div>
   <div class="sec"><h3>约束对照</h3><table class="kv" id="cons"></table></div>
   <div class="sec"><h3>水系 / 地表</h3><table class="kv" id="hydro"></table></div>
   <div class="sec"><h3>河流（主岛，按流域）</h3><table class="kv" id="rivers"></table></div>
@@ -226,6 +231,7 @@ function renderSide(){
     <tr><td>湖</td><td>${hy.n_lakes} 个 · ${fmt(hy.lake_km2, 2)} km²</td></tr><tr><td>盆地</td><td>${hy.main_basins ? hy.main_basins.n_basins + ' 个，大盆地 ' + hy.main_basins.n_large + '（最大占 ' + fmt(hy.main_basins.largest_frac * 100, 0) + '%）' : '—'}</td></tr>
     <tr><td>索桥/短渡</td><td>${J.layout.n_bridges} / ${J.layout.n_ferries}，导水槽联通 ${J.layout.channel_islands} 岛，岸距中位 ${J.layout.gap_median_km} km</td></tr><tr><td>地表</td><td>${lcs}</td></tr>`;
   const S = D.settlements;
+  fillTownSites(S);
   if (S) { $('hydro').innerHTML += `<tr><td>聚落</td><td>人口 ${fmt(S.population, 0)}（${S.population_source}）· ${S.households} 户 · 村 ${S.n_villages}（邑治 ${S.seat_households} 户，中位 ${S.village_hh_median}）· 散户 ${S.n_hamlets} · 田块 ${S.n_fields}，户均地 ${fmt(S.land_per_household_km2 * 100, 1)} ha<br>镇 ${(S.towns||[]).length}（非农 ${S.households_in_towns_market ?? 0} 户）· 专业聚落 ${(S.specials||[]).length}（${S.households_in_specials ?? 0} 户：${[...new Set((S.specials||[]).map(x => x.kind))].join('、') || '—'}）· 非农共 ${S.nonfarm_households ?? 0} 户（${fmt((S.nonfarm_share||0) * 100, 0)}%）
       <br>泊场 ${(S.landings||[]).length}（飞船随处可停，无码头）· 桥头 ${(S.bridgeheads||[]).length} · 蓄水池 ${(S.cisterns||[]).length} · 取水点 ${(S.intakes||[]).length} · 前哨 ${(S.outposts||[]).length} · 村 1 km 内有水 ${fmt((S.water_ok_share||0)*100,0)}%${S.clearing ? ` · 村周开垦 ${fmt(S.clearing.cleared_km2, 0)} km²，林地 ${fmt(S.clearing.forest_share_before * 100, 0)}% → ${fmt(S.clearing.forest_share_after * 100, 0)}%` : ''}</td></tr>`
       + (S.city ? `<tr><td>都</td><td><b style="color:#ffd75a">${S.city.role}</b> ${S.city.households} 户（城 ${S.city.inner_households} + 郭 ${S.city.guo_households}，郭 ${S.city.n_guo_islands} 岛）· 邦人口 ${fmt(S.city.state_pop, 0)} × 集聚率 ${S.city.gather_rate}<div class="small">${S.city.note}</div></td></tr>` : '')
@@ -527,11 +533,14 @@ function draw(){
     if (!water && R.flood && R.flood[p]) water = liveOn() && dayTab && dayTab.flood[day] ? '漫滩（今日被淹：暴雨 / 风暴）' : '漫滩';
     const RS = D.resources; const zr = RS && R.zone ? RS.zones.classes[R.zone[p]] : ''; const rs = RS && R.res && R.res[p] ? RS.resources.classes[R.res[p]] : '';
     const NN = R.rows * R.cols; const fs = R.rf && RS && RS.fields ? RS.fields.kinds.map((k, t) => [RS.fields.names[t], R.rf[t * NN + p] / 255, RS.fields.thr[k]]).filter(x => x[1] > 0).map(x => `${x[0]} ${fmt(x[1], 2)}${x[1] >= x[2] ? '' : '（区外）'}`).join(' · ') : '';
-    tip.innerHTML = `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? (R.arable[p] === 2 ? '（梯田）' : '（可耕）') : ''}${water ? ' · ' + water : ''}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
+    const sn = settlementNear(e.offsetX, e.offsetY);
+    tip.innerHTML = (sn ? `<b>${sn.name}</b> ${sn.hh} 户 · ${sn.town ? '集镇（营建在第四步）' : '双击营建此聚落'}<br>` : '') + `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? (R.arable[p] === 2 ? '（梯田）' : '（可耕）') : ''}${water ? ' · ' + water : ''}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
     tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 14) + 'px';
     $('coords').textContent = `x ${fmt(kmx, 2)} km, y ${fmt(kmy, 2)} km · 格 (${i}, ${j})`;
   });
   cv.addEventListener('mouseleave', () => $('tip').style.display = 'none');
+  cv.addEventListener('dblclick', e => { const sn = settlementNear(e.offsetX, e.offsetY); if (sn && !sn.town) window.open(townUrl(sn.name), '_blank'); });
+  $('btnTown').onclick = () => { const v = $('townSite').value; if (v) window.open(townUrl(v), '_blank'); };
   window.addEventListener('resize', () => draw());
   ['baseSel','resKind','ovWater','ovVec','ovFlood','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
   const resRow = () => { $('resKindRow').style.display = $('baseSel').value === 'resource' ? '' : 'none'; }; $('baseSel').addEventListener('change', resRow); resRow();
@@ -584,6 +593,29 @@ function drawResources(ctx){
     ctx.fill(); ctx.stroke();
     if (zoomed && m !== '.') { ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(d.subtype ? `${d.kind_zh}·${d.subtype}` : d.kind_zh, x + r + 3, y + 3); }
   }
+}
+// ------------------------------------------------------------ 营建此聚落（/town.html，聚落营建器的调试台）
+function townUrl(name){ return `/town.html?run=${encodeURIComponent(run)}&node=${node}&site=${encodeURIComponent(name)}`; }
+function fillTownSites(S){
+  const sel = $('townSite'); if (!sel) return;
+  if (!S) { sel.innerHTML = '<option>（这个群还没有聚落层：重新生成）</option>'; $('btnTown').disabled = true; return; }
+  const towns = new Set((S.towns || []).map(t => t.village));
+  const rows = (S.villages || []).map(v => ({name: v.name, hh: v.households, ok: !towns.has(v.id), kind: towns.has(v.id) ? '镇（第四步）' : (v.seat ? '邑治' : '村')}))
+    .concat((S.hamlets || []).map(h => ({name: h.name, hh: h.households, ok: true, kind: '散户'})));
+  rows.sort((a, b) => (b.ok - a.ok) || (b.hh - a.hh));
+  sel.innerHTML = rows.map(r => `<option value="${r.name}" ${r.ok ? '' : 'disabled'}>${r.name} · ${r.kind} ${r.hh} 户</option>`).join('');
+  $('btnTown').disabled = !rows.some(r => r.ok);
+}
+// 鼠标附近（12 px 内）的村 / 散户：悬停提示与双击营建用
+function settlementNear(px, py){
+  const S = D && D.settlements; if (!S || !$('ovSettle').checked) return null;
+  const towns = new Set((S.towns || []).map(t => t.village));
+  let best = null, bd = 12;
+  for (const v of (S.villages || []).concat(S.hamlets || [])) {
+    const x = (v.cell[1] + 0.5) / R.step * view.s + view.tx, y = (v.cell[0] + 0.5) / R.step * view.s + view.ty; const d = Math.hypot(x - px, y - py);
+    if (d < bd) bd = d, best = {name: v.name, hh: v.households, town: v.id !== undefined && towns.has(v.id)};
+  }
+  return best;
 }
 function drawSettlements(ctx){
   const S = D.settlements; const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];

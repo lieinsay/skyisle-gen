@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>空岛 · 营建调试台</title>
+<!-- 完全离线。数据：/api/town/styles、/api/town/sites、POST /api/town/plan（地面底图 PNG + 方案，段与 plan.json 相同） -->
+<style>
+:root{--bg:#0b0e14;--panel:#141922;--line:#26303f;--ink:#e6e9ef;--dim:#8a94a6;--acc:#f0b35a;--acc2:#5aa9f0;--ok:#6fcf7a;--bad:#ff6b5e;--soft:#f0c35a;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+#app{display:grid;grid-template-rows:44px 1fr 26px;grid-template-columns:270px 1fr 380px;height:100%}
+header{grid-column:1/4;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.5px;font-family:"Source Han Serif SC","Noto Serif CJK SC","SimSun",serif}
+header .sp{flex:1}
+button{cursor:pointer}
+button.primary{background:var(--acc);color:#1b1408;border:1px solid var(--acc);border-radius:4px;padding:4px 12px;font:inherit;font-weight:600}
+button:disabled{opacity:.45;cursor:default}
+aside{background:var(--panel);overflow:auto;padding:10px 12px;border-right:1px solid var(--line)}
+aside.right{border-right:0;border-left:1px solid var(--line)}
+#mapWrap{position:relative;overflow:hidden;background:#05070d}
+#map{position:absolute;left:0;top:0;width:100%;height:100%;display:block;cursor:crosshair}
+footer{grid-column:1/4;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--panel);border-top:1px solid var(--line);color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden}
+.sec{margin-bottom:14px}
+.sec h3{font-size:12px;color:var(--dim);margin:0 0 6px;letter-spacing:.8px;font-weight:600}
+.row{display:flex;align-items:center;gap:8px;margin:4px 0;flex-wrap:wrap}
+.row label{min-width:48px;color:var(--dim)}
+.row select,.row input[type=number],.row input[type=text]{flex:1;min-width:0;background:#0f131a;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit}
+.chk{display:flex;align-items:center;gap:6px;margin:2px 0;cursor:pointer}
+.seg{display:flex;gap:0;margin:4px 0}
+.seg label{flex:1;text-align:center;border:1px solid var(--line);padding:3px 0;cursor:pointer;color:var(--dim)}
+.seg label:first-child{border-radius:4px 0 0 4px}.seg label:last-child{border-radius:0 4px 4px 0;border-left:0}
+.seg input{display:none}.seg input:checked+span{color:var(--acc)}
+table.kv{border-collapse:collapse;width:100%;font-size:12px}
+table.kv td,table.kv th{padding:2px 4px;border-bottom:1px solid #1d2430;vertical-align:top;text-align:left}
+table.kv td:first-child{color:var(--dim);white-space:nowrap}
+.small{font-size:11px;color:var(--dim)}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.btnrow button:not(.primary){background:#1f2937;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:4px 9px;font:inherit}
+#tip{position:absolute;pointer-events:none;background:rgba(10,13,20,.93);border:1px solid var(--line);padding:5px 8px;border-radius:4px;font-size:12px;display:none;z-index:5;max-width:340px}
+#loading{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:var(--dim);font-size:14px;background:rgba(5,7,13,.6);z-index:6}
+#err{color:var(--bad);white-space:pre-wrap;font-size:12px}
+textarea{width:100%;min-height:70px;background:#0f131a;color:var(--ink);border:1px solid var(--line);border-radius:4px;font:12px Consolas,monospace;padding:4px}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;font-size:11px;color:var(--dim);margin-top:6px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.ck{display:flex;gap:6px;font-size:12px;padding:2px 0;border-bottom:1px solid #1d2430}
+.ck b{width:14px;flex:none}
+.ck.ok b{color:var(--ok)}.ck.bad b{color:var(--bad)}.ck.soft b{color:var(--soft)}
+.ck span{flex:1}
+details.fold{border-top:1px solid var(--line);padding-top:6px;margin:8px 0}
+details>summary{cursor:pointer;color:var(--dim);font-size:12px;letter-spacing:.8px;font-weight:600;list-style:none;user-select:none}
+details>summary::before{content:'▸ ';display:inline-block;width:12px}
+details[open]>summary::before{content:'▾ '}
+#pick{background:#0f131a;border:1px solid var(--line);border-radius:4px;padding:6px 8px;min-height:40px}
+a{color:var(--acc2)}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>空岛 · 营建调试台</h1>
+  <span class="small" id="hdr"></span>
+  <span class="sp"></span>
+  <a href="#" id="islandLink" class="small" style="display:none">← 岛群调试台</a>
+</header>
+
+<aside>
+  <div class="sec"><h3>地</h3>
+    <div class="seg"><label><input type="radio" name="src" value="synth" checked><span>合成地形</span></label><label><input type="radio" name="src" value="site"><span>岛群聚落</span></label></div>
+    <div id="synthBox">
+      <div class="row"><label>地形</label><select id="terrain"></select></div>
+      <div class="row"><label>户数</label><input id="hh" type="number" value="40" min="1" max="400"><label style="min-width:30px">种子</label><input id="seed" type="number" value="1"></div>
+      <div class="row"><label>纬度</label><input id="lat" type="text" placeholder="默认（北纬 35°）" title="负 = 南半球（朝阳 = 朝北）"></div>
+      <div class="row"><label>规模</label><select id="scale"><option>村</option><option>小庄</option><option>宅院</option></select></div>
+    </div>
+    <div id="siteBox" style="display:none">
+      <div class="row"><label>run</label><input id="run" type="text" value="seed42"><label style="min-width:30px">节点</label><input id="node" type="number" value="2051"></div>
+      <div class="row"><label>聚落</label><select id="site"></select></div>
+      <div class="btnrow"><button id="btnSites">读聚落清单</button></div>
+      <div id="siteNote" class="small"></div>
+    </div>
+  </div>
+  <div class="sec"><h3>风格</h3>
+    <div class="row"><label>风格</label><select id="style"></select></div>
+    <div id="region" class="small"></div>
+    <div class="row"><label>算子</label><select id="op"></select></div>
+    <label class="chk small"><input type="checkbox" id="auto" checked> 换风格 / 算子就重新营建</label>
+  </div>
+  <div class="sec"><h3>参数覆盖</h3>
+    <textarea id="sets" placeholder="一行一条：&#10;style.street.lane_width_m=[2,3]&#10;style.orient.rule.0.weight=1&#10;town.render.contour_m=2"></textarea>
+    <div class="btnrow"><button class="primary" id="btnPlan">营建</button><button id="btnSave" title="照命令行写整套产物：plan.json / site.npz / plan.png / plan-detail.png / plan.svg / style.resolved.toml">保存产物</button><button id="btnShow" title="看这个风格解析后的全部参数（base ← 风格 ← 覆盖）">看参数</button></div>
+    <div id="err"></div>
+  </div>
+  <div class="sec"><h3>图层</h3>
+    <label class="chk"><input type="checkbox" id="lyGround" checked> 地面（田 / 水 / 晕渲 / 漫水 / 崖缘）</label>
+    <label class="chk"><input type="checkbox" id="lyArea" checked> 面状地物（田块、林、公地、场、塘、园）</label>
+    <label class="chk"><input type="checkbox" id="lyRoad" checked> 路与桥</label>
+    <label class="chk"><input type="checkbox" id="lyYard" checked> 院与墙</label>
+    <label class="chk"><input type="checkbox" id="lyBld" checked> 房</label>
+    <label class="chk"><input type="checkbox" id="lyFront" checked> 房的正面（檐口 / 门一侧）</label>
+    <label class="chk"><input type="checkbox" id="lyGate"> 院门与接路点</label>
+    <label class="chk"><input type="checkbox" id="lyPoint" checked> 井、树、牌坊</label>
+    <label class="chk"><input type="checkbox" id="lyLabel" checked> 名字</label>
+    <label class="chk"><input type="checkbox" id="lyCenter"> 村心、朝向与半径</label>
+    <label class="chk"><input type="checkbox" id="lyRiver"> 河中线</label>
+    <label class="chk" title="C++ 里判占地用的栅格（1 m 一格）：路 / 院 / 房 / 塘 / 场院 / 泊场 / 桥 / 公地 / 環濠，盖在最上面对照矢量"><input type="checkbox" id="lyOcc"> 占用栅格</label>
+    <label class="chk"><input type="checkbox" id="lyTerrace"> 台基高差（院按台基着色）</label>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="sec small">滚轮缩放 · 拖动平移 · 悬停读房子 · 单击钉住 · F 适配建成区 · A 全窗</div>
+</aside>
+
+<div id="mapWrap">
+  <canvas id="map"></canvas>
+  <div id="tip"></div>
+  <div id="loading">营建中…</div>
+</div>
+
+<aside class="right">
+  <div class="sec"><h3>方案</h3><table class="kv" id="sum"></table></div>
+  <div class="sec"><h3>校验</h3><div id="checks" class="small">—</div></div>
+  <div class="sec"><h3>选中</h3><div id="pick" class="small">单击房、院、路、地物钉住它的说明</div></div>
+  <details class="fold" open><summary>形态指标</summary><table class="kv" id="metrics"></table></details>
+  <details class="fold"><summary>地面</summary><table class="kv" id="ground"></table></details>
+  <details class="fold"><summary>风格参数</summary><pre id="styleDump" class="small" style="white-space:pre-wrap"></pre></details>
+</aside>
+
+<footer><span id="coords"></span><span class="sp"></span><span id="foot"></span></footer>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const fmt = (x, d = 1) => (x === null || x === undefined || Number.isNaN(x)) ? '—' : Number(x).toFixed(d);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+// ---------------------------------------------------------------- 与 town/render.py 同一套颜色
+const ROAD_CLS = {trunk: 0, main: 1, street: 2, lane: 3, path: 4};
+const ROAD_COLOR = ['#c9b68a', '#d8c79b', '#e0d0a8', '#e8dcba', '#cfc293'];
+const YARD = '#ece3cd', WALL = '#5a4d40', BRIDGE = '#7a6048', WELL = '#2f6db5', TREE = '#3f7d3a', MOAT = '#4a7fc0', CHANNEL = '#5b93cf', ARCH = '#7a2e22';
+const AREA = {   // kind → [填, 边, 图层（< 7 在院子下面）, 不透明度, 名]
+  furlong: ['#d8c276', '#a88f45', 2.4, 0.45, '条田（敞田）'], strip: ['#e2d49a', '#9c8a52', 2.5, 0.35, '条地'], grove: ['#4f7f45', '#35602f', 2.7, 0.55, '林带'],
+  green: ['#b6cf86', '#86a45a', 2.8, 0.95, '公地 / 村绿'], square: ['#e4d8bd', '#b3a384', 2.9, 0.95, '广场'], threshing: ['#e6d49e', '#b09a5c', 3.0, 1, '场院'],
+  landing: ['#cfc7b4', '#7d7563', 3.0, 1, '泊场'], pond: ['#5c8fc9', '#3d6ea8', 3.0, 1, '塘'], steps: ['#9d958a', '#5f584f', 6.8, 1, '河埠头'],
+  garden: ['#c9d99b', '#9fb46a', 7.2, 0.9, '园（croft）'], pit: ['#8e7757', '#5d4a35', 7.3, 1, '地坑院的坑'],
+};
+const BK = [
+  [(f, r) => f === 'gate' || r === 'gatehouse' || r === 'gate', '#2e241c', '门楼 / 大门'],
+  [f => f === 'worship' || f === 'inn', '#9c2f25', '庙 / 祠 / 教堂'],
+  [f => ['shrine', 'pond_temple', 'castle', 'manor', 'shuikou'].includes(f), '#b8433a', '小庙 / 城堡 / 庄园'],
+  [f => f === 'landing_shed', '#4f6277', '泊场货棚'],
+  [(f, r, roof) => roof === 'cave', '#a0784c', '窑'],
+  [(f, r) => r === 'detached' || f === 'bath' || f === 'smithy', '#8c4a2f', '院外单栋（浴房、铁匠）'],
+  [f => f === 'shop', '#6e5a7a', '店屋'],
+  [(f, r) => r === 'ring' || r === 'side_row', '#6a5646', '环楼 / 横屋'],
+  [(f, r) => r === 'main', '#4a3b30', '正房 / 主屋'],
+  [f => f === 'barn' || f === 'byre', '#7d6a50', '谷仓 / 畜舍'],
+  [f => f === 'kitchen', '#80695a', '灶房'],
+  [(f, r) => f === 'store' || r === 'front', '#8b7763', '倒座 / 杂屋'],
+];
+const BK_OTHER = ['#6a5646', '厢房 / 住房'];
+function bkind(b){ for (const [t, c, n] of BK) if (t(b.func, b.role, b.roof)) return [c, n]; return BK_OTHER; }
+const ROLE_ZH = {main: '正房 / 主屋', wing: '厢房', front: '倒座', barn: '仓', ear: '耳房', hall: '厅堂', side_hall: '侧厅', gate: '门楼', gatehouse: '门楼', kitchen: '灶房',
+  ring: '环楼', side_row: '横屋', tower: '楼', detached: '院外单栋', public: '公共'};
+const OCC_RGB = {1: [200, 180, 130], 2: [236, 227, 205], 3: [120, 40, 40], 4: [60, 110, 200], 5: [230, 200, 120], 6: [150, 150, 140], 7: [122, 96, 72], 8: [150, 200, 110], 9: [70, 120, 190]};
+const OCC_ZH = ['空', '路', '院', '房', '塘', '场院', '泊场', '桥', '公地 / 广场 / 林带 / 坑', '環濠'];
+const WATER_ZH = ['', '河', '季节性溪涧', '湖 / 海', '湖 / 海'];
+const METRIC_ZH = {
+  households: '户（要住）', households_placed: '户（住下）', compounds: '宅院', buildings: '房', bridges: '桥', wells: '井',
+  lambda: '外包长宽比 λ', shape_index: '形状指数 S', coverage: '覆盖率', clark_evans: 'Clark–Evans R', density_hh_per_ha: '密度（户 / ha）',
+  orient_sun_share: '朝阳占比', orient_dev_mean_deg: '朝向平均偏差（°）', face_street_share: '面街占比', frontage_cv: '面宽变异系数',
+  site_nn_median_m: '簇间最近邻中位（m）', site_clark_evans: '簇的 R', sites: '簇数', water_front_share: '临水占比', lane_spacing_cv: '巷距变异系数',
+  hh_per_enclosure: '每楼户数', enclosures: '围合单体数', terraces: '台层数', well_dist_median_m: '离井中位（m）', field_dist_median_m: '离田中位（m）',
+  center_shift_m: '村心离锚点（m）', cut_m3: '挖方（m³）', fill_m3: '填方（m³）', footprint_m2: '占地（m²）', terraced_compounds: '做台地的院',
+  dug_in_compounds: '挖进坡的院', junction_t: 'T 路口', junction_x: '十字路口', t_x_ratio: 'T / X 路口比', green_area_m2: '公地面积（m²）',
+  buildings_per_compound_median: '每院栋数中位', detached_min_m: '院外单栋离主院最近（m）', lane_spacing_m: '巷距（m）',
+};
+const PCT = new Set(['coverage', 'orient_sun_share', 'face_street_share', 'water_front_share']);
+
+// ---------------------------------------------------------------- 状态
+let STY = null, D = null, G = null, groundImg = null, occCanvas = null, pinned = null;
+const view = {s: 1, tx: 0, ty: 0};
+const cv = $('map'), ctx = cv.getContext('2d');
+const qs = new URLSearchParams(location.search);
+
+function dec(b64, T){ const bin = atob(b64); const u = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k); return new T(u.buffer); }
+const ext = () => D.ground.extent;   // [x0, x1, y0, y1]（m）
+const W2S = (x, y) => [(x - ext()[0]) * view.s + view.tx, (ext()[3] - y) * view.s + view.ty];
+const S2W = (px, py) => [(px - view.tx) / view.s + ext()[0], ext()[3] - (py - view.ty) / view.s];
+
+function obb(c, fdeg, w, d){
+  const f = fdeg * Math.PI / 180; const fx = Math.sin(f) * d / 2, fy = Math.cos(f) * d / 2, rx = Math.cos(f) * w / 2, ry = -Math.sin(f) * w / 2;
+  return [[c[0] + fx + rx, c[1] + fy + ry], [c[0] + fx - rx, c[1] + fy - ry], [c[0] - fx - rx, c[1] - fy - ry], [c[0] - fx + rx, c[1] - fy + ry]];
+}
+function inObb(p, c, fdeg, w, d){
+  const f = fdeg * Math.PI / 180; const dx = p[0] - c[0], dy = p[1] - c[1];
+  return Math.abs(dx * Math.cos(f) - dy * Math.sin(f)) <= w / 2 && Math.abs(dx * Math.sin(f) + dy * Math.cos(f)) <= d / 2;
+}
+function inPoly(p, poly){ let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
+function segDist(p, a, b){ const vx = b[0] - a[0], vy = b[1] - a[1]; const L2 = vx * vx + vy * vy; let t = L2 ? ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2 : 0; t = Math.max(0, Math.min(1, t)); return Math.hypot(p[0] - a[0] - t * vx, p[1] - a[1] - t * vy); }
+function lineDist(p, line){ let d = Infinity; for (let k = 0; k + 1 < line.length; k++) d = Math.min(d, segDist(p, line[k], line[k + 1])); return d; }
+function lineLen(line){ let s = 0; for (let k = 0; k + 1 < line.length; k++) s += Math.hypot(line[k + 1][0] - line[k][0], line[k + 1][1] - line[k][1]); return s; }
+
+// ---------------------------------------------------------------- 画
+function resize(){ const r = cv.parentElement.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1; cv.width = r.width * dpr; cv.height = r.height * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+function fit(box){
+  const r = cv.parentElement.getBoundingClientRect(); const [x0, x1, y0, y1] = box;
+  view.s = Math.min(r.width / (x1 - x0), r.height / (y1 - y0)) * 0.95;
+  view.tx = r.width / 2 - ((x0 + x1) / 2 - ext()[0]) * view.s; view.ty = r.height / 2 - (ext()[3] - (y0 + y1) / 2) * view.s;
+}
+function planBox(){
+  const P = D && D.plan; if (!P || !P.compounds.length) return ext();
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const add = p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); };
+  for (const c of P.compounds) for (const q of obb(c.plot.c, c.plot.facing_deg, c.plot.w, c.plot.d)) add(q);
+  for (const f of P.features) if (['pond', 'threshing', 'landing', 'green', 'square', 'moat'].includes(f.kind)) (f.poly && f.poly.length ? f.poly : [f.p]).forEach(add);
+  const m = 40; return [x0 - m, x1 + m, y0 - m, y1 + m];
+}
+function path(pts){ ctx.beginPath(); pts.forEach((p, k) => { const [x, y] = W2S(p[0], p[1]); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); }
+function on(id){ return $(id).checked; }
+
+function draw(){
+  const r = cv.parentElement.getBoundingClientRect();
+  ctx.clearRect(0, 0, r.width, r.height);
+  if (!D) return;
+  const P = D.plan, s = view.s;
+  if (on('lyGround') && groundImg) {
+    const [a, b] = W2S(ext()[0], ext()[3]), [c, d] = W2S(ext()[1], ext()[2]);
+    ctx.imageSmoothingEnabled = s * D.ground.stride * D.frame.res_m < 3;
+    ctx.drawImage(groundImg, a, b, c - a, d - b);
+  }
+  if (on('lyRiver')) for (const rv of D.rivers) { path(rv.line); ctx.strokeStyle = rv.seasonal ? '#9cc4ff' : '#4d8cff'; ctx.setLineDash(rv.seasonal ? [4, 4] : []); ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]); }
+  if (!P) return;
+  const feats = P.features;
+  const areas = (lo, hi) => { if (!on('lyArea')) return; for (const [k, [fill, edge, z, al]] of Object.entries(AREA)) { if (z < lo || z >= hi) continue; for (const f of feats) if (f.kind === k && f.poly.length >= 3) { path(f.poly); ctx.closePath(); ctx.globalAlpha = al; ctx.fillStyle = fill; ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = edge; ctx.lineWidth = 0.8; ctx.stroke(); } } };
+  areas(0, 7);
+  if (on('lyArea')) for (const [k, col] of [['moat', MOAT], ['channel', CHANNEL]]) for (const f of feats) if (f.kind === k && f.poly.length >= 2) { path(f.poly); ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.8, f.r * s); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  if (on('lyRoad')) {
+    const roads = [...P.roads].sort((a, b) => ROAD_CLS[b.cls] - ROAD_CLS[a.cls]);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const casing of [true, false]) for (const rd of roads) { path(rd.line); ctx.strokeStyle = casing ? '#a8966c' : ROAD_COLOR[ROAD_CLS[rd.cls]]; ctx.lineWidth = Math.max(casing ? 1.6 : 1, rd.width_m * s + (casing ? 1 : 0)); ctx.stroke(); }
+    ctx.lineCap = 'butt';
+    for (const b of P.bridges) { path([b.a, b.b]); ctx.strokeStyle = BRIDGE; ctx.lineWidth = Math.max(2, (b.width_m + 1) * s); ctx.stroke(); }
+  }
+  if (on('lyYard')) {
+    let bmin = Infinity, bmax = -Infinity; for (const c of P.compounds) { bmin = Math.min(bmin, c.base_m); bmax = Math.max(bmax, c.base_m); }
+    for (const c of P.compounds) {
+      path(obb(c.plot.c, c.plot.facing_deg, c.plot.w, c.plot.d)); ctx.closePath();
+      if (on('lyTerrace') && bmax > bmin) { const t = (c.base_m - bmin) / (bmax - bmin); ctx.fillStyle = `rgb(${60 + 190 * t},${120 + 60 * (1 - Math.abs(t - 0.5) * 2)},${230 - 190 * t})`; }
+      else ctx.fillStyle = YARD;
+      ctx.fill(); ctx.strokeStyle = c.walled ? WALL : '#b7a98d'; ctx.lineWidth = Math.max(0.5, (c.walled ? 0.5 : 0.3) * s); ctx.stroke();
+    }
+  }
+  areas(7, 99);
+  if (on('lyPoint')) for (const f of feats) if (f.kind === 'tree') { const [x, y] = W2S(f.p[0], f.p[1]); ctx.beginPath(); ctx.arc(x, y, Math.max(2, f.r * s), 0, 7); ctx.globalAlpha = 0.8; ctx.fillStyle = TREE; ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.5; ctx.stroke(); }
+  if (on('lyBld')) for (const b of P.buildings) {
+    const q = obb(b.c, b.facing_deg, b.w, b.d); path(q); ctx.closePath(); ctx.fillStyle = bkind(b)[0]; ctx.fill();
+    ctx.strokeStyle = '#1e1813'; ctx.lineWidth = Math.max(0.3, 0.08 * s); ctx.stroke();
+    if (on('lyFront')) { path([q[0], q[1]]); ctx.strokeStyle = '#e8b86a'; ctx.lineWidth = Math.max(0.6, 0.35 * s); ctx.stroke(); }
+  }
+  if (on('lyPoint')) for (const f of feats) {
+    if (f.kind === 'well') { const [x, y] = W2S(f.p[0], f.p[1]); ctx.beginPath(); ctx.arc(x, y, Math.max(2.5, Math.max(1.2, f.r) * s), 0, 7); ctx.fillStyle = WELL; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.8; ctx.stroke(); }
+    if (f.kind === 'arch') { const a = f.facing_deg * Math.PI / 180, h = Math.max(3, f.r) / 2; const rx = Math.cos(a) * h, ry = -Math.sin(a) * h; path([[f.p[0] - rx, f.p[1] - ry], [f.p[0] + rx, f.p[1] + ry]]); ctx.strokeStyle = ARCH; ctx.lineWidth = Math.max(2, 1.2 * s); ctx.stroke(); }
+  }
+  if (on('lyGate')) for (const c of P.compounds) {
+    const [gx, gy] = W2S(c.gate[0], c.gate[1]), [ax, ay] = W2S(c.access[0], c.access[1]);
+    ctx.strokeStyle = '#ff5ad2'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(ax, ay); ctx.stroke();
+    ctx.fillStyle = '#ff5ad2'; ctx.fillRect(gx - 2, gy - 2, 4, 4); ctx.beginPath(); ctx.arc(ax, ay, 2, 0, 7); ctx.fill();
+  }
+  if (on('lyCenter') && P.plan) {
+    const c = P.plan.center, [x, y] = W2S(c[0], c[1]); const f = P.plan.facing_deg * Math.PI / 180, L = 30 * s;
+    ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, P.plan.radius_m * s, 0, 7); ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.sin(f) * L, y - Math.cos(f) * L); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fillStyle = '#ff3b3b'; ctx.fill();
+  }
+  // 占用栅格盖在最上面：对得上矢量的房、院、路才对
+  if (on('lyOcc') && occCanvas) { const [a, b] = W2S(ext()[0], ext()[3]), [c, d] = W2S(ext()[1], ext()[2]); ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 0.55; ctx.drawImage(occCanvas, a, b, c - a, d - b); ctx.globalAlpha = 1; }
+  if (pinned) outline(pinned, '#00e5ff');
+  if (on('lyLabel')) labels(P);
+  scaleBar(r);
+}
+function labels(P){
+  const out = [];
+  for (const c of P.compounds) if (c.kind === 'public') out.push([c.name || c.template_name, c.plot.c, 0]);
+  for (const b of P.buildings) if (b.compound < 0) out.push([b.name, b.c, 0.5 * Math.max(b.w, b.d) + 1]);
+  for (const f of P.features) if (['landing', 'tree', 'pond', 'green', 'square', 'arch'].includes(f.kind) && f.name) out.push([f.name, f.p, 0]);
+  const seen = new Set();
+  for (const f of P.features) if (['grove', 'moat', 'channel', 'strip', 'steps', 'furlong'].includes(f.kind) && f.name && !seen.has(f.kind)) { seen.add(f.kind); out.push([f.name, ['moat', 'channel'].includes(f.kind) && f.poly.length ? f.poly[f.poly.length >> 1] : f.p, 0]); }
+  ctx.font = '11px "Microsoft YaHei",sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const [name, p, up] of out) { const [x, y] = W2S(p[0], p[1] + up); const w = ctx.measureText(name).width; ctx.fillStyle = 'rgba(255,255,255,.78)'; ctx.fillRect(x - w / 2 - 2, y - 7 - (up ? 6 : 0), w + 4, 14); ctx.fillStyle = '#1a1a1a'; ctx.fillText(name, x, y - (up ? 6 : 0)); }
+}
+function scaleBar(r){
+  const span = r.width / view.s; let bar = 10 ** Math.floor(Math.log10(span / 5)); bar *= span / bar > 25 ? 5 : span / bar > 10 ? 2 : 1;
+  const x = 14, y = r.height - 18, w = bar * view.s;
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x - 6, y - 16, w + 12, 24); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(`${bar} m`, x + w / 2, y - 8);
+  // 指北
+  const nx = r.width - 24, ny = 40; ctx.beginPath(); ctx.moveTo(nx, ny - 14); ctx.lineTo(nx + 6, ny + 4); ctx.lineTo(nx - 6, ny + 4); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.fillText('北', nx, ny + 16);
+}
+function outline(h, col){
+  let pts = null;
+  if (h.t === 'b') pts = obb(h.o.c, h.o.facing_deg, h.o.w, h.o.d);
+  else if (h.t === 'c') pts = obb(h.o.plot.c, h.o.plot.facing_deg, h.o.plot.w, h.o.plot.d);
+  else if (h.t === 'f' && h.o.poly && h.o.poly.length >= 3) pts = h.o.poly;
+  if (pts) { path(pts); ctx.closePath(); ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.stroke(); }
+  else if (h.t === 'f') { const [x, y] = W2S(h.o.p[0], h.o.p[1]); ctx.beginPath(); ctx.arc(x, y, Math.max(6, (h.o.r || 1) * view.s + 3), 0, 7); ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.stroke(); }
+  else if (h.t === 'r') { path(h.o.line); ctx.strokeStyle = col; ctx.lineWidth = Math.max(3, h.o.width_m * view.s + 3); ctx.globalAlpha = 0.6; ctx.stroke(); ctx.globalAlpha = 1; }
+  if (h.t === 'b' && h.o.compound >= 0 && D.plan.compounds[h.o.compound]) { const c = D.plan.compounds[h.o.compound]; path(obb(c.plot.c, c.plot.facing_deg, c.plot.w, c.plot.d)); ctx.closePath(); ctx.setLineDash([5, 3]); ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]); }
+}
+
+// ---------------------------------------------------------------- 悬停与选中
+function hit(p){
+  const P = D && D.plan; if (!P) return null;
+  const px = 4 / view.s;   // 4 像素的宽容
+  if (on('lyPoint')) for (const f of P.features) if ((f.kind === 'well' || f.kind === 'tree') && Math.hypot(p[0] - f.p[0], p[1] - f.p[1]) <= Math.max(f.r, 1.2) + px) return {t: 'f', o: f};
+  if (on('lyBld')) for (let k = P.buildings.length - 1; k >= 0; k--) { const b = P.buildings[k]; if (inObb(p, b.c, b.facing_deg, b.w + 2 * px * 0.3, b.d + 2 * px * 0.3)) return {t: 'b', o: b, k}; }
+  if (on('lyArea')) for (const f of P.features) if (AREA[f.kind] && AREA[f.kind][2] >= 7 && f.poly.length >= 3 && inPoly(p, f.poly)) return {t: 'f', o: f};
+  if (on('lyYard')) for (let k = P.compounds.length - 1; k >= 0; k--) { const c = P.compounds[k]; if (inObb(p, c.plot.c, c.plot.facing_deg, c.plot.w, c.plot.d)) return {t: 'c', o: c, k}; }
+  if (on('lyRoad')) { for (const b of P.bridges) if (segDist(p, b.a, b.b) <= b.width_m / 2 + px) return {t: 'bridge', o: b}; for (const rd of P.roads) if (lineDist(p, rd.line) <= rd.width_m / 2 + px) return {t: 'r', o: rd}; }
+  if (on('lyArea')) for (const f of P.features) { if ((f.kind === 'moat' || f.kind === 'channel') && f.poly.length >= 2 && lineDist(p, f.poly) <= f.r / 2 + px) return {t: 'f', o: f}; if (AREA[f.kind] && f.poly.length >= 3 && inPoly(p, f.poly)) return {t: 'f', o: f}; }
+  return null;
+}
+function hhOf(ci){ const P = D.plan; return P.households.filter(h => h.compound === ci); }
+function describe(h){
+  const P = D.plan;
+  if (h.t === 'b') { const b = h.o; const c = b.compound >= 0 ? P.compounds[b.compound] : null;
+    return `<b>${esc(b.name)}</b>（${esc(ROLE_ZH[b.role] || b.role)} · ${esc(b.func)}）<br>${fmt(b.w)} × ${fmt(b.d)} m · 朝 ${fmt(((b.facing_deg % 360) + 360) % 360, 0)}° · ${b.storeys} 层 · 檐高 ${fmt(b.eave_m)} m<br>屋顶 ${esc(b.roof)}${b.pitch_deg ? ' ' + fmt(b.pitch_deg, 0) + '°' : ''} · 材料 ${esc(b.material || '—')}<br>台基 ${fmt(b.base_m, 2)} m · 挖 ${fmt(b.cut_m3, 0)} / 填 ${fmt(b.fill_m3, 0)} m³（最大 ${fmt(b.max_cut_m, 2)} m）`
+      + (c ? `<br>属宅院 #${b.compound}：${esc(c.template_name)}${c.name ? '（' + esc(c.name) + '）' : ''}，住 ${c.households.length} 户` : '<br>不属任何宅院'); }
+  if (h.t === 'c') { const c = h.o; const hs = hhOf(h.k);
+    return `<b>${esc(c.template_name)}</b>${c.name ? '（' + esc(c.name) + '）' : ''} · 宅院 #${h.k}（${c.kind === 'public' ? '公共' : '住宅'}）<br>地块 ${fmt(c.plot.w)} × ${fmt(c.plot.d)} m · 朝 ${fmt(((c.plot.facing_deg % 360) + 360) % 360, 0)}° · 门在${esc(c.access_side)}边${c.walled ? ' · 有院墙' : ''}<br>台基 ${fmt(c.base_m, 2)} m · 地块高差 ${fmt(c.max_cut_m, 2)} m${c.terraced ? '（做了台地）' : ''}<br>${c.buildings.length} 栋 · 住 ${c.households.length} 户${hs.length ? '：' + hs.map(x => `#${x.id}${x.parent >= 0 ? '（' + x.parent + ' 分出）' : ''}`).join(' ') : ''}`; }
+  if (h.t === 'r') return `<b>${esc(h.o.name)}</b> · 宽 ${fmt(h.o.width_m)} m · 长 ${fmt(lineLen(h.o.line), 0)} m`;
+  if (h.t === 'bridge') return `<b>桥</b> · 宽 ${fmt(h.o.width_m)} m · 跨 ${fmt(Math.hypot(h.o.b[0] - h.o.a[0], h.o.b[1] - h.o.a[1]), 0)} m`;
+  if (h.t === 'f') { const f = h.o; const nm = f.name || (AREA[f.kind] ? AREA[f.kind][4] : f.kind);
+    let area = ''; if (f.poly && f.poly.length >= 3) { let a = 0; for (let i = 0, j = f.poly.length - 1; i < f.poly.length; j = i++) a += (f.poly[j][0] + f.poly[i][0]) * (f.poly[j][1] - f.poly[i][1]); area = ` · ${fmt(Math.abs(a) / 2, 0)} m²`; }
+    return `<b>${esc(nm)}</b>（${esc(f.kind)}${f.func && f.func !== f.kind ? ' · ' + esc(f.func) : ''}）${area}${f.r ? ' · 半径 / 宽 ' + fmt(f.r) + ' m' : ''}${f.compound !== undefined ? ' · 属宅院 #' + f.compound : ''}`; }
+  return '';
+}
+function groundAt(p){
+  const g = D.ground, res = D.frame.res_m * g.stride; const j = Math.floor((p[0] - g.extent[0]) / res), i = Math.floor((g.extent[3] - p[1]) / res);
+  if (i < 0 || j < 0 || i >= g.rows || j >= g.cols) return null;
+  const k = i * g.cols + j; const hq = G.h[k];
+  return {h: hq ? g.h0 + (hq - 1) / 10 : null, water: G.w[k], occ: G.occ ? G.occ[k] : 0};
+}
+
+// ---------------------------------------------------------------- 面板
+function fillPanels(){
+  const P = D.plan;
+  $('hdr').textContent = `${D.title} · ${D.scale} · 窗口 ${fmt(D.frame.W * D.frame.res_m, 0)} × ${fmt(D.frame.H * D.frame.res_m, 0)} m（${D.frame.res_m} m 一格）· 纬度 ${fmt(D.frame.lat_deg, 1)}°`;
+  const M = P ? P.metrics : {};
+  $('sum').innerHTML = P ? `<tr><td>风格</td><td>${esc(P.style.name)}（${esc(P.style.id)}，参数哈希 ${esc(P.style.hash)}）</td></tr>
+    <tr><td>算子</td><td>${esc(D.op_name)}（${esc(P.plan.operator)}）· 这块地能用：${D.ops_fit.map(o => esc(opName(o))).join('、') || '—'}</td></tr>
+    <tr><td>户</td><td>${M.households_placed ?? '—'} / ${M.households ?? '—'} · 宅院 ${P.compounds.length} · 房 ${P.buildings.length}</td></tr>
+    <tr><td>路</td><td>${P.roads.length} 条（${Object.entries(P.roads.reduce((a, r) => (a[r.name] = (a[r.name] || 0) + lineLen(r.line), a), {})).map(([k, v]) => `${k} ${fmt(v, 0)} m`).join(' · ')}）· 桥 ${P.bridges.length}</td></tr>
+    <tr><td>村心</td><td>(${fmt(P.plan.center[0], 0)}, ${fmt(P.plan.center[1], 0)}) · 朝 ${fmt(P.plan.facing_deg, 0)}° · 半径 ${fmt(P.plan.radius_m, 0)} m</td></tr>
+    <tr><td>用时</td><td>地面 ${fmt(D.timing_s.site, 2)} s · 营建 ${fmt(D.timing_s.plan, 2)} s（${Object.entries(P.timing_plan_s).map(([k, v]) => `${k} ${fmt(v, 2)}`).join(' · ')}）</td></tr>`
+    + (D.saved ? `<tr><td>产物</td><td class="small">${esc(D.saved)}</td></tr>` : '')
+    : `<tr><td colspan="2" class="small">只有地面（没选风格）</td></tr>`;
+  $('checks').innerHTML = P ? P.checks.map(c => `<div class="ck ${c.ok ? 'ok' : (c.hard ? 'bad' : 'soft')}"><b>${c.ok ? '✓' : (c.hard ? '✗' : '△')}</b><span><b style="width:auto;color:inherit">${esc(c.id)}</b> ${esc(c.msg)}</span></div>`).join('') : '—';
+  $('metrics').innerHTML = P ? Object.entries(M).sort((a, b) => (METRIC_ZH[a[0]] ? 0 : 1) - (METRIC_ZH[b[0]] ? 0 : 1) || a[0].localeCompare(b[0])).map(([k, v]) =>
+    `<tr><td title="${esc(k)}">${esc(METRIC_ZH[k] || k)}</td><td>${v === null ? '—' : PCT.has(k) ? fmt(v * 100, 0) + '%' : Number.isInteger(v) ? v : fmt(v, 3)}</td></tr>`).join('') : '';
+  const st = D.stats;
+  $('ground').innerHTML = `<tr><td>大小</td><td>${st.size_m[0]} × ${st.size_m[1]} m</td></tr><tr><td>高程</td><td>${st.height_m ? st.height_m.join('–') + ' m' : '—'}</td></tr>
+    <tr><td>坡度</td><td>${st.slope_deg ? `中位 ${st.slope_deg.p50}° · P90 ${st.slope_deg.p90}°` : '—'}</td></tr><tr><td>田 / 漫水 / 虚空</td><td>${fmt(st.farmland_share * 100, 0)}% / ${fmt(st.flood_share * 100, 0)}% / ${fmt(st.sky_share * 100, 0)}%</td></tr>
+    <tr><td>河</td><td>${st.rivers.length} 条 ${st.rivers.map(r => `${r.seasonal ? '溪涧' : '河'} ${fmt(r.length_m, 0)} m（宽 ${r.width_m.join('–')} m）`).join('；')}</td></tr>`;
+  const kinds = new Map(); if (P) for (const b of P.buildings) { const [c, n] = bkind(b); kinds.set(n, c); }
+  const present = new Set(P ? P.features.map(f => f.kind) : []);
+  $('legend').innerHTML = [...kinds].map(([n, c]) => `<span><span class="sw" style="background:${c}"></span>${n}</span>`).join('')
+    + Object.entries(AREA).filter(([k]) => present.has(k)).map(([k, v]) => `<span><span class="sw" style="background:${v[0]};opacity:${Math.max(0.5, v[3])}"></span>${v[4]}</span>`).join('')
+    + [['moat', MOAT, '環濠'], ['channel', CHANNEL, '水圳'], ['well', WELL, '井'], ['tree', TREE, '树'], ['arch', ARCH, '牌坊']].filter(x => present.has(x[0])).map(x => `<span><span class="sw" style="background:${x[1]}"></span>${x[2]}</span>`).join('')
+    + (P ? `<span><span class="sw" style="background:${YARD};border:1px solid ${WALL}"></span>院子与墙</span><span><span class="sw" style="background:${ROAD_COLOR[1]}"></span>路</span>` + (P.bridges.length ? `<span><span class="sw" style="background:${BRIDGE}"></span>桥</span>` : '') : '');
+  showPick();
+}
+function showPick(){ $('pick').innerHTML = pinned ? describe(pinned) : '单击房、院、路、地物钉住它的说明'; }
+function opName(id){ const s = STY.styles.find(x => x.id === $('style').value); const o = s && s.operators.find(x => x.id === id); return o ? o.name : (STY.operators[id] || id); }
+
+// ---------------------------------------------------------------- 请求
+function body(save){
+  const src = document.querySelector('input[name=src]:checked').value;
+  const b = {source: src, style: $('style').value, operator: $('op').value, sets: $('sets').value.split('\n').map(s => s.trim()).filter(Boolean), save: !!save};
+  if (src === 'site') Object.assign(b, {run: $('run').value.trim(), node: +$('node').value, site: $('site').value});
+  else Object.assign(b, {terrain: $('terrain').value, households: +$('hh').value, seed: +$('seed').value, lat: $('lat').value.trim(), scale: $('scale').value});
+  return b;
+}
+async function plan(save = false){
+  $('err').textContent = ''; $('loading').style.display = 'flex'; $('btnPlan').disabled = true;
+  const keepView = D && D.plan && lastKey === groundKey() && D.plan.style.id === $('style').value;   // 同一块地、同一种风格（改参数）才留住视野
+  try {
+    const r = await fetch('/api/town/plan', {method: 'POST', body: JSON.stringify(body(save))}); const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    D = j; pinned = null;
+    G = {h: dec(D.ground.height_u16, Uint16Array), w: dec(D.ground.water_u8, Uint8Array), occ: D.ground.occ_u8 ? dec(D.ground.occ_u8, Uint8Array) : null};
+    buildOcc();
+    groundImg = await new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = no; im.src = 'data:image/png;base64,' + D.ground.png; });
+    if (!keepView) fit(planBox());
+    lastKey = groundKey();
+    markOps(); fillPanels(); draw(); syncUrl();
+  } catch (e) { $('err').textContent = String(e.message || e); }
+  finally { $('loading').style.display = 'none'; $('btnPlan').disabled = false; }
+}
+let lastKey = null;
+function groundKey(){ const b = body(false); delete b.style; delete b.operator; delete b.save; return JSON.stringify(b); }
+function buildOcc(){
+  occCanvas = null; if (!G.occ) return;
+  const g = D.ground, c = document.createElement('canvas'); c.width = g.cols; c.height = g.rows; const cx = c.getContext('2d'); const im = cx.createImageData(g.cols, g.rows);
+  for (let k = 0; k < G.occ.length; k++) { const col = OCC_RGB[G.occ[k]]; if (!col) continue; im.data[4 * k] = col[0]; im.data[4 * k + 1] = col[1]; im.data[4 * k + 2] = col[2]; im.data[4 * k + 3] = 255; }
+  cx.putImageData(im, 0, 0); occCanvas = c;
+}
+function markOps(){
+  const fit = new Set(D.ops_fit || []);
+  for (const o of $('op').options) if (o.value) o.textContent = opName(o.value) + (D.plan && fit.size && !fit.has(o.value) ? '（这块地不合适）' : '');
+}
+function fillOps(){
+  const s = STY.styles.find(x => x.id === $('style').value); const keep = $('op').value;
+  $('op').innerHTML = `<option value="">按风格的权重挑</option>` + s.operators.map(o => `<option value="${o.id}">${esc(o.name)}（${o.id}，权重 ${o.weight}）</option>`).join('');
+  if (s.operators.some(o => o.id === keep)) $('op').value = keep;
+  $('region').innerHTML = `${esc(s.region)}${s.window_factor !== 1 ? ` · 窗口 × ${s.window_factor}` : ''}<br>${s.sources.map(esc).join('<br>')}`;
+}
+async function loadSites(select){
+  $('siteNote').textContent = '读取中…';
+  try {
+    const r = await fetch(`/api/town/sites?run=${encodeURIComponent($('run').value.trim())}&node=${+$('node').value}`); const j = await r.json(); if (j.error) throw new Error(j.error);
+    const rows = [...j.sites].sort((a, b) => (b.plannable - a.plannable) || (b.households - a.households));
+    $('site').innerHTML = rows.map(x => `<option value="${esc(x.name)}" ${x.plannable ? '' : 'disabled'}>${esc(x.name)} · ${esc(x.kind)} ${x.households} 户 · 岛 ${x.island}${x.note ? '（' + esc(x.note) + '）' : ''}</option>`).join('');
+    if (select && rows.some(x => x.name === select)) $('site').value = select;
+    $('siteNote').textContent = `${rows.length} 处（能营建 ${rows.filter(x => x.plannable).length}）${j.city ? ' · 这个岛群是都' : ''}`;
+    const link = $('islandLink'); link.style.display = ''; link.href = `/island.html?run=${encodeURIComponent($('run').value.trim())}&node=${+$('node').value}`;
+  } catch (e) { $('siteNote').textContent = String(e.message || e); }
+}
+function syncUrl(){
+  const b = body(false); const u = new URLSearchParams();
+  if (b.source === 'site') { u.set('run', b.run); u.set('node', b.node); u.set('site', b.site); } else { u.set('terrain', b.terrain); u.set('hh', b.households); u.set('seed', b.seed); if (b.lat) u.set('lat', b.lat); }
+  if (b.style) u.set('style', b.style); if (b.operator) u.set('op', b.operator);
+  history.replaceState(null, '', '/town.html?' + u.toString());
+}
+async function showStyle(){
+  const sets = $('sets').value.split('\n').map(s => s.trim()).filter(s => s.startsWith('style.'));
+  $('styleDump').textContent = '（打开「风格参数」一栏看）';
+  const r = await fetch(`/api/town/style?name=${encodeURIComponent($('style').value)}&sets=${encodeURIComponent(JSON.stringify(sets))}`); const t = await r.text();
+  $('styleDump').textContent = t; $('styleDump').closest('details').open = true;
+}
+
+// ---------------------------------------------------------------- 起动
+async function init(){
+  resize();
+  STY = await (await fetch('/api/town/styles')).json();
+  $('terrain').innerHTML = STY.terrains.map(t => `<option>${t}</option>`).join('');
+  $('style').innerHTML = STY.styles.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  $('terrain').value = qs.get('terrain') || '河谷';
+  if (qs.get('style')) { const s = STY.styles.find(x => x.id === qs.get('style') || x.name === qs.get('style')); if (s) $('style').value = s.id; }
+  fillOps(); if (qs.get('op')) $('op').value = qs.get('op');
+  for (const [k, id] of [['hh', 'hh'], ['seed', 'seed'], ['lat', 'lat']]) if (qs.get(k)) $(id).value = qs.get(k);
+  if (qs.get('run')) {
+    document.querySelector('input[name=src][value=site]').checked = true; srcChanged();
+    $('run').value = qs.get('run'); if (qs.get('node')) $('node').value = qs.get('node');
+    await loadSites(qs.get('site'));
+  }
+  document.querySelectorAll('input[name=src]').forEach(r => r.addEventListener('change', srcChanged));
+  $('style').addEventListener('change', () => { fillOps(); if (on('auto')) plan(); });
+  $('op').addEventListener('change', () => { if (on('auto')) plan(); });
+  $('site').addEventListener('change', () => { if (on('auto')) plan(); });
+  $('btnPlan').onclick = () => plan(false); $('btnSave').onclick = () => plan(true); $('btnShow').onclick = showStyle;
+  $('btnSites').onclick = () => loadSites();
+  document.querySelectorAll('aside input[type=checkbox][id^=ly]').forEach(c => c.addEventListener('change', draw));
+  plan();
+}
+function srcChanged(){ const site = document.querySelector('input[name=src]:checked').value === 'site'; $('synthBox').style.display = site ? 'none' : ''; $('siteBox').style.display = site ? '' : 'none'; if (site && !$('site').options.length) loadSites(); }
+
+let drag = null, moved = false;
+cv.addEventListener('mousedown', e => { drag = {x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty}; moved = false; });
+window.addEventListener('mouseup', e => {
+  if (drag && !moved && D) { const h = hit(S2W(e.offsetX, e.offsetY)); if (e.target === cv) { pinned = h; showPick(); draw(); } }
+  drag = null;
+});
+cv.addEventListener('mousemove', e => {
+  if (drag) { if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) moved = true; view.tx = drag.tx + e.clientX - drag.x; view.ty = drag.ty + e.clientY - drag.y; draw(); return; }
+  if (!D) return;
+  const p = S2W(e.offsetX, e.offsetY), g = groundAt(p), h = hit(p), tip = $('tip');
+  $('coords').textContent = `x ${fmt(p[0], 1)} m · y ${fmt(p[1], 1)} m` + (g ? ` · 高 ${g.h === null ? '虚空' : fmt(g.h, 1) + ' m'}${g.water ? ' · ' + WATER_ZH[g.water] : ''}${G.occ ? ' · 占用：' + OCC_ZH[g.occ] : ''}` : '');
+  if (h) { tip.innerHTML = describe(h); tip.style.display = 'block'; const r = cv.parentElement.getBoundingClientRect(); tip.style.left = Math.min(e.offsetX + 14, r.width - 350) + 'px'; tip.style.top = (e.offsetY + 14) + 'px'; }
+  else tip.style.display = 'none';
+});
+cv.addEventListener('mouseleave', () => $('tip').style.display = 'none');
+cv.addEventListener('wheel', e => {
+  e.preventDefault(); if (!D) return; const k = Math.exp(-e.deltaY * 0.0015); const s2 = Math.max(0.02, Math.min(80, view.s * k)); const kk = s2 / view.s;
+  view.tx = e.offsetX - (e.offsetX - view.tx) * kk; view.ty = e.offsetY - (e.offsetY - view.ty) * kk; view.s = s2; draw();
+}, {passive: false});
+window.addEventListener('keydown', e => {
+  if (!D || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+  if (e.key === 'f' || e.key === 'F') { fit(planBox()); draw(); } if (e.key === 'a' || e.key === 'A') { fit(ext()); draw(); }
+});
+window.addEventListener('resize', () => { resize(); draw(); });
+init();
+</script>
+</body>
+</html>

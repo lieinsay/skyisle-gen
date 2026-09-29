@@ -11,11 +11,13 @@ GET  /api/check?run=          验收报告
 GET  /api/ninegrid?run=&region=   九格表 markdown
 GET  /api/path?run=&a=&b=&mode=   最优路径逐跳
 GET  /api/island?run=&node=[&year=0][&force=1]   岛群生成器（第三层）：按需生成并返回摘要；/api/island/preview 取 preview.png（&main=1 主岛放大、&res=1 资源图）
-GET  /island.html?run=&node=[&year=]   岛群调试台（2D 图层、四季、逐日天气、改年份 / 参数重生成）
+GET  /island.html?run=&node=[&year=]   岛群调试台（2D 图层、四季、逐日天气、改年份 / 参数重生成；「营建此聚落」跳到 /town.html）
 GET  /api/island/stats?run=            全量季型统计（islands/season_stats.json，没有就算，8000 群约 5 s）
 GET  /api/island/data?run=&node=&year=   island.json + climate.json（含逐日天气）
 GET  /api/island/raster?run=&node=       terrain.npz 的栅格（base64 定型数组，过大时抽稀）
 POST /api/island/regen {run, node, year, sets:[...]}   强制重生成（可带 island.* 参数覆盖）
+GET  /town.html?[run=&node=&site=] | ?[terrain=&style=]   营建调试台（聚落营建器，PLAN-TOWN 第五步；接口见 town_api.py）
+GET  /api/town/styles · /api/town/style?name= · /api/town/sites?run=&node=   POST /api/town/plan {…}
 POST /api/run  {seed, sets:[...], base_run}   后台重跑管线
 GET  /api/run/status          进度
 """
@@ -32,6 +34,7 @@ from pathlib import Path
 
 from ..cli import _ctx_from_run
 from .bundle import build_fields, build_grid, build_texture, build_world, dumps
+from .town_api import TownApi, town_dumps
 
 STATIC = Path(__file__).parent / "static"
 
@@ -43,6 +46,7 @@ class App:
         self.lock = threading.Lock()
         self.island_lock = threading.Lock()   # 岛群生成器：一次只生成一个群，不挡住其它接口
         self.job = {"running": False, "log": [], "run_id": None, "error": None, "done_run": None}
+        self.town = TownApi(self.out_root, self.ctx)
 
     # ---- runs ----
     def runs(self) -> list[dict]:
@@ -124,6 +128,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send((STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
             elif p == "/island.html":
                 self._send((STATIC / "island.html").read_bytes(), "text/html; charset=utf-8")
+            elif p == "/town.html":
+                self._send((STATIC / "town.html").read_bytes(), "text/html; charset=utf-8")
+            elif p == "/api/town/styles":
+                self._send(town_dumps(self.app.town.styles()).encode("utf-8"))
+            elif p == "/api/town/style":
+                import json as _json
+                self._send(self.app.town.style_text(q["name"], _json.loads(q.get("sets", "[]"))).encode("utf-8"), "text/plain; charset=utf-8")
+            elif p == "/api/town/sites":
+                self._send(town_dumps(self.app.town.sites(q["run"], int(q["node"]))).encode("utf-8"))
             elif p == "/api/island/stats":
                 rid = q["run"]
                 f = self.app.out_root / rid / "islands" / "season_stats.json"
@@ -311,6 +324,8 @@ class Handler(BaseHTTPRequestHandler):
                 rid = self.app.start_run(int(body.get("seed", 42)), list(body.get("sets", [])),
                                          body.get("run_id"))
                 self._json({"started": True, "run_id": rid})
+            elif self.path == "/api/town/plan":
+                self._send(town_dumps(self.app.town.plan(body)).encode("utf-8"))
             elif self.path == "/api/island/regen":
                 sets = [str(x).strip() for x in body.get("sets", []) if str(x).strip()]
                 bad = [x for x in sets if not x.startswith("island.") or "=" not in x]
