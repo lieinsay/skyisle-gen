@@ -213,9 +213,13 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             double hmin = INF;
             for (size_t k = 0; k < N; ++k)
                 if (land.v[k]) hmin = std::min(hmin, g.height.v[k]);
-            GridD hfill(H, W);
-            for (size_t k = 0; k < N; ++k) hfill.v[k] = land.v[k] ? g.height.v[k] : hmin;
             const int f = std::max(1, static_cast<int>(std::nearbyint(c.get("hydro.windward_smooth_km") / res_km)));
+            // 虚空按最近的陆地填（3 块以内；再远按群里最低的陆地）：浮在空中的岛下面有风绕过去，岸崖不算迎风的「山」
+            GridD nd;
+            Grid<int64_t> ns;
+            nearest_propagate(land, 3 * f, 1.0, nullptr, nd, ns);
+            GridD hfill(H, W);
+            for (size_t k = 0; k < N; ++k) hfill.v[k] = land.v[k] ? g.height.v[k] : (ns.v[k] >= 0 ? g.height.v[ns.v[k]] : hmin);
             const GridD hc = block_mean(hfill, f);
             const int Hc = hc.H, Wc = hc.W;
             const double sp = py_hypot(g.wind_u, g.wind_v);
