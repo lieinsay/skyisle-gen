@@ -100,7 +100,10 @@ python -m skyisle_gen.cli island floats --run out/seed42 --jobs 28          # �
 粗版（`islands_lod/<分辨率>/<节点>.npz`）meta 的各岛也记 `float_m` 与 `age`，浮高之前做的粗版算没做、`island lod` 会重跑。
 `--set island.float.enabled=false` 关掉（与改前逐位相同，只多 `float_m` = 0）。
 
-## 聚落营建器（独立工具，建设中）
+## 聚落营建器（独立工具，参考用）
+
+> **只给用户做参考，暂不接进游戏**：产物给人看、做参考；Zhouzhu 游戏不读它，游戏里的村子仍是游戏自己铺的。要接进游戏等用户开口。
+
 
 给一块地形、一个规模、一种风格，营建出一个建筑群（设计稿 `docs/PLAN-TOWN.md`，各风格的数与出处 `docs/TOWN-SOURCES.md`）。
 独立工具，只读岛群生成器的产物（地形地貌、水系、聚落点位、气候），不回写，管线与岛群生成器都不 import 它。风格由用户指定。

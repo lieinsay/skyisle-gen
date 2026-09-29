@@ -19,7 +19,7 @@ from .site import site_from_group, site_heightmap, site_stats, site_synth
 
 
 def add_parser(sub) -> None:
-    p = sub.add_parser("town", help="聚落营建器（独立工具）：地形 + 规模 + 风格 → 建筑群（docs/PLAN-TOWN.md）")
+    p = sub.add_parser("town", help="聚落营建器（独立工具，参考用、暂不接进游戏）：地形 + 规模 + 风格 → 建筑群（docs/PLAN-TOWN.md）")
     p.add_argument("what", choices=["site", "synth", "gallery", "style"], help="site = 岛群里的聚落；synth = 合成地形 / 外部高程图；gallery = 画廊；style = 看风格")
     p.add_argument("node", nargs="?", default=None, help="site：岛群节点号；style：list / show")
     p.add_argument("name", nargs="?", default=None, help="style show：风格名")

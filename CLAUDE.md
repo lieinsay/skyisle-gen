@@ -137,7 +137,7 @@ skyisle_gen/
                            把原始的数拼回与 Python 版同形的 g 与 island.json（键序、round 位数照抄）
                  decode    （P6b）C++ 记录里的 ASCII 代码 → 中文、带数的备注按 Python 版 f-string 拼；赋存区的长度 / 走向按 numpy 的 cov / eigh 重算
                  compare   `island compare`：两个后端逐群对照（陆地 / 主岛 / 岛数 / 峰 / 河长 / 村数 / 户数 / 资源处数 / 雨日 / 季型 + 两边 island check + 整套产物逐字节）与 `--timing` 用时
-  town/        **聚落营建器**（PLAN-TOWN，DESIGN-NOTES 四点二十九 – 四点三十二）：独立工具，只读岛群产物、不回写；任何别的模块不得 import 它（test_town 静态断言）。
+  town/        **聚落营建器**（PLAN-TOWN，DESIGN-NOTES 四点二十九 – 四点三十二）：**只给用户做参考，暂不接进游戏（用户定；Zhouzhu 不读它，用户开口前别往游戏里接）**；独立工具，只读岛群产物、不回写；任何别的模块不得 import 它（test_town 静态断言）。
                  算法只有 C++（core/.../town/：geom 几何、raster 哈希噪声 / 采样 / 精确欧氏距离 edt、site 场地——岛群窗口细化 / 十种合成地形 / 外部高程图 → 统一的 Site；
                  style 风格的强类型结构、analysis 场地分析、orient 朝向规则链、network 路网与 A* 寻路、plan 编排 plan_site、contour 等值线，src 里另有十个形态算子 op_fishbone / op_organic / op_street（街村、林地排村）/ op_waterfront / op_dispersed / op_green / op_comb / op_contour / op_enclosure
                  与共用件 op_common（沿路切宅基、接回路网、门到路网的巷、补必需的公共建筑、算子适用条件 op_fits）、

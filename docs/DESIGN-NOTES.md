@@ -1249,6 +1249,7 @@ j 风格照字面；n 的 OSM 标定往后放；其余按默认），各风格�
 
 第三步把村级的形态算子补齐（散居、围合单体、街村、林地排村、滨水、等高线、梳式、围绿，加上第二步的鱼骨街村、团块生长共十个），配出其余十一个风格，
 并加画廊命令 `skyisle town gallery`。集镇与城（第四步）、专业聚落（第六步）不在这一步。
+**用途（用户定）：营建器只给用户做参考，暂不接进游戏**——Zhouzhu 不读它的产物，游戏里的村子仍是 Zhouzhu 自己铺的。
 
 - **代码**：C++ `core/src/town/` 新增 op_common（各算子共用的件）、op_street（街村 / 林地排村）、op_waterfront（滨水）、op_dispersed（散居）、op_green（围绿：
   绿地村 / 环村）、op_comb（梳式）、op_contour（等高线）、op_enclosure（围合单体：圆楼 / 方楼 / 围龙屋），`contour.hpp / .cpp`（等值线，marching squares）；
