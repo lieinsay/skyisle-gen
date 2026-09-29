@@ -185,10 +185,10 @@ def test_generate_p5_farmland_identical(small_ctx, tmp_path):
     一遍放宽放牧（夏牧、烽火台、废村、工棚），一遍关掉放牧与烽火台、庙与墓岛必有；每条代码路径走到，两个后端的整套产物仍逐字节相同。"""
     from skyisle_gen import island as isl
     common = ["island.settle.ruin_min_hh=4", "island.settle.graze_min_km2=0.05", "island.settle.graze_reach_km=1e3", "island.settle.shieling_min_km2=0.5"]
-    passes = [common + ["island.settle.graze_max=1"], common + ["island.settle.graze_max=0", "island.settle.beacon_max=0", "island.settle.shrine_p=1.0", "island.settle.tomb_p=1.0",
+    passes = [common + ["island.settle.graze_max=1"], common + ["island.settle.graze_max=0", "island.market.beacon_max=0", "island.settle.shrine_p=1.0", "island.settle.tomb_p=1.0",
                                 "island.settle.tomb_max_km2=1e6"]]
     base = ["island.settle.ruin_min_hh=8", "island.settle.graze_min_km2=0.5", "island.settle.graze_reach_km=10.0", "island.settle.shieling_min_km2=3.0",
-            "island.settle.graze_max=4", "island.settle.beacon_max=2", "island.settle.shrine_p=0.5", "island.settle.tomb_p=0.35", "island.settle.tomb_max_km2=5.0"]
+            "island.settle.graze_max=4", "island.market.beacon_max=2", "island.settle.shrine_p=0.5", "island.settle.tomb_p=0.35", "island.settle.tomb_max_km2=5.0"]
     seen = set()
     for extra in passes:
         for node in _nodes(small_ctx, 3)[1:3]:
@@ -204,6 +204,7 @@ def test_generate_p5_farmland_identical(small_ctx, tmp_path):
             assert ga["settle"] == gb["settle"]
             S = gb["settle"]
             seen |= {u["kind"] for u in S["uses"]} | {x["occupancy"] for x in S["specials"]} | ({"废村"} if S["ruins"] else set())
+            seen |= {"烽火台"} if any("烽火" in r["functions"] for r in S["relays"]) else set()      # P7：烽火台归中转站
             seen |= {"保底"} if S["farmland"]["floor_islands"] else set()
     isl.island_config(small_ctx, base)                      # --set 会留在 ctx 上：改回默认
     assert {"烽火台", "庙", "墓岛", "废村", "工棚", "保底"} <= seen and seen & {"放牧", "夏牧"}, seen
@@ -236,6 +237,38 @@ def test_generate_p6_waterworks_identical(small_ctx, tmp_path):
             seen |= {"水田" if p["paddy"] else "泽田" for p in W["polders"]}
     isl.island_config(small_ctx, base)                      # --set 会留在 ctx 上：改回默认
     assert {"村塘", "山塘", "圩塘", "堰塘", "渠首闸", "圩闸", "排水闸", "干渠", "支渠", "纵浦", "横塘", "排水渠", "季节性渠首", "水田", "泽田"} <= seen, seen
+
+
+def test_generate_p7_market_identical(small_ctx, tmp_path):
+    """P7（大泊场、镇、航船、邑治、群内的烽火台）：小世界到 ④、没有 ⑥ 的航线，只有群内的中转站。默认一遍，再一遍把走路赶集收到 2 km、
+    镇距放到 4 km（多数村搭航船、线多、邑治挑得开），两个后端的整套产物仍逐字节相同；大泊场、镇挨着的泊场、航船线、搭航船的村、烽火台都走到。"""
+    from skyisle_gen import island as isl
+    forced = ["island.market.walk_km=2.0", "island.market.walk_max_km=2.0", "island.market.town_spacing_km=4.0", "island.market.line_max_stops=3",
+              "island.market.harbor_min_km2=0.2", "island.market.tailwind_factor=0.5", "island.market.headwind_factor=2.5", "island.market.wind_ref_ms=0.5"]
+    base = ["island.market.walk_km=6.0", "island.market.walk_max_km=10.0", "island.market.town_spacing_km=10.0", "island.market.line_max_stops=6",
+            "island.market.harbor_min_km2=0.5", "island.market.tailwind_factor=0.7", "island.market.headwind_factor=1.5", "island.market.wind_ref_ms=5.0"]
+    seen = set()
+    for extra in ([], forced):
+        for node in _nodes(small_ctx, 2):
+            outs = {}
+            for b in ("python", "cpp"):
+                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
+                                      return_state=True, out_root=tmp_path / b)
+                small_ctx.cfg["engine"]["backend"] = "python"
+                outs[b] = (_products(out), g)
+            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
+            assert sorted(pa) == sorted(pb)
+            assert not [k for k in pa if pa[k] != pb[k]], node
+            assert ga["settle"] == gb["settle"]
+            S = gb["settle"]
+            seen |= {"大泊场"} if S["harbors"] else set()
+            seen |= {"镇挨着大泊场"} if any(t["harbor"] is not None for t in S["towns"]) else set()
+            seen |= {"航船"} if S["boat_lines"] else set()
+            seen |= {v["market_mode"] for v in S["villages"]}
+            seen |= {f for r in S["relays"] for f in r["functions"]}
+            seen |= {"邑治不在主岛"} if any(t["seat"] and t["island"] != 0 for t in S["towns"]) else set()
+    isl.island_config(small_ctx, base)                      # --set 会留在 ctx 上：改回默认
+    assert {"大泊场", "镇挨着大泊场", "航船", "步行", "烽火"} <= seen, seen
 
 
 def test_generate_cpp_thread_independent(small_ctx, tmp_path):

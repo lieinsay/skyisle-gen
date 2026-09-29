@@ -142,10 +142,12 @@ def test_island_deterministic_and_consistent(small_ctx):
         S = json.loads((out / "settlements.json").read_text(encoding="utf-8"))
         z = np.load(out / "terrain.npz")
         # SET-pop：村农户 + 散户 + 镇非农户 + 专业聚落户 = 人口 / 户均，镇 + 专业 = 非农户；SET-field：田块面积之和 = 可耕地；SET-site：村不在崖缘 / 水面 / 漫滩，且村之间 ≥ 1 km
-        parts = S["households_in_villages"] + S["households_in_hamlets"] + S["households_in_towns_market"] + S["households_in_specials"]
+        parts = (S["households_in_villages"] + S["households_in_hamlets"] + S["households_in_towns_market"] + S["households_in_specials"]
+                 + S["households_in_relays"])
         assert parts == S["households"] == round(S["population"] / S["household_size"])
         if S["villages"]:
-            assert S["households_in_towns_market"] + S["households_in_specials"] == S["nonfarm_households"] == round(S["households"] * S["nonfarm_share"])
+            assert (S["households_in_towns_market"] + S["households_in_specials"] + S["households_in_relays"] == S["nonfarm_households"]
+                    == round(S["households"] * S["nonfarm_share"]))
         assert abs(sum(f["area_km2"] for f in S["fields"]) - float((z["cultivated"] > 0).sum()) * (J1["raster"]["res_m"] / 1000) ** 2) < 1e-3
         assert all(f["households"] >= 8 for f in S["fields"] if f["village"] and f["village"] > 0)
         for v in S["villages"] + S["specials"]:
@@ -161,8 +163,8 @@ def test_island_deterministic_and_consistent(small_ctx):
         # SET-land：飞船随处可停——没有码头；每个村 / 专业聚落一块同岛、非水非崖的泊场；P5 起没有索桥、桥头与导水槽
         assert "docks" not in S
         lands = {L["id"]: L for L in S["landings"]}
-        assert len(lands) == len(S["villages"]) + len(S["specials"])
-        for v in S["villages"] + S["specials"]:
+        assert len(lands) == len(S["villages"]) + len(S["specials"]) + sum(t["harbor"] is not None for t in S["towns"]) + len(S["relays"])
+        for v in S["villages"] + S["specials"] + S["towns"] + S["relays"]:
             L = lands[v["landing"]]
             i, j = L["cell"]
             assert z["island_id"][i, j] == v["island"] and not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0
@@ -192,7 +194,7 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert x["occupancy"] != "工棚" or x["island"] not in farm_isl
             assert x["occupancy"] == "常住" or not S["villages"] or x["home_village"] in vids
         # 没人住 ≠ 没人用：有人用的岛都没人常住；废村在自己的岛上、撤空了几年、旁边的田撂荒同样的年头；每岛一条荒地归属
-        res_isl = farm_isl | {x["island"] for x in S["specials"] if x["occupancy"] == "常住"}
+        res_isl = farm_isl | {x["island"] for x in S["specials"] if x["occupancy"] == "常住"} | {x["island"] for x in S["relays"] if x["households"] > 0}
         for u in S["uses"]:
             assert u["island"] != 0 and u["island"] not in res_isl and z["island_id"][u["cell"][0], u["cell"][1]] == u["island"]
         for r in S["ruins"]:
@@ -200,11 +202,40 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert (fy == min(255, r["abandoned_years"])).any()
         assert [t["island"] for t in S["land_tenure"]] == list(range(len(J1["islands"])))
         for t in S["land_tenure"]:
-            assert t["owner"] in ("村", "大户", "官荒") and (t["owner"] == "村") == (t["island"] in farm_isl)
+            assert t["owner"] in ("村", "大户", "官用", "官荒") and (t["owner"] == "村") == (t["island"] in farm_isl)
             assert t["status"] in ("常住", "季节住", "有人用", "荒岛") and (t["status"] == "常住") == (t["island"] in res_isl)
         # SET-town：邑治是镇，每个村归一个镇；开垦只减林地（林地占比不升）
         if S["villages"]:
             assert any(t["seat"] for t in S["towns"]) and all(v.get("market_town") for v in S["villages"])
+        # P7：本岛走路、跨岛只搭航船——走路赶集的村与镇同岛，每个搭航船的村恰在一条通到它的镇的航船线上，有别的岛上的人来赶集的镇都有航船；
+        # 大泊场在本岛缓坡平地上、镇挨着的在 town_harbor_km 内；中转站的户 = 各角色之和、一岛至多一处；邑治的村带 seat
+        tby = {t["id"]: t for t in S["towns"]}
+        cover = {}
+        for ln in S["boat_lines"]:
+            for vid in ln["stops"]:
+                cover[vid] = cover.get(vid, 0) + 1
+        for v in S["villages"]:
+            assert v["market_mode"] in ("步行", "航船")
+            if v["market_mode"] == "步行":
+                assert tby[v["market_town"]]["island"] == v["island"] and "boat_line" not in v
+            else:
+                assert cover.get(v["id"]) == 1 and S["boat_lines"][v["boat_line"] - 1]["town"] == v["market_town"]
+        assert all(t["n_lines"] > 0 for t in S["towns"] if t["served_other_islands_households"] > 0)
+        assert sum(t["seat"] for t in S["towns"]) == (1 if S["villages"] else 0)
+        seat_t = next((t for t in S["towns"] if t["seat"]), None)
+        assert seat_t is None or next(v for v in S["villages"] if v["id"] == seat_t["village"]).get("seat")
+        for h in S["harbors"]:
+            i, j = h["cell"]
+            assert z["island_id"][i, j] == h["island"] and z["slope_deg"][i, j] <= np.float32(4.0) and not z["cliff"][i, j] and h["ships"] > 0
+        for t in S["towns"]:
+            if t["harbor"] is not None:
+                h = S["harbors"][t["harbor"] - 1]
+                assert h["island"] == t["island"] and h["town"] == t["id"] and t["harbor_dist_km"] <= 2.0 + 1e-9 and t["street"]["to_km"] == h["km"]
+        assert len({r["island"] for r in S["relays"]}) == len(S["relays"])
+        for r in S["relays"]:
+            assert sum(r["roles"].values()) == r["households"] and (r["occupancy"] == "常住") == (r["households"] > 0) and r["functions"]
+            assert z["island_id"][r["cell"][0], r["cell"][1]] == r["island"] == z["island_id"][r["lookout_cell"][0], r["lookout_cell"][1]]
+        assert not any(u["kind"] == "烽火台" for u in S["uses"])          # 烽火台 P7 起归中转站
         assert S["clearing"]["forest_share_after"] <= S["clearing"]["forest_share_before"]
         assert S["water_ok_share"] >= 0.8, S["water_ok_share"]
         if S["has_river"]:

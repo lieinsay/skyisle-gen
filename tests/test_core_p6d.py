@@ -265,6 +265,76 @@ def test_island_polity_inputs_from_cpp(two_backends):
         assert {k: a[k] for k in b} == b, node
 
 
+def test_island_routes_inputs_from_cpp(two_backends):
+    """P7：第三层的 ⑥ 邻边（中转站读它）由 C++ 从 ⑥ 的对象给（_core.node_routes），与 market.node_routes 从 routes.npz / hubs.json / cand_edges.npz 读的同值。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island import engine as IE
+    from skyisle_gen.island.market import node_routes
+    _, out_py, _, _ = two_backends
+    cfg = _cfg("python")
+    ctx = Context(cfg, 7, out_py)
+    isl.island_config(ctx, ["engine.backend=cpp"])
+    E.clear_cache()
+    IE._PLANET_OBJ.clear()
+    assert IE._routes_part(ctx) is not None
+    hubs = [h["node"] for h in json.loads((out_py / "s06_routes" / "hubs.json").read_text(encoding="utf-8"))["hubs"]]
+    n = ctx.load_npz(3, "islands")["lat"].size
+    nodes = sorted(set(hubs[:10]) | set(range(0, n, 97)) | {n - 1})
+    seen_hub = False
+    for node in nodes:
+        inp = isl._node_inputs(ctx, node)
+        a = IE.inputs(ctx, node, inp, full=True)["routes"]
+        b = node_routes(ctx, node)
+        assert a == b, node
+        seen_hub |= b["hub"]
+        assert b["edges"] and all(e["flow_in"] >= 0 and e["cost_out"] > 0 for e in b["edges"])
+    assert seen_hub
+
+
+def test_island_generate_relays_identical(two_backends, tmp_path):
+    """P7：⑥ 的枢纽群（群间的换船）与邻边的口子（关卡、过夜、候风、避风）：放低门槛让各种功能都出来，两个后端的整套产物逐字节相同，
+    中转站的户从非农户里出（SET-pop 照旧）。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island import engine as IE
+    _, out_py, _, _ = two_backends
+    cfg = _cfg("python")
+    ctx = Context(cfg, 7, out_py)
+    E.clear_cache()
+    IE._PLANET_OBJ.clear()
+    hubs = [h["node"] for h in json.loads((out_py / "s06_routes" / "hubs.json").read_text(encoding="utf-8"))["hubs"]]
+    area = ctx.load_npz(3, "islands")["area_km2"]
+    ok = [h for h in hubs if 300.0 < float(area[h]) < 4000.0]
+    node = ok[len(ok) // 2] if ok else hubs[0]
+    sets = ["island.market.relay_flow_min=1.0", "island.market.relay_storm_min=0.0", "island.market.relay_overnight_days=0.0",
+            "island.market.relay_headwind_ratio=0.5"]
+
+    def products(d):
+        res = {}
+        for p in sorted(d.iterdir()):
+            if p.name == "island.json":
+                J = json.loads(p.read_text(encoding="utf-8"))
+                J["meta"].pop("seconds", None)
+                J["meta"].pop("engine", None)
+                res[p.name] = json.dumps(J, sort_keys=True, ensure_ascii=False)
+            elif p.suffix in (".npz", ".png", ".csv", ".json"):
+                res[p.name] = p.read_bytes()
+        return res
+    outs = {}
+    for b in ("python", "cpp"):
+        o = isl.generate(ctx, node, res_m=300.0, sets=[f"engine.backend={b}"] + sets, log=lambda *a: None, out_root=tmp_path / b)
+        outs[b] = products(o)
+    isl.island_config(ctx, ["island.market.relay_flow_min=100.0", "island.market.relay_storm_min=0.15", "island.market.relay_overnight_days=0.4",
+                            "island.market.relay_headwind_ratio=1.5"])
+    assert outs["python"].keys() == outs["cpp"].keys()
+    assert [k for k in outs["python"] if outs["python"][k] != outs["cpp"][k]] == []
+    S = json.loads(outs["cpp"]["settlements.json"])
+    funcs = {f for r in S["relays"] for f in r["functions"]}
+    assert {"关卡", "过夜", "候风", "避风", "换船"} <= funcs, funcs
+    assert S["households_in_relays"] == sum(r["households"] for r in S["relays"]) > 0
+    assert (S["households_in_villages"] + S["households_in_hamlets"] + S["households_in_towns_market"] + S["households_in_specials"]
+            + S["households_in_relays"] == S["households"])
+
+
 def test_island_generate_in_memory_world(two_backends, tmp_path):
     """同一进程里 cpp 后端跑过 ①–⑨：第三层直接用内存里的 C++ 对象（含 ⑨ 的人口与邦都），整群产物与 python 后端逐字节相同。"""
     from skyisle_gen import island as isl

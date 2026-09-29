@@ -140,6 +140,27 @@ def test_site_window(group):
         assert np.array_equal(sd[k][ia], big[k][ib], equal_nan=True), f"{k} 随窗口变了"
 
 
+def test_town_anchors_for_step4(group):
+    """P7：镇 / 城的窗口带着营建器第四步「集镇与城」要读的锚点——镇挨着的大泊场（在 landings 最前面）与老村核心朝它长的街；村没有这两样。"""
+    import json
+    from skyisle_gen.town.site import site_from_group
+    ctx, node, v = group
+    cfg = town_config()
+    S = json.loads((ctx.out_dir / "islands" / str(node) / "settlements.json").read_text(encoding="utf-8"))
+    _, meta_v = site_from_group(ctx, node, v["name"], None, cfg, half_m=250.0)
+    assert "harbor" not in meta_v["anchors"] and "street" not in meta_v["anchors"]
+    towns = [t for t in S["towns"] if t["harbor"] is not None]
+    if not towns:
+        pytest.skip("这个小岛群里没有挨着大泊场的镇")
+    t = towns[0]
+    tv = next(x for x in S["villages"] if x["id"] == t["village"])
+    _, meta = site_from_group(ctx, node, tv["name"], None, cfg, half_m=400.0)
+    A = meta["anchors"]
+    assert meta["kind"] == "town" and A["harbor"]["id"] == t["harbor"] and A["landings"][0] == A["harbor"]["xy"]
+    assert A["street"]["to"] == A["harbor"]["xy"] and abs(A["street"]["length_m"] - t["street"]["length_km"] * 1000.0) < 1e-6
+    assert abs(A["street"]["from"][0]) < 200.0 and abs(A["street"]["from"][1]) < 200.0      # 街从老村核心（窗口中心那格）出发
+
+
 def test_site_command_writes_products(group, tmp_path):
     from skyisle_gen.town.output import out_dir, write_plan_json, write_site
     from skyisle_gen.town.render import write_plan_png
