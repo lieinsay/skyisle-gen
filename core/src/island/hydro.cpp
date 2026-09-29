@@ -201,25 +201,24 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         const GridI eb = distance_bands(notland, static_cast<int>(std::ceil(tkm / res_km)));
         for (size_t k = 0; k < N; ++k) tilt.v[k] = tmk * std::min(static_cast<double>(eb.v[k]) * res_km, tkm);
     }
-    // 局地雨（P4，L11 的生成器那半；hydro.py 的 local_rain 同式）：海拔（与游戏 weather 的 orographic_per_km 同形）× 山脉尺度的迎风坡，
-    // 再按陆地均值归一——群的雨总量是行星层给的，山只把它重新分；关掉（两个系数都 0）时 rain ≡ P_mm，河宽按旧式
-    const double oro = c.get("hydro.oro_per_km", 0.0), wwgain = c.get("hydro.windward_gain", 0.0);
+    // 局地雨（P4，L11 的生成器那半；hydro.py 的 local_rain 同式）：本岛的起伏（高出本岛岸缘多少，用户 09-29 定：整座岛浮得高不逼气流抬升，
+    // 只让它冷、不让它湿）× 山脉尺度的迎风坡，再按陆地均值归一——群的雨总量是行星层给的，山只把它重新分；关掉（两个系数都 0）时 rain ≡ P_mm，河宽按旧式
+    const double oro = c.get("hydro.oro_rise_per_km", 0.0), wwgain = c.get("hydro.windward_gain", 0.0);
     const bool local_rain = oro != 0.0 || wwgain != 0.0;
     g.rain = GridD(H, W, 0.0);
     {
         for (size_t k = 0; k < N; ++k)
             if (land.v[k]) g.rain.v[k] = P_mm;
         if (local_rain) {
-            double hmin = INF;
-            for (size_t k = 0; k < N; ++k)
-                if (land.v[k]) hmin = std::min(hmin, g.height.v[k]);
             const int f = std::max(1, static_cast<int>(std::nearbyint(c.get("hydro.windward_smooth_km") / res_km)));
-            // 虚空按最近的陆地填（3 块以内；再远按群里最低的陆地）：浮在空中的岛下面有风绕过去，岸崖不算迎风的「山」
+            // 迎风坡也按本岛的起伏（高出本岛岸缘多少）量：浮得高的岛不算山。虚空按最近的陆地填（3 块以内，取那座岛的起伏；再远按 0 = 岸缘）：
+            // 浮在空中的岛下面有风绕过去，岸崖不算迎风的「山」
             GridD nd;
             Grid<int64_t> ns;
             nearest_propagate(land, 3 * f, 1.0, nullptr, nd, ns);
+            auto rel = [&](size_t q) { return g.height.v[q] - g.islands[g.island_id.v[q]].rim_j; };
             GridD hfill(H, W);
-            for (size_t k = 0; k < N; ++k) hfill.v[k] = land.v[k] ? g.height.v[k] : (ns.v[k] >= 0 ? g.height.v[ns.v[k]] : hmin);
+            for (size_t k = 0; k < N; ++k) hfill.v[k] = land.v[k] ? rel(k) : (ns.v[k] >= 0 ? rel(static_cast<size_t>(ns.v[k])) : 0.0);
             const GridD hc = block_mean(hfill, f);
             const int Hc = hc.H, Wc = hc.W;
             const double sp = py_hypot(g.wind_u, g.wind_v);
@@ -233,12 +232,12 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                     Gc(i, j) = sp < 1e-6 ? 0.0 : (gx * g.wind_u + gy * g.wind_v) / sp;          // 顺风方向地势升高 = 迎风坡
                 }
             const GridD G = upsample_bilinear(Gc, f, H, W);
-            const double lo = c.get("hydro.oro_lo_km"), hi = c.get("hydro.oro_hi_km"), gref = c.get("hydro.windward_ref_m_per_km");
-            const double ref = inp.height_m;
+            const double hi = c.get("hydro.oro_rise_max_km"), gref = c.get("hydro.windward_ref_m_per_km");
             std::vector<double> rl;
             for (size_t k = 0; k < N; ++k)
                 if (land.v[k]) {
-                    const double r = (1.0 + oro * clip((g.height.v[k] - ref) / 1000.0, lo, hi)) * (1.0 + wwgain * clip(G.v[k] / gref, -1.0, 1.0));
+                    const double rim = g.islands[g.island_id.v[k]].rim_j;   // 本岛岸缘（island.json 的 rim_m）
+                    const double r = (1.0 + oro * clip((g.height.v[k] - rim) / 1000.0, 0.0, hi)) * (1.0 + wwgain * clip(G.v[k] / gref, -1.0, 1.0));
                     g.rain.v[k] = r;
                     rl.push_back(r);
                 }
