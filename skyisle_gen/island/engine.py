@@ -223,11 +223,12 @@ def _polity_pop(ctx, node: int):
 # ---------------------------------------------------------------- 第 1 步：布局 + 岛形 + 高程
 def build_terrain_cpp(ctx, node: int, c: dict, inp: dict, res_m: float | None = None, log=print) -> dict:
     R = core().build_terrain(inputs(ctx, node, inp), planet_obj(ctx), flat_config(c), float(res_m or 0.0), threads(ctx))
-    return _terrain_from(ctx, node, inp, R, log)
+    return _terrain_from(ctx, node, inp, R, log, c)
 
 
-def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print) -> dict:
+def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print, c: dict | None = None) -> dict:
     from ..stages.s03_islands import CLASS_NAMES, CLASS_ZH
+    from .terrain import cores_json
     res_km = float(R["res_km"])
     n = int(R["n"])
     height, island_id, cliff = R["height"], R["island_id"], R["cliff"]
@@ -249,6 +250,10 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print) -> dict:
             "age": round(float(e["age"]), 3), "age_zh": AGE_ZH[e["kind"]],
             "bbox_cells": [r0, c0, m, m],
         })
+        if e.get("cores"):
+            gcx, gcy = e["gc"]
+            islands_json[-1]["cores"] = cores_json(e["cores"], (float(gcx), float(gcy)), float(e["float"]), res_km,
+                                                   (c or {}).get("terrain", {}))
     rims = np.asarray(R["rims"], dtype=np.float64)
     lk = []
     for e in R["links"]:
@@ -312,7 +317,8 @@ def build_hydro_cpp(ctx, node: int, c: dict, g: dict, log=print) -> None:
     state = {"inp": inputs(ctx, node, inp), "height": np.ascontiguousarray(g["height"], dtype=np.float64),
              "island_id": np.ascontiguousarray(g["island_id"], dtype=np.int16), "cliff": np.ascontiguousarray(g["cliff"], dtype=bool),
              "res_km": float(g["res_km"]), "origin_x": float(ox), "origin_y": float(oy),
-             "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "age": float(i["age"])} for i in J["islands"]]}
+             "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "age": float(i["age"]), "young": i["age_zh"] == "新岛",
+                          "multicore": bool(i.get("cores"))} for i in J["islands"]]}
     R = core().build_hydro(state, planet_obj(ctx), flat_config(c), threads(ctx))
     _hydro_from(c, g, R, log)
 
@@ -336,11 +342,15 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
         Ji["max_flowacc_km2"] = round(float(e["max_flowacc"]), 2)
         Ji["has_perennial_river"] = bool(e["has_perennial"])
         Ji["has_stream"] = bool(e["has_stream"])
+        if e.get("cap_ran"):
+            Ji["captures"] = int(e["captures"])
     dz = float(R["dz"])
     J0 = J["islands"][0]
     J0["rim_m"] = round(J0["rim_m"] + dz, 1)
     J0["peak_m"] = round(J0["peak_m"] + dz, 1)
     J0["cliff_m"] = round(J0["rim_m"] - J0["keel_m"], 1)
+    for co in J0.get("cores", []):
+        co["peak_m"] = round(co["peak_m"] + dz, 1)
     # 主岛河口表（hydro.carve_channels 的 info["rivers"]）
     rivers_info = []
     for e in R["rivers"]:
@@ -373,7 +383,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
     g.update({"river_width_m": R["river_width_m"], "river_depth_m": R["river_depth_m"], "floodplain": R["floodplain"], "cut_m": R["cut_m"]})
     g.update({"flowacc_km2": R["flowacc_km2"], "river": river, "stream": R["stream"], "lake": lake,
               "landcover": R["landcover"], "arable": R["arable"], "slope_deg": R["slope_deg"], "filled": R["filled"],
-              "recv_i": R["recv_i"], "recv_j": R["recv_j"], "route_h": R["route_h"]})
+              "recv_i": R["recv_i"], "recv_j": R["recv_j"], "route_h": R["route_h"], "rain_mm": R["rain_mm"]})
     if "cultivable" in R:                  # P5：宜垦（arable 是额度内的上等地）
         g["cultivable"] = R["cultivable"]
     cover, arable = R["landcover"], R["arable"]
@@ -401,6 +411,8 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
                   "channel_note": "河宽 / 水深见 terrain.npz 的 river_width_m / river_depth_m（溪涧为湿季值）；height 在河道格是河床，水面 = 河床 + 水深；rivers[].waterfall_m = 河口跌下崖缘的落差",
                   "wind_ms": [round(u, 2), round(v, 2)],
                   "river_levels": {"1": "小河", "2": "中河", "3": "大河", "stream": "季节性溪涧（water.png 值 1）"}}
+    from .hydro import local_precip_summary
+    J["hydro"]["local_precip"] = local_precip_summary(g["rain_mm"], island_id, hc)
     J["constraints"]["arable_frac"]["actual"] = round(float((arable > 0).sum()) / max(1, n_land), 4)
     hm = height[island_id == 0]
     J["constraints"]["height_m"]["actual"] = round(float(np.nanmedian(hm)), 1)
@@ -424,7 +436,7 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
                         float(res_m or 0.0), threads(ctx))
     t_core = time.perf_counter() - t0
     secs = R["seconds"]
-    g = _terrain_from(ctx, node, inp, R["terrain"], log)
+    g = _terrain_from(ctx, node, inp, R["terrain"], log, c)
     g["timing"] = {"terrain": float(secs[0]), "core": t_core}
     J = g["json"]
     if steps >= 2:

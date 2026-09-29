@@ -34,8 +34,9 @@ def hydraulic_geometry(Q, hc: dict):
 
 
 def carve_channels(h, hf, mk, lake, ri, rj, Akm, river_lvl, stream, P_mm: float, rim: float, keel: float,
-                   res_m: float, year_s: float, hc: dict, is_main: bool):
-    """一座岛（局部切片）的河道下切。返回 (h_new, river_lvl_wide, width_m, depth_m, floodplain, info)。"""
+                   res_m: float, year_s: float, hc: dict, is_main: bool, Qin=None):
+    """一座岛（局部切片）的河道下切。返回 (h_new, river_lvl_wide, width_m, depth_m, floodplain, info)。
+    Qin：局地雨算出的年均流量（m³/s，P4）；None = 汇流 × P_mm 的旧式。"""
     H, W = h.shape
     work = mk & ~lake
     center_r = work & (river_lvl > 0)
@@ -47,7 +48,7 @@ def carve_channels(h, hf, mk, lake, ri, rj, Akm, river_lvl, stream, P_mm: float,
     if not seed.any():
         return h, river_lvl, width, depth, np.zeros((H, W), dtype=bool), info
     runoff = float(hc["runoff_coef"])
-    Q = discharge_m3s(Akm, P_mm, runoff, year_s)
+    Q = discharge_m3s(Akm, P_mm, runoff, year_s) if Qin is None else Qin
     w, d = hydraulic_geometry(Q, hc)
     sm = float(hc["stream_width_mult"])
     width = np.where(center_r, w, np.where(center_s, sm * w, 0.0))

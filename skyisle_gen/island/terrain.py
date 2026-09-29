@@ -1,4 +1,4 @@
-"""5.2 岛内地形：岛形（椭圆 + 域扭曲噪声 + 面积二分反解）→ 基形随岛龄 → 分形噪声 → 简化水流侵蚀 → 崖缘。
+"""5.2 岛内地形：岛形（椭圆 + 域扭曲噪声 + 面积二分反解）→ 基形随岛龄（新岛是拱、汇聚带的一部分大岛多核嵌合）→ 分形噪声 → 简化水流侵蚀（谷收拢）→ 崖缘。
 
 每座岛在自己的局部栅格上生成（分辨率 = 群栅格），再贴进群栅格。高程是「云带顶以上的绝对高度（m）」：
 岛底 keel（≈ keel_clearance_m，薄片岛更低）→ 岸缘 rim（岸线上的地面高度，崖高 = rim − keel）→ 峰 peak。
@@ -73,21 +73,133 @@ def island_shape(rng, area_km2: float, res_km: float, elong: float, theta: float
     return mask, inside, X, Y
 
 
+# ---------------------------------------------------------------- 多核嵌合（P4，L18；DESIGN-NOTES 四点三十五）
+def multicore_spec(rng, area_km2: float, age: float, kernel: float, btype: int, c: dict) -> dict | None:
+    """这座岛是不是多核嵌合的（汇聚带的一部分大岛）：随机流 island:<节点>:cores:<岛号>（别的抽样次序不动）。
+    不是返回 None；是返回 {"n": 2 或 3, "primary": 主核号, "strength": 各核强度（主核 1，小的、老的核低）, "rng": 接着抽缝的扭曲噪声}。"""
+    frac = float(c.get("multicore_frac", 0.0))
+    if not frac > 0.0:
+        return None
+    u = rng.uniform()
+    min_km2 = float(c["multicore_min_km2"])
+    if btype != 0 or area_km2 < min_km2 or age < float(c["age_young"]):
+        return None
+    p = frac * min(1.0, max(0.0, kernel / float(c["multicore_kernel_full"])))
+    if not u < p:
+        return None
+    n = 2
+    if area_km2 >= 2.0 * min_km2 and rng.uniform() < float(c["multicore_three_frac"]):
+        n = 3
+    primary = int(rng.integers(0, n))
+    lo, hi = float(c["core_low_min"]), float(c["core_low_max"])
+    strength = [1.0 if k == primary else float(rng.uniform(lo, hi)) for k in range(n)]
+    return {"n": n, "primary": primary, "strength": strength, "rng": rng}
+
+
+def _multicore_form(sp: dict, mask, inside, X, Y, R: float, res_km: float, half: float, px: float, py: float,
+                    fn_ridge, fn_fine, c: dict) -> tuple[np.ndarray, dict]:
+    """多核的造形：核摆在岛形里（离第一个挑的峰最远的一格、再离它最远的一格，三核再加离两者都远的一格），
+    格归（域扭曲后）最近的核；主核是山（脊线垂直于两核连线：嵌合挤出的褶皱与缝平行），小的、老的核是朝远端缓降的平原、
+    中间一道浅槽沿「主核 → 小核」的轴收水成干流；缝两边按到两核的距离差平滑过渡，缝上挤出一道脊；向岸缘收（inside^0.35）。
+    返回 (shape, 核的摆放 {n, primary, sx, sy, strength, member})。C++ 版 terrain.cpp 的 multicore_form 同式。"""
+    ii, jj = np.where(mask)
+    Xc, Yc = X[ii, jj], Y[ii, jj]
+    ins = inside[ii, jj]
+    sel = ins >= float(c["core_inside_min"])
+    if not sel.any():
+        sel = np.ones(ii.size, dtype=bool)
+    cx_, cy_ = Xc[sel], Yc[sel]
+
+    def far_from(x0, y0):
+        return int(np.argmax(np.hypot(cx_ - x0, cy_ - y0)))
+    nc = int(sp["n"])
+    sx, sy = [0.0] * nc, [0.0] * nc
+    b = far_from(px, py)
+    sx[0], sy[0] = cx_[b], cy_[b]
+    b = far_from(sx[0], sy[0])
+    sx[1], sy[1] = cx_[b], cy_[b]
+    if nc == 3:
+        b = int(np.argmax(np.minimum(np.hypot(cx_ - sx[0], cy_ - sy[0]), np.hypot(cx_ - sx[1], cy_ - sy[1]))))
+        sx[2], sy[2] = cx_[b], cy_[b]
+    P = int(sp["primary"])
+    st = sp["strength"]
+    rc = sp["rng"]
+    wfeat = max(0.6 * R, 4 * res_km)
+    fwx = FractalNoise(rc, -half, -half, half, half, feature_km=wfeat, octaves=3, persistence=0.5)
+    fwy = FractalNoise(rc, -half, -half, half, half, feature_km=wfeat, octaves=3, persistence=0.5)
+    wamp = float(c["core_seam_warp"]) * R
+    crad, rw = float(c["core_radius_rel"]) * R, float(c["core_ridge_w"]) * R
+    tw, tamp = float(c["core_trough_w"]), float(c["core_trough_amp"])
+    blend, samp, sw = float(c["core_blend"]), float(c["core_seam_amp"]), float(c["core_seam_w"])
+    j0 = 1 if P == 0 else 0
+    dPx, dPy = sx[j0] - sx[P], sy[j0] - sy[P]
+    lP = np.hypot(dPx, dPy)
+    epx, epy = (dPx / lP, dPy / lP) if lP > 0 else (1.0, 0.0)
+    ridged = 1.0 - np.abs(fn_ridge.sample(Xc, Yc))
+    S = np.empty((nc, ii.size))
+    for k in range(nc):
+        if k == P:
+            dperp = np.abs((Xc - sx[P]) * epx + (Yc - sy[P]) * epy)
+            rq = dperp / rw
+            ridge = np.exp(-(rq * rq))
+            core = np.clip(1.0 - np.hypot(Xc - sx[P], Yc - sy[P]) / crad, 0.0, 1.0)
+            S[k] = (0.2 + 0.45 * ridged + 0.35 * ridge) * (0.35 + 0.65 * core)
+        else:
+            ddx, ddy = sx[k] - sx[P], sy[k] - sy[P]
+            ll = np.hypot(ddx, ddy)
+            dl = ll if ll > 0 else 1.0
+            ex, ey = (ddx / ll, ddy / ll) if ll > 0 else (1.0, 0.0)
+            u = ((Xc - sx[P]) * ex + (Yc - sy[P]) * ey) / dl
+            v = np.abs(-(Xc - sx[P]) * ey + (Yc - sy[P]) * ex) / R
+            plain = np.clip(1.5 - u, 0.0, 1.0)
+            vq = v / tw
+            trough = np.exp(-(vq * vq)) * np.clip(2.0 * u - 1.0, 0.0, 1.0)
+            S[k] = st[k] * (0.35 + 0.65 * plain) * (0.85 + 0.15 * ridged) - tamp * trough
+    Xw = Xc + wamp * fwx.sample(Xc, Yc)
+    Yw = Yc + wamp * fwy.sample(Xc, Yc)
+    D = np.stack([np.hypot(Xw - sx[k], Yw - sy[k]) for k in range(nc)])
+    k1 = np.argmin(D, axis=0)
+    ar = np.arange(ii.size)
+    d1 = D[k1, ar]
+    D2 = D.copy()
+    D2[k1, ar] = np.inf
+    k2 = np.argmin(D2, axis=0)
+    d2 = D[k2, ar]
+    delta = (d2 - d1) / R
+    t = np.clip(delta / blend, 0.0, 1.0)
+    w = t * t * (3 - 2 * t)
+    Sm = S[k1, ar] * (0.5 + 0.5 * w) + S[k2, ar] * (0.5 - 0.5 * w)
+    stv = np.asarray(st, dtype=np.float64)
+    dq = delta / sw
+    seam = samp * (0.5 * (stv[k1] + stv[k2])) * np.exp(-(dq * dq))
+    shape = np.zeros(mask.shape)
+    shape[ii, jj] = ins ** 0.35 * np.maximum(Sm + seam, 0.0) + 0.05 * fn_fine.sample(Xc, Yc)
+    member = np.full(mask.shape, -1, dtype=np.int8)
+    member[ii, jj] = k1
+    return shape, {"n": nc, "primary": P, "sx": sx, "sy": sy, "strength": list(st), "member": member}
+
+
+def cores_json(cores: list[dict], gc: tuple[float, float], fl: float, res_km: float, c: dict) -> list[dict]:
+    """island.json 的 islands[].cores（多核岛）：局部栅格 km → 群坐标（加局部栅格中心 gc）、浮高 fl 加进峰高，两个后端共用。
+    根深 = core_root_ratio × 核上陆地高出岸缘的平均（山高根深：每个核的根在它的载荷中心正下方，浮力中心 = 重心，拼起来不歪）。"""
+    ratio = float(c.get("core_root_ratio", 5.0))
+    out = []
+    for k, e in enumerate(cores):
+        out.append({"id": k, "primary": bool(e["strength"] == 1.0), "strength": round(float(e["strength"]), 3),
+                    "seed_km": [round(float(gc[0] + e["seed"][0]), 3), round(float(gc[1] + e["seed"][1]), 3)],
+                    "center_km": [round(float(gc[0] + e["load_xy"][0]), 3), round(float(gc[1] + e["load_xy"][1]), 3)],
+                    "area_km2": round(float(e["cells"]) * res_km * res_km, 3),
+                    "peak_m": round(float(e["peak"]) + fl, 1),
+                    "mean_above_rim_m": round(float(e["mean_above"]), 1),
+                    "root_depth_m": round(ratio * float(e["mean_above"]), 1)})
+    return out
+
+
 # ---------------------------------------------------------------- 基形
-def _radial_gullies(rng, X, Y, cx, cy, n_lobes: int, amp: float):
-    """围绕 (cx, cy) 的角向噪声 → 放射状沟谷因子 (1 − amp·g(θ))。"""
-    th = np.arctan2(Y - cy, X - cx)
-    lat = rng.uniform(0.0, 1.0, n_lobes)
-    f = (th + np.pi) / (2 * np.pi) * n_lobes
-    i0 = np.floor(f).astype(np.int64) % n_lobes
-    t = f - np.floor(f)
-    t = t * t * (3 - 2 * t)
-    g = lat[i0] * (1 - t) + lat[(i0 + 1) % n_lobes] * t
-    return 1.0 - amp * g
-
-
-def base_form(rng, mask, inside, X, Y, age: float, area_km2: float, res_km: float, c: dict) -> tuple[np.ndarray, str]:
-    """返回 shape ∈ [0,1]（岸缘 0 → 峰 1，未归一）与岛龄类别。"""
+def base_form(rng, mask, inside, X, Y, age: float, area_km2: float, res_km: float, c: dict, cores: dict | None = None,
+              layout: dict | None = None) -> tuple[np.ndarray, str]:
+    """返回 shape ∈ [0,1]（岸缘 0 → 峰 1，未归一）与岛龄类别。cores（multicore_spec 的结果）给了且不是新岛：多核的造形，
+    核的摆放写进 layout（dict，就地填）。"""
     R = math.sqrt(area_km2 / math.pi)
     half = float(np.abs(X).max())
     kind = age_class(age, c)
@@ -100,21 +212,18 @@ def base_form(rng, mask, inside, X, Y, age: float, area_km2: float, res_km: floa
     fn_ridge = FractalNoise(rng, -half, -half, half, half, feature_km=max(0.45 * R, 4 * res_km), octaves=4, persistence=0.5)
     n_oct = int(np.clip(round(math.log2(max(0.15 * R, 3 * res_km) / (2.5 * res_km))) + 1, 2, 7))
     fn_fine = FractalNoise(rng, -half, -half, half, half, feature_km=max(0.15 * R, 3 * res_km), octaves=n_oct, persistence=0.55)
-    if kind == "young":
-        n_cones = 2 if (area_km2 > 25.0 and rng.uniform() < 0.4) else 1
-        Rc = float(c["cone_radius_rel"]) * R
-        s = np.zeros_like(X)
-        for k in range(n_cones):
-            if k == 0:
-                cx, cy = px, py
-            else:
-                ang = rng.uniform(-math.pi, math.pi)
-                cx, cy = px + 0.45 * R * math.cos(ang), py + 0.45 * R * math.sin(ang)
-            d = np.hypot(X - cx, Y - cy) / Rc
-            cone = np.clip(1.0 - d, 0.0, 1.0) ** float(c["cone_profile_pow"])
-            cone *= _radial_gullies(rng, X, Y, cx, cy, int(rng.integers(9, 16)), float(c["gully_amp"])) ** np.clip(d, 0, 1)
-            s = np.maximum(s, cone * (1.0 if k == 0 else rng.uniform(0.55, 0.9)))
-        shape = s * (0.7 + 0.3 * inside ** 0.5) + 0.06 * fn_fine.sample(X, Y)
+    if cores is not None and kind != "young":
+        shape, lay = _multicore_form(cores, mask, inside, X, Y, R, res_km, half, px, py, fn_ridge, fn_fine, c)
+        if layout is not None:
+            layout.update(lay)
+    elif kind == "young":
+        # 新岛成拱（P4，L17）：从海底挣脱出来的一整块，中间最厚、四周最薄——绕峰的抛物穹与岛形自己的「向内程度」（也是穹形，贴着轮廓）混合；
+        # 表面是抬起来的海底岩层，平整，细噪声小；没有火山锥与放射状的熔岩沟（沟由下切自己切出来）
+        Ra = float(c["arch_radius_rel"]) * R
+        mix = float(c["arch_inside_mix"])
+        d = np.hypot(X - px, Y - py) / Ra
+        radial = np.clip(1.0 - d * d, 0.0, 1.0)
+        shape = (1.0 - mix) * radial + mix * inside + float(c["arch_noise_amp"]) * fn_fine.sample(X, Y)
     elif kind == "mid":
         ridged = 1.0 - np.abs(fn_ridge.sample(X, Y))
         # 主脊线：过峰、方向随机
@@ -339,17 +448,22 @@ def fit_rim(surface: float, relief: float, median_frac: float, rim_min: float) -
 
 
 def sculpt_island(rng, mask, inside, X, Y, age: float, area_km2: float, res_km: float,
-                  surface: float, relief: float, rim_min: float, is_main: bool, c: dict) -> tuple[np.ndarray, str, float, float]:
+                  surface: float, relief: float, rim_min: float, is_main: bool, c: dict, cores: dict | None = None,
+                  core_out: list | None = None) -> tuple[np.ndarray, str, float, float]:
     """一座岛的完整高程：基形 → 测高曲线（幂次）→ 侵蚀（粗网格）→ 仿射拟合（陆地中位 = surface，峰 − 岸缘 = relief）。
-    返回 (h[H,W] 掩膜外 NaN, 岛龄类别, 岸缘, 峰)。台面太低装不下 relief 时岸缘停在 rim_min、起伏按比例压小。"""
-    shape, kind = base_form(rng, mask, inside, X, Y, age, area_km2, res_km, c)
+    返回 (h[H,W] 掩膜外 NaN, 岛龄类别, 岸缘, 峰)。台面太低装不下 relief 时岸缘停在 rim_min、起伏按比例压小。
+    cores（multicore_spec）给了：多核的造形；core_out（list）给了就填每个核拟合后的原始数（局部栅格 km，cores_json 换成 island.json 的形）。"""
+    lay = {}
+    shape, kind = base_form(rng, mask, inside, X, Y, age, area_km2, res_km, c, cores, lay)
     s = shape[mask]
     lo, hi = float(s.min()), float(s.max())
     shape = np.where(mask, (shape - lo) / max(1e-9, hi - lo), 0.0)
     # 测高曲线：u → u^γ 不改排序，中位分位 m → m^γ，解 γ 让它等于该岛龄的目标分位（大半是低地、山集中在中央）。
     # 台面离岛底太近、装不下目标起伏时，先把分位压低（最低 median_frac_min：一圈缓坡低地托一座陡峰），还不够才压起伏
-    m_t = float(c[f"median_frac_{kind}"])
-    m_t = min(m_t, max(float(c["median_frac_min"]), (surface - rim_min) / max(1.0, relief)))
+    m_t = float(c["median_frac_arch" if kind == "young" else f"median_frac_{kind}"])
+    # 新岛是拱：分位最低只压到 median_frac_arch_min（压成一圈低地托一座尖峰就不是拱了），装不下就压起伏——拱矮一些
+    m_min = float(c["median_frac_arch_min"] if kind == "young" else c["median_frac_min"])
+    m_t = min(m_t, max(m_min, (surface - rim_min) / max(1.0, relief)))
     m_raw = float(np.median(shape[mask]))
     if 1e-3 < m_raw < 0.999:
         shape = shape ** float(np.clip(math.log(m_t) / math.log(m_raw), 0.7, 3.5))
@@ -380,4 +494,17 @@ def sculpt_island(rng, mask, inside, X, Y, age: float, area_km2: float, res_km: 
     u = np.clip((h - rim) / max(1e-6, hmax - rim), 0.0, 1.0)
     rim2, R2 = fit_rim(surface, relief, float(np.median(u[mask])), rim_min)
     h = np.where(mask, rim2 + R2 * u, np.nan)
+    if core_out is not None and lay:
+        # 多核：每个核的载荷（高出岸缘的量）与载荷中心——根就在它正下方
+        for k in range(int(lay["n"])):
+            sel = mask & (lay["member"] == k)
+            a = h[sel] - rim2
+            n_c = int(a.size)
+            load = float(np.sum(a))
+            ok = load > 0.0
+            core_out.append({"seed": (float(lay["sx"][k]), float(lay["sy"][k])), "strength": float(lay["strength"][k]), "cells": n_c,
+                             "peak": float(np.max(h[sel])) if n_c else float(rim2), "load": load,
+                             "load_xy": ((float(np.sum(a * X[sel])) / load, float(np.sum(a * Y[sel])) / load) if ok
+                                         else (float(lay["sx"][k]), float(lay["sy"][k]))),
+                             "mean_above": load / n_c if n_c else 0.0})
     return h, kind, rim2, rim2 + R2

@@ -136,7 +136,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
         return build_terrain_cpp(ctx, node, c, inp, res_m=res_m, log=log)
     from .layout import (boundary_axis, float_offsets, island_count, links, place_islands, radial_profile, relief_targets,
                          shoreline_gaps, surface_heights, zipf_sizes)
-    from .terrain import age_class, island_shape, sculpt_island
+    from .terrain import age_class, cores_json, island_shape, multicore_spec, sculpt_island
     from .grid import binary_erode
 
     lay, ter = c["layout"], c["terrain"]
@@ -202,6 +202,8 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
     rims = np.zeros(n)
     masks_pos = []
     t0 = time.perf_counter()
+    # 多核嵌合（P4）：每座岛一条随机流 island:<节点>:cores:<岛号>，按面积、岛龄、板块边界定（别的抽样次序不动）
+    specs = [multicore_spec(_rng(ctx, node, f"cores:{k}"), float(sizes[k]), float(ages[k]), kernel, btype, ter) for k in range(n)]
     for k in range(n):
         mask, inside, X, Y = shapes[k]
         m = mask.shape[0]
@@ -211,8 +213,9 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
         surf = float(surfs[k])
         keel_k = min(keel, float(ter["keel_surface_frac"]) * surf)
         rng_t = _rng(ctx, node, f"terrain:{k}")
+        core_out = []
         h, kind, rim, peak = sculpt_island(rng_t, mask, inside, X, Y, float(ages[k]), float(sizes[k]), res_km, surf,
-                                           float(reliefs[k]), keel_k + float(ter["cliff_min_m"]), k == 0, ter)
+                                           float(reliefs[k]), keel_k + float(ter["cliff_min_m"]), k == 0, ter, specs[k], core_out)
         # 浮高：整座平移（高程、岸缘、峰、台面、岛底一起），在水系、地表、资源、气温、聚落之前——后面按高度算的都读平移后的
         fl = 0.0
         if float_on and k > 0:
@@ -242,6 +245,8 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
             "age": round(float(ages[k]), 3), "age_zh": {"young": "新岛", "mid": "中年", "old": "老岛"}[kind],
             "bbox_cells": [r0, c0, m, m],
         })
+        if core_out:
+            islands_json[-1]["cores"] = cores_json(core_out, (float(gc[k, 0]), float(gc[k, 1])), fl, res_km, ter)
     # 裁到陆地外框 + 边距（局部栅格有很大的空白外框）
     land = island_id >= 0
     rows, cols = np.where(land.any(axis=1))[0], np.where(land.any(axis=0))[0]
