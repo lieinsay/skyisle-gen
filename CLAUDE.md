@@ -276,7 +276,8 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   **地貌 P4（2026-09-29，四点三十五，Zhouzhu PLAN-LAND P4）**：新岛是拱（`median_frac_arch` 0.35、最低 0.3，旧 `median_frac_young` / `cone_*` 作废）；
   多核嵌合 `multicore_frac` 0.3（**用户定三成**：汇聚带边界核 ≥ 0.5 的大主岛的 30%，折全行星 ≥ 300 km² 主岛 17%）、≥ 300 km²、不是新岛，缝脊 0.12、浅槽 0.2 × 0.5 等效半径，根深系数 5；
   谷收拢 `[island.hydro] capture_reach_km` 3（**用户定「中」**：弱 1.5 / 强 5；山在中间的岛汇水 ≥ 5 km² 出岸缘的河少两三成）、大谷数 = 面积 / 150 km²、收完 ≤ 岛面积两成、新岛 × 0.1；
-  局地雨 `oro_per_km` 0.4（同游戏 weather）、`windward_gain` 0.3、迎风在 3 km 块均值上量；湿地 `wet_*` 改口径（旧 `wet_slope_deg` / `wet_acc_km2` / `wet_precip_mm` 作废），
+  局地雨按本岛的起伏（**用户 09-29 定**：`oro_rise_per_km` 0.4 × min(高出本岛岸缘 km, `oro_rise_max_km` 2)，旧 `oro_per_km` / `oro_lo_km` / `oro_hi_km` 按主岛台面、作废）、
+  `windward_gain` 0.3、迎风在 3 km 块均值的起伏上量；湿地 `wet_*` 改口径（旧 `wet_slope_deg` / `wet_acc_km2` / `wet_precip_mm` 作废），
   指数 ≥ 5e5、周围最陡坡 < 2.5°、离崖缘 2 → 6 km、雨的三次方。
   浮高 `[island.float]`（2026-09-27，四点二十八，Zhouzhu 浮高计划 G 期）：主岛不动，其余岛整座平移 δ——z = 0.65 − 0.75 × Δ岛龄 / 0.08 + N(0, 1)，
   往上 1500 × tanh(550 z / 1500)、往下 500 × tanh(450 z / 500)，往下的再按 (岸缘 − 20) / 500 缩（岸缘 ≥ 20 m、不在下限堆一摞）；

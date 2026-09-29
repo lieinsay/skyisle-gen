@@ -111,7 +111,8 @@ python -m skyisle_gen.cli island floats --run out/seed42 --jobs 28          # �
   缝上挤出脊；island.json 各岛的 `cores`（载荷中心、根深……，给游戏以后画几个倒锥的岛底）。
 - 谷收拢（用户定「中」，`[island.hydro] capture_reach_km` 3 km）：大谷把 3 km 内小沟的上半截抢过来，山在中间的岛汇水 ≥ 5 km² 出岸缘的河少两三成、前几大盆地的占比升几个点；新岛几乎不收，老岛不切成大峡谷。
 - 湿地看「坡缓、离崖缘远、汇来的水排不走」再乘雨（雨的三次方），不拿 800 mm 一刀切：北边平而干的 #6615、#6610 从 0 到一百二十多 km²，南边山群只剩两三 km²，#5498 最多（200 km²）。
-- 河的流量、地表湿度、湿地按局地雨算：海拔（与游戏的地形雨同一个 0.4 / km）× 山脉尺度的迎风坡，全群的雨总量不变；terrain.npz 加 `rain_mm`。
+- 河的流量、地表湿度、湿地按局地雨算：本岛的起伏（高出本岛岸缘每 km 多 0.4，用户 09-29 定：整座岛浮得高不算，只有山逼着气流抬升才多下雨）× 山脉尺度的迎风坡，
+  全群的雨总量不变；terrain.npz 加 `rain_mm`。
 - 剖面七群 + #2051 的前后对照（三档设定）在 DESIGN-NOTES 四点三十五；两个后端逐位相同。
 
 **地貌与聚落 P5：有的地方就是没人**（DESIGN-NOTES 四点三十六，Zhouzhu `docs/PLAN-LAND.md` P5 的生成器那半，`island/farmland.py` + `core/src/island/farmland.cpp`）：
