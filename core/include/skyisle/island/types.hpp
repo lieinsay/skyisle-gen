@@ -304,6 +304,7 @@ struct Group {
     Grid<uint8_t> settle_raster;     // 1 田 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落 / 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用
     GridI settle_fields;             // 田块号（0 = 无）
     Grid<uint8_t> cultivated, fallow_years;   // P5：已垦（在种，0 / 1 田 / 2 梯田）、撂荒了几年（0 = 不是撂荒地）
+    GridI polder_id;                 // P6：圩号（0 = 不是圩田；圩田也算已垦）
     double settle_pop = 0;
     double sec_settle = 0;
 };

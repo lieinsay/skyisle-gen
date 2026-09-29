@@ -497,6 +497,7 @@ void bind_island(nb::module_& m) {
             d["settle_fields"] = grid_np(GridI(g.settle_fields));
             d["settle_cultivated"] = grid_np(Grid<uint8_t>(g.cultivated));
             d["settle_fallow"] = grid_np(Grid<uint8_t>(g.fallow_years));
+            d["settle_polder"] = grid_np(GridI(g.polder_id));
             d["settle_pop"] = g.settle_pop;
         }
         d["seconds"] = nb::make_tuple(g.sec_total, g.sec_hydro, g.sec_resources, g.sec_climate, g.sec_settle);

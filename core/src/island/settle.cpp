@@ -12,6 +12,7 @@
 
 #include "skyisle/island/farmland.hpp"
 #include "skyisle/island/resources.hpp"
+#include "skyisle/island/waterworks.hpp"
 
 namespace skyisle::island {
 
@@ -1198,6 +1199,17 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         for (const auto& it : intake_rec) sr(it[1], it[2]) = 8;
     }
 
+    // ---------- 水利（P6，waterworks.cpp）：谷口的渠、村塘 / 山塘、圩田的纵浦横塘与圩塘、闸 ----------
+    Json works;
+    {
+        std::vector<WorksField> wf;
+        wf.reserve(fields.size());
+        for (const Field& f : fields) wf.push_back({static_cast<int64_t>(f.cells), f.area_km2});
+        std::vector<WorksVillage> wv;
+        for (const Village& v : villages) wv.push_back({v.id, v.ci, v.cj, v.field, v.households + (v.has_market ? v.households_market : 0)});
+        works = build_waterworks(g, c, wf, fields_raster, wv, sr, FL.polders);
+    }
+
     // ---------- 没人常住的岛有人用（P5，island_uses）：放牧 / 夏牧、烽火台、庙、墓岛；各岛的住法 ----------
     std::vector<Json> uses_json;
     struct UseRec {
@@ -2070,6 +2082,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
     S.set("ruins", rj);
     S.set("uses", arr_of_json(uses_json));
     S.set("land_tenure", tenure);
+    S.set("waterworks", works);
     g.settle = std::move(S);
     g.settle_raster = std::move(sr);
     g.settle_fields = std::move(fields_raster);

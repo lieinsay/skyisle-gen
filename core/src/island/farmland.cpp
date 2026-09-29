@@ -12,7 +12,7 @@
 namespace skyisle::island {
 
 namespace {
-enum { LC_FOREST = 4, LC_SHRUB = 5, LC_GRASS = 6, LC_ARABLE = 7, LC_TERRACE = 8 };
+enum { LC_FOREST = 4, LC_SHRUB = 5, LC_GRASS = 6, LC_ARABLE = 7, LC_TERRACE = 8, LC_WET = 9 };
 
 // 大岛保底（用户 09-29 定；farmland.floor_cells 同式）：主岛以外 ≥ island_floor_km2 的岛，在它合门槛的宜垦片里挑最好的那片，
 // 从片里最好的能开的格起按（适宜度降序、格号升序）往 8 邻域的能开的格长成连成一块的 need 格；长不到就从片里下一个没走到的最好的格重长，
@@ -130,6 +130,8 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
         for (size_t k = 0; k < N; ++k)
             if (g.res_field[FK_ORE].v[k] > 0 || g.res_field[FK_SULFUR].v[k] > 0 || g.res_field[FK_STONE].v[k] > 0) pit[k] = 1;
     }
+    Mask wet(H, W, 0);                                    // 聚落层动手之前的湿地（P6 的圩田从这里挑）
+    for (size_t k = 0; k < N; ++k) wet.v[k] = (g.island_id.v[k] >= 0 && g.landcover.v[k] == LC_WET) ? 1 : 0;
     // ---- 宜垦的连通片（不跨岛）与定居门槛
     Mask cm(H, W, 0);
     for (size_t k = 0; k < N; ++k) cm.v[k] = g.cultivable.v[k] > 0 ? 1 : 0;
@@ -175,46 +177,80 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     const int64_t n_g = static_cast<int64_t>(gcells.size());
     std::vector<uint8_t> reserved(N, 0);
     for (int32_t k : gcells) reserved[k] = 1;
-    std::vector<int32_t> pick1(gcells);
-    for (int32_t k : order) {
-        if (static_cast<int64_t>(pick1.size()) >= n_quota) break;
-        if (ok_t[lab.v[k]] && !reserved[k]) pick1.push_back(k);
+    // 一遍好地先占：保底的格、圩田的格先占，其余按次序填留下的片（farmland.fill_cultivated 的 fill_pass）
+    struct Pass {
+        std::vector<int32_t> pick1, in_kept, take;
+        std::vector<int64_t> cnt1;
+        std::vector<double> hh1;
+        std::vector<uint8_t> kept;
+        int64_t forced = 0;
+    };
+    auto fill_pass = [&](const std::vector<int32_t>& pcells) {
+        Pass r;
+        const int64_t n_r = n_g + static_cast<int64_t>(pcells.size());
+        r.pick1 = gcells;
+        r.pick1.insert(r.pick1.end(), pcells.begin(), pcells.end());
+        for (int32_t k : order) {
+            if (static_cast<int64_t>(r.pick1.size()) >= std::max<int64_t>(n_quota, n_r)) break;
+            if (ok_t[lab.v[k]] && !reserved[k]) r.pick1.push_back(k);
+        }
+        r.cnt1.assign(static_cast<size_t>(n_lab) + 1, 0);
+        for (int32_t k : r.pick1) r.cnt1[lab.v[k]]++;
+        r.hh1.assign(static_cast<size_t>(n_lab) + 1, 0.0);
+        r.kept.assign(static_cast<size_t>(n_lab) + 1, 0);
+        for (int t = 0; t <= n_lab; ++t) {
+            r.hh1[t] = static_cast<double>(r.cnt1[t]) * cell_km2 / land_per_hh;
+            r.kept[t] = (ok_t[t] && r.hh1[t] >= min_hh) ? 1 : 0;
+        }
+        for (int32_t k : gcells) r.kept[lab.v[k]] = 1;
+        r.kept[0] = 0;
+        std::vector<int32_t> rest_ok, rest_bad;
+        for (int32_t k : order) {
+            const int t = lab.v[k];
+            if (r.kept[t]) {
+                if (!reserved[k]) r.in_kept.push_back(k);
+            } else if (ok_t[t]) rest_ok.push_back(k);
+            else rest_bad.push_back(k);
+        }
+        r.take = gcells;
+        r.take.insert(r.take.end(), pcells.begin(), pcells.end());
+        r.take.insert(r.take.end(), r.in_kept.begin(),
+                      r.in_kept.begin() + std::min<size_t>(r.in_kept.size(), static_cast<size_t>(std::max<int64_t>(0, n_quota - n_r))));
+        if (static_cast<int64_t>(r.take.size()) < n_quota) {    // 留下的片不够额度：按次序补让出来的片，再补不合门槛的片
+            for (const auto* v : {&rest_ok, &rest_bad})
+                for (int32_t k : *v) {
+                    if (static_cast<int64_t>(r.take.size()) >= n_quota) break;
+                    r.take.push_back(k);
+                    ++r.forced;
+                }
+        }
+        return r;
+    };
+    Pass ps = fill_pass({});
+    // ---- 圩田（P6，polder_plan）：第一遍填到了湿地边上（周围的平地种了过半）的湿地排干围圩，第二遍圩田的格先占（额度之内）
+    {
+        std::vector<uint8_t> take1(N, 0);
+        for (int32_t k : ps.take) take1[k] = 1;
+        out.polders = polder_plan(g, c, wet, take1, n_quota - n_g);
     }
-    std::vector<int64_t> cnt1(static_cast<size_t>(n_lab) + 1, 0);
-    for (int32_t k : pick1) cnt1[lab.v[k]]++;
-    std::vector<double> hh1(static_cast<size_t>(n_lab) + 1, 0.0);
-    std::vector<uint8_t> kept(static_cast<size_t>(n_lab) + 1, 0);
-    for (int t = 0; t <= n_lab; ++t) {
-        hh1[t] = static_cast<double>(cnt1[t]) * cell_km2 / land_per_hh;
-        kept[t] = (ok_t[t] && hh1[t] >= min_hh) ? 1 : 0;
-    }
-    for (int32_t k : gcells) kept[lab.v[k]] = 1;
-    kept[0] = 0;
-    std::vector<int32_t> in_kept, rest_ok, rest_bad;
-    for (int32_t k : order) {
-        const int t = lab.v[k];
-        if (kept[t]) {
-            if (!reserved[k]) in_kept.push_back(k);
-        } else if (ok_t[t]) rest_ok.push_back(k);
-        else rest_bad.push_back(k);
-    }
-    std::vector<int32_t> take(gcells);
-    take.insert(take.end(), in_kept.begin(), in_kept.begin() + std::min<size_t>(in_kept.size(), static_cast<size_t>(std::max<int64_t>(0, n_quota - n_g))));
-    int64_t forced = 0;
-    if (static_cast<int64_t>(take.size()) < n_quota) {    // 留下的片不够额度：按次序补让出来的片，再补不合门槛的片
-        for (const auto* v : {&rest_ok, &rest_bad})
-            for (int32_t k : *v) {
-                if (static_cast<int64_t>(take.size()) >= n_quota) break;
-                take.push_back(k);
-                ++forced;
-            }
-    }
+    const std::vector<int32_t>& pcells = out.polders.cells;
+    const int64_t n_p = static_cast<int64_t>(pcells.size());
+    if (n_p) ps = fill_pass(pcells);
+    g.polder_id = out.polders.polder_id;
+    const std::vector<int32_t>& pick1 = ps.pick1;
+    const std::vector<int32_t>& in_kept = ps.in_kept;
+    const std::vector<int32_t>& take = ps.take;
+    const std::vector<int64_t>& cnt1 = ps.cnt1;
+    const std::vector<double>& hh1 = ps.hh1;
+    const std::vector<uint8_t>& kept = ps.kept;
+    const int64_t forced = ps.forced;
     g.cultivated = Grid<uint8_t>(H, W, 0);
     std::vector<uint8_t> has_cult(static_cast<size_t>(n_lab) + 1, 0);
     for (int32_t k : take) {
         g.cultivated.v[k] = g.cultivable.v[k];
         has_cult[lab.v[k]] = 1;
     }
+    for (int32_t k : pcells) g.cultivated.v[k] = 1;       // 圩田：平地、水田
     has_cult[0] = 0;
     // ---- 撂荒：留下的片里接着往外的一层（离在种的田 ≤ fallow_ring_cells）
     const int64_t ring_n = static_cast<int64_t>(std::nearbyint(static_cast<double>(n_quota) * sc("fallow_frac")));
@@ -222,7 +258,7 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     for (size_t k = 0; k < N; ++k) cmask.v[k] = g.cultivated.v[k] > 0 ? 1 : 0;
     const Mask near_c = binary_dilate(cmask, static_cast<int>(sc("fallow_ring_cells")));
     std::vector<int32_t> ring;
-    for (size_t q = static_cast<size_t>(std::max<int64_t>(0, n_quota - n_g)); q < in_kept.size(); ++q) {
+    for (size_t q = static_cast<size_t>(std::max<int64_t>(0, n_quota - n_g - n_p)); q < in_kept.size(); ++q) {
         if (static_cast<int64_t>(ring.size()) >= ring_n) break;
         if (near_c.v[in_kept[q]]) ring.push_back(in_kept[q]);
     }
@@ -262,10 +298,12 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     for (int32_t k : ring) g.fallow_years.v[k] = static_cast<uint8_t>(std::min<int64_t>(255, ys[rl.v[k]]));
     // ---- 地表：上等地没人种的回原本的地表；已垦画成可耕地 / 梯田；撂荒按年头
     const int gy = static_cast<int>(sc("fallow_grass_years")), sy = static_cast<int>(sc("fallow_shrub_years"));
-    std::vector<int> tids;
+    std::vector<int> tids, rids;
     if (g.has_resources)
-        for (const Deposit& d : R.deposits)
+        for (const Deposit& d : R.deposits) {
             if (d.kind == RK_TIMBER) tids.push_back(d.id);
+            if (d.kind == RK_PEAT) rids.push_back(d.id);
+        }
     int64_t n_cult = 0, n_fal = 0, n_cv = 0;
     for (size_t k = 0; k < N; ++k) {
         const uint8_t nat = g.cover_natural.v[k];
@@ -283,6 +321,10 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
         if (g.has_resources && (g.cultivated.v[k] > 0 || f) && cv != LC_FOREST) {
             const int32_t p = g.patch_id.v[k];
             if (p >= 0 && std::find(tids.begin(), tids.end(), p) != tids.end()) g.patch_id.v[k] = -1;
+        }
+        if (g.has_resources && n_p && g.polder_id.v[k] > 0) {         // 排干围成圩田的湿地：从泥炭 / 芦苇荡的片里划掉
+            const int32_t p = g.patch_id.v[k];
+            if (p >= 0 && std::find(rids.begin(), rids.end(), p) != rids.end()) g.patch_id.v[k] = -1;
         }
         n_cult += g.cultivated.v[k] > 0 ? 1 : 0;
         n_fal += f ? 1 : 0;
@@ -311,6 +353,8 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     s.set("rain_ok", rain_ok);
     s.set("floor_islands", Json::arr_of(g_isl));
     s.set("floor_km2", pyround(static_cast<double>(n_g) * cell_km2, 3));
+    s.set("wetland_km2", pyround(static_cast<double>(out.polders.wetland_cells) * cell_km2, 3));
+    s.set("polder_km2", pyround(static_cast<double>(n_p) * cell_km2, 3));
     out.summary = std::move(s);
     return out;
 }

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "skyisle/island/types.hpp"
+#include "skyisle/island/waterworks.hpp"
 
 namespace skyisle::island {
 
@@ -26,9 +27,11 @@ struct RuinTract {                    // 废村：让出来的宜垦片（村址
 struct FillResult {
     std::vector<RuinTract> ruins;
     Json summary;
+    PolderPlan polders;               // P6：排干围圩的湿地（第二遍好地先占时先占，额度之内）
 };
 
-// water：河 / 湖 / 溪涧（settle 的 water）；land_per_hh：户均地量 km²；n_quota：已垦的额度（上等地的格数）。随机流 settle:fallow
+// water：河 / 湖 / 溪涧（settle 的 water）；land_per_hh：户均地量 km²；n_quota：已垦的额度（上等地的格数）。随机流 settle:fallow。
+// P6：第一遍之后按 [island.works] 挑要排干的湿地（polder_plan），第二遍圩田的格先占 → g.polder_id
 FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& water, double land_per_hh, int64_t n_quota);
 
 }  // namespace skyisle::island
