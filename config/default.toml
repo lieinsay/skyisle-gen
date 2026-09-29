@@ -515,18 +515,20 @@ stretch = [1.0, 1.6, 2.4]     # 转了还放不下，就把主岛的长短轴比
 inner_gap_min_km = 0.3        # 带约束重摆时群内岛与岛的最小岸距（照旧摆是 layout.gap_min_km）
 
 [island.terrain]              # 5.2 岛内地形
-age_young = 0.3               # 岛龄 < young 新岛（锥形，中间最厚；P4 换成从海底挣脱出来的拱）；< old 山脊谷地；≥ old 台地宽谷（与 geology.py 同口径）
+age_young = 0.3               # 岛龄 < young 新岛（从海底挣脱出来的拱，P4）；< old 山脊谷地；≥ old 台地宽谷（与 geology.py 同口径）
 age_old = 0.65
 # 起伏（岸缘 → 峰）：参考起伏按岛龄对数插值（0 → young，1 → old）× (面积/1000 km²)^area_exp × 对数正态(sigma)，夹 [min, max]
-# 锚点（只借现实里的高度）：1000 km² 上下的新岛 2000 m 级（特内里费 / 济州 / 马德拉），中年 1000 m 级（瓦胡 / 罗得），老岛几百米（毛里求斯 / 巴巴多斯）
+# 锚点（只借现实里的高度）：1000 km² 上下的新岛 2000 m 级（特内里费 / 济州 / 马德拉；P4 起新岛是拱，起伏没改），中年 1000 m 级（瓦胡 / 罗得），老岛几百米（毛里求斯 / 巴巴多斯）
 relief_young_m = 3000.0
 relief_old_m = 450.0
 relief_area_exp = 0.3
 relief_sigma = 0.25
 relief_min_m = 30.0
 relief_max_m = 4500.0
-# 测高曲线：陆地高程中位数落在岸缘 → 峰的这个分位（现实山岛 0.15–0.25：大半是低地，山集中在中央）；老岛台地偏高
-median_frac_young = 0.22
+# 测高曲线：陆地高程中位数落在岸缘 → 峰的这个分位（现实山岛 0.15–0.25：大半是低地，山集中在中央）；老岛台地偏高；
+# 新岛是拱（P4）：穹顶宽、四周薄，一大半的地在半山以上（抛物穹本身的中位分位 0.5），旧键 median_frac_young（火山锥 0.22）作废
+median_frac_arch = 0.35
+median_frac_arch_min = 0.3    # 新岛的分位最低只压到此值（压到 median_frac_min 就成了一圈低地托一座尖峰——那是火山锥）：台面装不下目标起伏时拱矮一些
 median_frac_mid = 0.2
 median_frac_old = 0.38
 median_frac_min = 0.12        # 台面离岛底太近、装不下目标起伏时，分位最低压到此值（仍不够才压起伏：台面 < 300 m 的「薄片」岛本来就矮）
@@ -537,9 +539,30 @@ shape_pad = 1.35              # 局部栅格半宽 = pad × 半长轴（轮廓�
 warp_amp = 0.18               # 域扭曲幅度（× 等效半径）
 shape_noise_amp = 0.45        # 轮廓噪声幅度（相对椭圆穹顶 1）
 shape_octaves = 5
-cone_radius_rel = 1.25        # 新岛的锥半径（× 等效半径）：锥脚落在岸线之外，岸缘才有高度
-cone_profile_pow = 1.5        # 锥剖面 (1 − d)^p：p > 1 上陡下缓
-gully_amp = 0.35              # 放射状沟谷深度（相对）
+# 新岛成拱（P4，L17；DESIGN-NOTES 四点三十五）：浮石在海底攒足了浮力，整块从海底撕开、带着上面的海底岩层一起浮上来——中间最厚、四周最薄。
+# 基形 = (1 − arch_inside_mix) × 绕峰的抛物穹 (1 − d²)（d = 离峰 / (arch_radius_rel × 等效半径)）+ arch_inside_mix × 岛形自己的「向内程度」（也是穹形，贴着轮廓）
+# + arch_noise_amp × 细噪声（抬起来的海底岩层平整）。没有火山锥、没有放射状的熔岩沟（旧键 cone_* / gully_amp 作废）；沟是下切自己切出来的顺坡沟
+arch_radius_rel = 1.1
+arch_inside_mix = 0.4
+arch_noise_amp = 0.03
+# 多核嵌合（P4，L18；DESIGN-NOTES 四点三十五）：汇聚带的一部分大岛由两三个核嵌成——每个核自己山高根深，接缝挤出一道脊，小的、老的核低，那边成平原、水汇成干流。
+# 哪些岛：板块边界是汇聚、岛面积 ≥ multicore_min_km2、不是新岛（新岛一生下来是一整块拱），概率 = multicore_frac × min(1, 边界核 / multicore_kernel_full)
+# （随机流 island:<节点>:cores:<岛号>，别的抽样次序不动）。占比的理由见四点三十五：汇聚带是「往一处漂、嵌合多」，但嵌合了的岛大多早已长成一整块、看不出几个核
+multicore_frac = 0.3
+multicore_min_km2 = 300.0
+multicore_kernel_full = 0.5
+multicore_three_frac = 0.3    # 面积 ≥ 2 × multicore_min_km2 的多核岛里三个核的比例（其余两个）
+core_low_min = 0.25           # 小的、老的核的强度（主核 1）：U(min, max)
+core_low_max = 0.55
+core_inside_min = 0.35        # 核摆在向内程度 ≥ 此值的格里（离第一个挑的峰最远处、再离它最远处，三核再加离两者都远处）
+core_seam_warp = 0.3         # 缝的域扭曲（× 等效半径）：缝不是直线
+core_radius_rel = 1.2         # 主核的山从核心往外降到零的半径（× 等效半径）
+core_ridge_w = 0.3            # 主核脊线的半宽（× 等效半径）：嵌合挤出的褶皱与缝平行
+core_trough_w = 0.5          # 小核平原上收水的浅槽半宽（× 等效半径），沿主核 → 小核的轴通到远端岸缘
+core_trough_amp = 0.2        # 浅槽深（相对主核山高 1）
+core_blend = 0.15             # 缝两边的过渡带（按到两核距离之差 / 等效半径）
+core_seam_amp = 0.12          # 缝上挤出的脊（× 两核强度的平均）
+core_seam_w = 0.08            # 缝脊的半宽（同 core_blend 的口径）
 plateau_rise = 0.3            # 老岛：向内程度到此值即登上台地
 plateau_valley_depth = 0.5    # 老岛宽谷深度（相对）；0.35 时台地几乎全平，D8 河道走直线
 mound_amp = 0.15              # 老岛边缘残丘
@@ -601,6 +624,16 @@ meander_km = 0.8
 edge_tilt_m_per_km = 1.5      # 路由面朝岸缘的微倾（m/km，最远算到 edge_tilt_km）：岸缘夹平的台面向外排水
 edge_tilt_km = 4.0
 runoff_coef = 0.45            # 年径流 / 年降水
+# 局地雨（P4，L11 的生成器那半；DESIGN-NOTES 四点三十五）：河的流量、地表的湿度、湿地都按局地雨算——
+# 雨 ∝ (1 + oro_per_km × clip((高程 − 台面) / 1 km, oro_lo_km, oro_hi_km))（与游戏 src/weather 的地形雨同形同数）
+#    × (1 + windward_gain × clip(G / windward_ref_m_per_km, −1, 1))（G = 顺风方向的地势升降，m/km，在 windward_smooth_km 见方的块均值上量：雨影是山脉尺度的事，不是单个坡向），
+# 再按全群陆地的均值归一——群的雨总量是行星层给的，山只把它重新分。两个系数都 0 = 旧式（全群一个年降水）
+oro_per_km = 0.4
+oro_lo_km = -0.3
+oro_hi_km = 1.5
+windward_gain = 0.3
+windward_smooth_km = 3.0
+windward_ref_m_per_km = 50.0
 width_a = 5.0                 # Leopold–Maddock：w ≈ 5·Q^0.5 m、d ≈ 0.35·Q^0.4 m（Q 以 m³/s 计）
 width_b = 0.5
 depth_c = 0.35
@@ -620,6 +653,25 @@ q_gorge = 0.5
 q_wide = 40.0
 valley_max_km = 2.0           # 河谷剖面最远作用到离河床多远（算力上限：100 m 格 = 20 圈扩张）
 stream_valley_cells = 3       # 溪涧沟只影响几格
+# 谷收拢（P4，L15；DESIGN-NOTES 四点三十五）：山在中间的岛，平行的小沟里有的切得快、往上游啃，把旁边沟的上游抢过来（河流袭夺），谷越来越少、剩下的越来越大。
+# 做法（hydro.capture_rivers，每座岛走水之前）：按现在的地形走一遍水、按出口分盆地；汇流最大的 n 个出口是「大谷」（n = 岛面积 / capture_km2_per_valley，
+# 夹 [capture_min_n, capture_max_n]，出口汇流 ≥ capture_win_min_km2）。其余出口汇流 ≥ capture_loser_min_km2 的小沟：沿干流从河口往上游找（干流上 capture_s_min 以上那段，
+# 干流追到汇流 < capture_head_km2），头一个 capture_reach_km 以内有大谷河道格（汇流 ≥ capture_chan_km2）比它低出 capture_margin_m 以上的格就是袭夺点，
+# 从它到那格切一道直沟（只压低地面），小沟的上半截改流进大谷。大谷收了之后不超过岛面积的 capture_max_frac（别太过）。
+# 强度就是 capture_reach_km（能从多远抢过来）；新岛 × capture_young（几乎不收），中年与老岛同一个（用户定只做到中年岛的程度）；多核岛不收（有自己的干流）；0 = 旧式
+capture_reach_km = 3.0
+capture_young = 0.1
+capture_min_island_km2 = 30.0
+capture_km2_per_valley = 150.0
+capture_min_n = 2
+capture_max_n = 16
+capture_win_min_km2 = 5.0
+capture_loser_min_km2 = 1.0
+capture_head_km2 = 0.3
+capture_chan_km2 = 1.0
+capture_s_min = 0.3
+capture_margin_m = 5.0
+capture_max_frac = 0.2
 
 [island.landcover]            # 5.3 地表分类与可耕地
 rock_temp_c = -6.0            # 海拔温度（海面年均 − 6 °C/km × 高程）低于此 → 裸岩；低于 alpine_temp_c → 高山草甸
@@ -631,9 +683,22 @@ forest_soil_min = 0.2         # 土层指数（老岛厚、平地厚、汇流处
 soil_slope_zero_deg = 60.0    # 土层随坡度线性变薄、到此坡度归零（旧 40：按几乎全平的岛定的，真实起伏下 20° 的坡就只剩一半土、一片灌丛）
 forest_temp_min_c = 5.0
 shrub_wet_min = 0.25          # 不成林但 ≥ 此湿度且土层 ≥ 一半 → 灌丛；其余草坡
-wet_slope_deg = 1.5           # 湿地：坡度 < 此值且汇流 ≥ wet_acc_km2 且降水 ≥ wet_precip_mm
-wet_acc_km2 = 3.0
-wet_precip_mm = 800.0
+# 湿地（P4，L14；DESIGN-NOTES 四点三十五）：坡缓、离崖缘远、汇来的水排不走（台面上的洼、平地），再乘局地雨——不拿年降水一刀切（旧键 wet_slope_deg / wet_acc_km2 / wet_precip_mm 作废）。
+# 指数 = 汇流（wet_spread_cells 格方窗内的最大：平地上的水摊开）× 1e6 / 格宽 m × (局地雨 / wet_ref_mm)^wet_rain_exp × 离崖缘 × (1 + wet_pit_gain × min(1, 洼深 / wet_pit_ref_m))
+#        / tan(max(周围最陡的坡, wet_slope_floor_deg))，周围 = wet_flat_cells 格方窗（成片的平地，不是一条条沟底）；
+# 离崖缘 = 到虚空的距离在 wet_edge_near_km → wet_edge_far_km 之间从 0 升到 1（崖边的水跌下去了，排得走）；雨的幂次 3：干的群要大几倍的汇水才积得成泽；
+# 指数 ≥ wet_index_min 且周围最陡的坡 < wet_slope_max_deg 为湿地
+wet_slope_max_deg = 2.5
+wet_slope_floor_deg = 0.3
+wet_flat_cells = 1
+wet_spread_cells = 4
+wet_edge_near_km = 2.0
+wet_edge_far_km = 6.0
+wet_ref_mm = 1000.0
+wet_rain_exp = 3.0
+wet_pit_gain = 2.0
+wet_pit_ref_m = 1.0
+wet_index_min = 5.0e5
 water_near_cells = 15         # 离河 / 湖几格内算「近水」（可耕适宜度加分，随距离平方根衰减）
 arable_slope_max_deg = 25.0   # 适宜度 = (1 − 坡度/此值)^1.5 × 温度项 × 土层项 × 近水项 × 湿度项
 arable_temp_min_c = 2.0
