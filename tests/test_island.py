@@ -149,7 +149,7 @@ def test_island_deterministic_and_consistent(small_ctx):
             assert (S["households_in_towns_market"] + S["households_in_specials"] + S["households_in_relays"] == S["nonfarm_households"]
                     == round(S["households"] * S["nonfarm_share"]))
         assert abs(sum(f["area_km2"] for f in S["fields"]) - float((z["cultivated"] > 0).sum()) * (J1["raster"]["res_m"] / 1000) ** 2) < 1e-3
-        assert all(f["households"] >= 8 for f in S["fields"] if f["village"] and f["village"] > 0)
+        assert all(f["households"] >= 8 for f in S["fields"] if f["village"] and f["village"] > 0 and not f.get("polder"))   # P6b：圩田的田块几户也算
         for v in S["villages"] + S["specials"]:
             i, j = v["cell"]
             assert not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0 and z["island_id"][i, j] == v["island"]
@@ -263,7 +263,7 @@ def test_island_deterministic_and_consistent(small_ctx):
                     assert z["island_id"][i, j] == cn["island"] and not z["cliff"][i, j] and not z["lake"][i, j] and z["river"][i, j] == 0 and not wet[i, j]
         cmd = [f for h in W["heads"] for f in h["fields"]]
         assert len(cmd) == len(set(cmd))
-        vp = [p["village"] for p in W["ponds"] if p.get("village") is not None]
+        vp = [p["village"] for p in W["ponds"] if p["kind"] in ("村塘", "山塘") and not p.get("abandoned")]
         assert len(vp) == len(set(vp)) and set(vp) <= {v["id"] for v in S["villages"]}
         for x in W["ponds"] + W["sluices"]:
             i, j = x["cell"]
@@ -271,6 +271,38 @@ def test_island_deterministic_and_consistent(small_ctx):
         cnt = np.bincount(z["polder_id"].ravel(), minlength=len(W["polders"]) + 1)
         assert all(int(cnt[p["id"]]) == p["cells"] for p in W["polders"]) and int(pol.sum()) == sum(p["cells"] for p in W["polders"])
         assert abs(W["summary"]["polder_km2"] - S["farmland"]["polder_km2"]) < 1e-9 and W["summary"]["polder_km2"] <= W["summary"]["wetland_km2"]
+        # P6b（L30）：每处水利都有管它的村、在它走得到的范围内（圩量到每格最远的角），渠首只灌那个村的田；废弃的没有村、记着废村与年头
+        res = J1["raster"]["res_m"] / 1000
+        walk = W["summary"]["manage_walk_km"] / res + 1e-9
+        V = {v["id"]: v for v in S["villages"]}
+        rid = {r["id"] for r in S["ruins"]}
+        def far(vid, pts):
+            P = np.asarray(pts, dtype=float).reshape(-1, 2)
+            return float(np.hypot(P[:, 0] - V[vid]["cell"][0] - 0.5, P[:, 1] - V[vid]["cell"][1] - 0.5).max())
+        for kind, xs in (("heads", W["heads"]), ("canals", W["canals"]), ("ponds", W["ponds"]), ("sluices", W["sluices"])):
+            for x in xs:
+                if x.get("abandoned"):
+                    assert x["village"] is None and x["ruin"] in rid and x["abandoned_years"] >= 1
+                    continue
+                pts = x["pts"] if kind == "canals" else [[x["cell"][0] + 0.5, x["cell"][1] + 0.5]]
+                assert x["village"] in V and far(x["village"], pts) <= walk, (kind, x["id"])
+        for h in W["heads"]:
+            assert h.get("abandoned") or h["fields"] == [V[h["village"]]["field"]]
+        W_ = z["polder_id"].shape[1]
+        for pr in W["polders"]:
+            ii, jj = np.nonzero(z["polder_id"] == pr["id"])
+            corners = [[ii + a, jj + b] for a in (0, 1) for b in (0, 1)]
+            assert pr["village"] in V and max(far(pr["village"], np.stack(cc, 1)) for cc in corners) <= walk
+        pf_ids = {f["id"] for f in S["fields"] if f.get("polder")}
+        assert all(v["field"] in pf_ids for v in S["villages"] if v.get("polder"))                  # 圩村落在自己那组圩田上
+        assert all(set(v.get("polder_fields", [])) <= pf_ids for v in S["villages"])
+        # P6b（L31）：原始地表（没有人以前）与人工改造——圩田原是湿地、地表变了的都说得清、没农户的岛湿地原样；island.json 给原始 / 现状 / 各类改造的面积
+        nat, lu = z["landcover_natural"], z["landuse"]
+        land = z["island_id"] >= 0
+        assert (nat[pol] == 9).all() and (lu[pol] == 4).all() and not (land & (z["landcover"] != nat) & (lu == 0)).any()
+        assert (lu[(ct > 0) & ~pol] != 0).all() and (lu[fy > 0] == 5).all() and not (~land & (lu > 0)).any()
+        LC = J1["landcover"]
+        assert set(LC["natural_km2"]) == set(LC["current_km2"]) and abs(sum(LC["landuse"]["km2"].values()) - float((land & (lu > 0)).sum()) * ck) < 1e-2
     # 岛数与大小：主岛最大，最小岛 ≥ 0.3 km²（离散化允许一格误差），总和 = area
     areas = [i["area_target_km2"] for i in J1["islands"]]
     assert areas[0] == max(areas)
