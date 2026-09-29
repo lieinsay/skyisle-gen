@@ -4,12 +4,15 @@
   1. 地形 / 地表 / 河 / 湿地：每群一行（年降水、主岛面积与坡 < 2° 的占比、宽 ≥ 40 m 的河段长、最大出口的汇水与河宽、湿地面积）；
   2. 田：陆地、宜垦、已垦（在种）、撂荒；已垦离最近的村 / 聚落多远（中位 / P90 / 最大）；人口（⑨ 与聚落层 Σ 户 × 户均）；
   3. 小岛有没有人（主岛除外，按 < 10 / 10–30 / 30–100 / > 100 km² 分档）：有人住 = 有常住的村、散户或专业聚落；有村 = 有农村（村或散户）；
-     只有专业聚落；有人用、没人住（工棚 / 季节住 / 放牧 / 烽火台 / 庙 / 墓岛 / 废村）；
+     只有专业聚落；有人用、没人住（工棚 / 季节住 / 放牧 / 烽火台 / 庙 / 墓岛 / 废村）；P7 起有常住户的中转站算常住（「只有专业聚落」那一格也算它）、烽火台（中转站）算有人用；
   4. 有人用、没人住的岛，按用途列；索桥与桥头的个数；
   5. 人住在哪：总户数里住在主岛、主岛以外 ≥ 30 km² 的岛、< 30 km² 的岛各几成（村与镇的户、散户、常住的专业聚落在本岛；
      工棚与季节住的专业聚落的人住在 home_village 那个村）——总人口不变，看的是住处；
   6. 水利（P6 起，settlements.json 的 waterworks）：渠首几处（季节性几处）、谷口的渠多少 km、灌多少田（占已垦几成）、
-     塘几口（村塘 / 山塘 / 圩塘 / 堰塘）、闸几座（渠首闸 / 圩闸 / 排水闸）、湿地多少、圩田多少 km²（占湿地几成、几圩几片、水田几成）、纵浦横塘与圩堤多长。
+     塘几口（村塘 / 山塘 / 圩塘 / 堰塘）、闸几座（渠首闸 / 圩闸 / 排水闸）、湿地多少、圩田多少 km²（占湿地几成、几圩几片、水田几成）、纵浦横塘与圩堤多长；
+  7. 镇、邑治、航船、中转站（P7，settlements.json 的 towns / harbors / boat_lines / relays）：镇几个、各离大泊场多远（同岛最近的一处）、几条航船线汇到镇、
+     有别的岛上的人来赶集却没有航船的镇（P7 之前没有航船：赶集按直线跨岛，这一列就是靠别的岛上的人撑起来的镇）；邑治在哪（哪座岛、农户、离大泊场多远、汇了几条线）；
+     航船几条 / 多长 / 连几个村；中转站几处（按功能）、住几户。P7 之前的产物没有大泊场：用 market.py 同一套算法在它的地形与田上现算（地形、田没变，算出来的与 P7 之后的相同）。
 P5 之前的产物（没有 cultivable / uses / ruins，专业聚落都算常住）也能量：宜垦记「—」，已垦按旧的 arable。
 
 用法（仓库根下）：
@@ -97,7 +100,8 @@ def group(d: Path, node: int, run: Path | None) -> dict:
     if S is None:
         return out
     hh_size = float(S.get("household_size", 5.0))
-    parts = S["households_in_villages"] + S["households_in_hamlets"] + S.get("households_in_towns_market", 0) + S.get("households_in_specials", 0)
+    parts = (S["households_in_villages"] + S["households_in_hamlets"] + S.get("households_in_towns_market", 0) + S.get("households_in_specials", 0)
+             + S.get("households_in_relays", 0))
     out.update({"pop_settle": round(parts * hh_size, 0), "households": S["households"], "population": S["population"],
                 "n_villages": S["n_villages"], "n_hamlets": S["n_hamlets"], "n_specials": len(S.get("specials", [])),
                 "n_bridges": sum(1 for e in J.get("links", []) if e.get("kind") == "bridge"), "n_bridgeheads": len(S.get("bridgeheads", []))})
@@ -121,6 +125,9 @@ def group(d: Path, node: int, run: Path | None) -> dict:
         hamlet[v["island"]] += 1
     for x in S.get("specials", []):
         (spec_non if x.get("occupancy") in NONRES else spec_res)[x["island"]] += 1
+    for x in S.get("relays", []):                 # P7：有常住户的中转站算常住（和常住的专业聚落一样），轮班的（烽火台）算有人用
+        if x["households"] > 0:
+            spec_res[x["island"]] += 1
     uses = defaultdict(set)                      # 岛 → 用途（有人用、没人住）
     for x in S.get("specials", []):
         if x.get("occupancy") in NONRES:
@@ -129,6 +136,9 @@ def group(d: Path, node: int, run: Path | None) -> dict:
         uses[u["island"]].add(u["kind"])
     for r in S.get("ruins", []):
         uses[r["island"]].add("废村")
+    for x in S.get("relays", []):
+        if x["households"] == 0:
+            uses[x["island"]].add("烽火台" if "烽火" in x["functions"] else "中转站（轮班）")
     rows = []
     for lo, hi in BINS:
         ids = [i["id"] for i in I if i["id"] != 0 and lo <= i["area_km2"] < hi]
@@ -154,6 +164,8 @@ def group(d: Path, node: int, run: Path | None) -> dict:
         if x.get("occupancy") in NONRES and x.get("home_village") in vil_isl:
             k = vil_isl[x["home_village"]]
         res[k] += x["households"]
+    for x in S.get("relays", []):
+        res[x["island"]] += x["households"]
     area = {i["id"]: i["area_km2"] for i in I}
     out["residence_households"] = {"total": sum(res.values()), "main": res[0],
                                    "big": sum(v for k, v in res.items() if k != 0 and area[k] >= 30.0),
@@ -175,6 +187,7 @@ def group(d: Path, node: int, run: Path | None) -> dict:
                          "fallow_km2": r.get("fallow_km2")} for r in S["ruins"]]
     if S.get("uses") is not None:
         out["uses"] = Counter(u["kind"] for u in S["uses"])
+    out["market"] = market(J, S, Z, res_km)
     WK = S.get("waterworks")
     if WK is not None:
         ws = WK["summary"]
@@ -186,6 +199,76 @@ def group(d: Path, node: int, run: Path | None) -> dict:
                         "heads_main_island": sum(1 for h in WK["heads"] if h["island"] == 0),
                         "canal_km_per_100km2": round(100.0 * ws["canal_km"] / max(1e-9, out["land_km2"]), 2)}
     return out
+
+
+def market(J: dict, S: dict, Z, res_km: float) -> dict:
+    """P7 的镇、邑治、航船、中转站；P7 之前的产物（没有 harbors）按 market.py 现算大泊场。"""
+    H = S.get("harbors")
+    derived = H is None
+    if derived:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        import tomllib
+        from skyisle_gen.island import market as MK
+        mc = tomllib.load(open(Path(__file__).resolve().parents[2] / "config" / "default.toml", "rb"))["island"]["market"]
+        g = {k: Z[k] for k in Z.files}
+        g["json"] = J
+        x0, y0 = J["raster"]["origin_km"]
+        km = lambda i, j: [round(x0 + (j + 0.5) * res_km, 3), round(y0 - (i + 0.5) * res_km, 3)]
+        _, pad = MK.harbor_pad(g, mc)
+        cells = MK.island_cells(g["island_id"], len(J["islands"]))
+        cnt = MK.harbor_count(pad, g["island_id"], cells, int(round(float(mc["harbor_window_km"]) / res_km)))
+        H = MK.harbor_sites(g, mc, pad, cnt, km, res_km)
+    V = {v["id"]: v for v in S["villages"]}
+    T = S.get("towns", [])
+    lines = S.get("boat_lines", [])
+    by_isl = defaultdict(list)
+    for h in H:
+        by_isl[h["island"]].append(h)
+
+    def near_harbor(t):
+        best = None
+        for h in by_isl.get(t["island"], []):
+            d = math.hypot(h["km"][0] - t["km"][0], h["km"][1] - t["km"][1])
+            if best is None or d < best[0]:
+                best = (d, h)
+        return best
+    dh = [near_harbor(t) for t in T]
+    dd = np.array([x[0] if x else np.inf for x in dh])
+    other = []
+    for t in T:
+        if "served_other_islands_households" in t:
+            other.append(t["served_other_islands_households"])
+        else:                                           # P7 之前：按村的 market_town（直线跨岛最近的镇）数
+            other.append(sum(v["households"] for v in S["villages"] if v.get("market_town") == t["id"] and v["island"] != t["island"]))
+    nl_ = [t.get("n_lines", 0) for t in T]
+    no_boat = [t["id"] for t, o, n_ in zip(T, other, nl_) if o > 0 and n_ == 0]
+    propped = [t["id"] for t, o in zip(T, other) if t.get("served_households") and o >= 0.5 * t["served_households"] and not t.get("n_lines", 0)]
+    seat = next((t for t in T if t.get("seat")), None)
+    si = T.index(seat) if seat else None
+    cross = sum(1 for v in S["villages"] if v.get("market_town") and v["island"] != next((t["island"] for t in T if t["id"] == v["market_town"]), v["island"]))
+    R = S.get("relays")
+    if R is None:                                       # P5 / P6：烽火台在 uses 里
+        fn = Counter({"烽火": sum(1 for u in S.get("uses", []) if u["kind"] == "烽火台")})
+        relay_hh = 0
+    else:
+        fn = Counter(f for r in R for f in r["functions"])
+        relay_hh = sum(r["households"] for r in R)
+    L = [ln["length_km"] for ln in lines]
+    return {"derived_harbors": derived, "n_harbors": len(H), "harbor_ships": sum(h["ships"] for h in H),
+            "harbor_main": sum(1 for h in H if h["island"] == 0),
+            "n_towns": len(T), "town_harbor_km": {"median": round(float(np.median(dd)), 2) if dd.size else None,
+                                                   "max": round(float(dd.max()), 2) if dd.size and np.isfinite(dd).all() else (None if not dd.size else "∞"),
+                                                   "le2": int((dd <= 2.0).sum()), "none_on_island": int((~np.isfinite(dd)).sum())},
+            "lines_per_town": {"median": float(np.median(nl_)) if nl_ else 0, "max": max(nl_, default=0), "with_line": sum(1 for x in nl_ if x)},
+            "towns_other_island_no_boat": no_boat, "towns_propped_by_other_islands": propped, "villages_cross_island_market": cross,
+            "seat": None if seat is None else {"island": seat["island"], "village": seat.get("village"), "farm_hh": seat.get("households_farm"),
+                                               "harbor_km": None if not dh[si] else round(dh[si][0], 2), "lines": seat.get("n_lines", 0),
+                                               "boat_hh": seat.get("served_boat_households"), "served": seat.get("served_households")},
+            "n_lines": len(lines), "line_km": round(sum(L), 1), "line_km_median": round(float(np.median(L)), 1) if L else None,
+            "line_km_max": round(max(L), 1) if L else None, "line_villages": sum(len(ln["stops"]) for ln in lines),
+            "line_households": sum(ln["households"] for ln in lines), "relay_functions": dict(fn), "n_relays": len(R) if R is not None else sum(fn.values()),
+            "relay_households": relay_hh}
 
 
 def pct(a, n):
@@ -254,6 +337,23 @@ def print_works(G: list[dict]) -> None:
               f"{w['polder_canal_km']:.0f} / {w['drain_km']:.1f} / {w['dike_km']:.0f} |")
 
 
+def print_market(G: list[dict]) -> None:
+    print("\n## 镇、邑治、航船、中转站（P7；P7 之前的大泊场按 market.py 在同一份地形与田上现算）\n")
+    print("| 群 | 大泊场（主岛）/ 船 | 镇 | 镇离同岛最近的大泊场 km：中位 / 最大（≤ 2 km 的镇；岛上没有的） | 航船线汇到镇：中位 / 最多（有线的镇） | "
+          "有别的岛上的人来赶集却没有航船的镇 | 别的岛上的人过半的镇 | 跨岛赶集的村 | 邑治：岛 / 农户 / 离大泊场 km / 汇几条线 | 航船：条 / 共 km（中位、最长）/ 连几村几户 | 中转站（按功能）/ 常住户 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    for g in G:
+        m = g.get("market")
+        if not m:
+            continue
+        th, lp, st = m["town_harbor_km"], m["lines_per_town"], m["seat"] or {}
+        fn = "、".join(f"{k} {v}" for k, v in m["relay_functions"].items() if v) or "—"
+        print(f"| #{g['node']} | {m['n_harbors']}（{m['harbor_main']}）/ {m['harbor_ships']} | {m['n_towns']} | {th['median']} / {th['max']}（{th['le2']}；{th['none_on_island']}） | "
+              f"{lp['median']:g} / {lp['max']}（{lp['with_line']}） | {len(m['towns_other_island_no_boat'])} | {len(m['towns_propped_by_other_islands'])} | "
+              f"{m['villages_cross_island_market']} | {st.get('island')} / {st.get('farm_hh')} / {st.get('harbor_km')} / {st.get('lines')} | "
+              f"{m['n_lines']} / {m['line_km']:g}（{m['line_km_median']}、{m['line_km_max']}）/ {m['line_villages']} 村 {m['line_households']} 户 | {fn} / {m['relay_households']} |")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("root", help="岛群目录的上级（里面是 <节点>/island.json …），如 out/seed42/islands")
@@ -266,6 +366,7 @@ def main(argv=None):
     G = [group(root / n, int(n), run) for n in a.nodes.split(",") if (root / n / "island.json").exists()]
     print_tables(G)
     print_works(G)
+    print_market(G)
     if a.json:
         Path(a.json).write_text(json.dumps(G, ensure_ascii=False, indent=1), encoding="utf-8")
     return 0
