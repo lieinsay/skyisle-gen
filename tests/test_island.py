@@ -198,6 +198,39 @@ def test_island_deterministic_and_consistent(small_ctx):
     assert weak_components(n, src, dst).max() == 0
 
 
+P3_SETS = ["island.terrain.age_young=0.6", "island.resources.density_per_100km2.salt=3.0", "island.resources.fossil_per_km2=1.0"]
+
+
+def test_resources_from_the_seafloor(small_ctx, tmp_path):
+    """P3（没有火山，DESIGN-NOTES 四点三十四）：没有熔岩管 / 火山口（文字里也没有）；骨架空洞开在浮石露头旁；温泉只在新岛；
+    石料岩性是三层之一、金属矿是海底带上来的那几种；岩盐是赋存场第 7 层，盐泉在岩盐上，盐井村挂在有盐井的岩盐区上；贝壳化石在海相石灰岩里。
+    小世界里新岛、盐丘、化石都少：把新岛门槛、盐丘与化石的密度调高，让每样都出得来（RES-geo 逐条查）。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.check import evaluate
+    from skyisle_gen.island.resources import LITH_LAYERS, ORE_ORIGIN
+    node = _pick_node(small_ctx)
+    out, g = isl.generate(small_ctx, node, res_m=300.0, steps=STEPS, sets=P3_SETS, log=lambda *a: None, return_state=True, out_root=tmp_path)
+    items = {i["id"]: i for i in evaluate(g, out)}
+    for k in ("RES-site", "RES-occ", "RES-work", "RES-geo"):
+        assert items[k]["pass"], items[k]
+    R, J, S = g["resources"], g["json"], g["settle"]
+    text = json.dumps(R, ensure_ascii=False) + json.dumps(S, ensure_ascii=False) + json.dumps(J["resources"], ensure_ascii=False)
+    assert "火山" not in text and "熔岩" not in text
+    assert R["fields"]["kinds"][-1] == "salt" and g["res_field"].shape[0] == 7 and "old_island_lithology" not in R["geology"]
+    kinds = {d["kind"] for d in R["deposits"]} | {o["kind"] for o in R["occurrences"]}
+    assert {"salt", "saltspring", "fossil"} <= kinds, kinds
+    assert any(d.get("subtype") == "骨架空洞" for d in R["deposits"])
+    ages = {i["id"]: i["age_zh"] for i in J["islands"]}
+    assert all(ages[d["island"]] == "新岛" for d in R["deposits"] if d["kind"] == "hotspring")
+    assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "stone"} <= set(LITH_LAYERS)
+    assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "ore"} <= set(ORE_ORIGIN)
+    wells = {w["occurrence"]: w for w in R["workings"] if w["kind"] == "salt"}
+    assert wells and all(R["occurrences"][o]["kind"] == "salt" for o in wells)
+    for s in S["specials"]:
+        if s["kind"] == "盐井村":
+            assert R["occurrences"][s["occurrence"]]["kind"] == "salt" and wells[s["occurrence"]]["special"] == s["id"]
+
+
 def test_shape_area_and_single_component():
     from skyisle_gen.island.terrain import island_shape
     from skyisle_gen.island.grid import label_components

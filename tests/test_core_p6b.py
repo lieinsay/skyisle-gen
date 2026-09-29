@@ -160,6 +160,26 @@ def test_generate_products_identical(small_ctx, tmp_path):
             assert np.array_equal(ga["daily"][k], gb["daily"][k]), (node, k)
 
 
+def test_generate_p3_resources_identical(small_ctx, tmp_path):
+    """P3（没有火山）的新资源（骨架空洞、只在新岛的温泉、热泉硫磺、按剥蚀深浅的石料岩性、岩盐 / 盐泉 / 盐井 / 盐井村、贝壳化石）：
+    把新岛门槛、盐丘与化石的密度调高让每样都出得来，两个后端的整套产物仍逐字节相同。"""
+    from skyisle_gen import island as isl
+    extra = ["island.terrain.age_young=0.6", "island.resources.density_per_100km2.salt=3.0", "island.resources.fossil_per_km2=1.0"]
+    node = _nodes(small_ctx, 1)[0]
+    outs = {}
+    for b in ("python", "cpp"):
+        out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
+                              return_state=True, out_root=tmp_path / b)
+        small_ctx.cfg["engine"]["backend"] = "python"
+        outs[b] = (_products(out), g)
+    (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
+    kinds = {d["kind"] for d in ga["resources"]["deposits"]} | {o["kind"] for o in ga["resources"]["occurrences"]}
+    assert {"salt", "saltspring", "fossil", "hotspring"} <= kinds, kinds
+    assert sorted(pa) == sorted(pb)
+    assert not [k for k in pa if pa[k] != pb[k]]
+    assert ga["resources"] == gb["resources"] and ga["settle"] == gb["settle"]
+
+
 def test_generate_cpp_thread_independent(small_ctx, tmp_path):
     node = _nodes(small_ctx, 1)[0]
     a, _ = _gen(small_ctx, node, "cpp", tmp_path / "t1", threads=1)
