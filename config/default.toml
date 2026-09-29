@@ -912,3 +912,33 @@ beacon_sep_deg = 90.0
 shrine_p = 0.5                # 庙：以此概率在邑治附近一座没人住的岛上有一座（逢年过节有人上岛）
 tomb_p = 0.35                 # 墓岛：以此概率在邑治附近一座 ≤ tomb_max_km2 的没人住的小岛上
 tomb_max_km2 = 5.0
+
+[island.works]                # 水利（P6，Zhouzhu PLAN-LAND L13；DESIGN-NOTES 四点三十七；waterworks.py）：谷口的渠和塘、湿地排成圩田。水网是人挖的，放在聚落层
+works_src_min_km2 = 10.0      # 渠首只设在汇水 ≥ 此值的格上（「大谷」）：常年河……
+works_stream_min_km2 = 30.0   # ……或汇水 ≥ 此值的季节性溪涧（湿季引水，渠首配一口堰塘蓄水；没有常年河的干群靠它）。从高往低挑：在出山口、平原上游就截住分走
+canal_grad_m_per_km = 0.5     # 渠水面的比降（m/km；1/2000，灌渠常见）
+canal_cut_m = 3.0             # 渠可挖穿高出渠水面这么多的地（再高就过不去）
+canal_reach_km = 6.0          # 从渠首按「工」走出去最远（工 = 步长 × (1 + canal_slope_cost × 坡²)，按格算、折成 km）
+canal_slope_cost = 100.0      # 横穿坡地费工：坡 0.1（5.7°）一步的工翻倍 → 渠顺等高线走
+canal_head_sep_km = 3.0       # 渠首之间至少隔这么远
+canal_try_sep_km = 1.0        # 试过（走过一遍）的候选这么近的不再试
+canal_min_cmd_km2 = 0.5       # 一处渠首新灌的田（按整块田的面积）够这么多才修
+canal_cmd_frac = 0.5          # 一块田有这么多成的格在渠水面以下、走得到，才算这处渠首的灌区
+canal_lateral_km = 0.8        # 渠通到每块田的入口，再按此间距的格点（以渠首为原点）铺进田里：渠网从渠首散开成扇（支渠 / 斗渠的间距）
+canal_q_per_km2 = 0.1         # 渠宽：每 km² 田要 0.1 m³/s（约 1 L/s/ha），宽 = 5·Q^0.5 m（与河的水力几何同式、不夸张），至少 canal_width_min_m
+canal_width_min_m = 1.5
+pond_near_cells = 2           # 村塘：村这么多格内能挖塘、汇流最大的格；没有就放宽到 pond_reach_cells
+pond_reach_cells = 5
+pond_m2_per_hh = 40.0         # 村塘（在灌区里或平地上的村：接渠水 / 雨水）水面 = 户数 × 此值（m²），至少 pond_min_m2（80 户约 5 亩）；不在灌区、村在高山 / 山地 / 丘陵的挖山塘（陂塘：村上坡的沟里筑坝蓄雨水）
+pond_min_m2 = 400.0
+hill_pond_ratio = 0.03        # 山塘 / 堰塘水面 = 所灌的田 × 此值（蓄 100 mm 补灌、塘深 3 m 左右），至少 hill_pond_min_m2
+hill_pond_min_m2 = 1000.0
+polder_patch_min_km2 = 0.3    # 圩田：湿地片（8 连通、不跨岛）≥ 此面积才考虑
+polder_ring_km = 2.0          # 人口压力：湿地周围此距离内的平地（宜垦、坡 < polder_flat_deg）……
+polder_flat_deg = 5.0
+polder_pressure_min = 0.5     # ……第一遍好地先占已经种了 ≥ 此比例，才排干围圩（好地占完了）；没到的照旧是芦苇荡。圩田算已垦、在额度之内
+polder_spacing_km = 0.6       # 纵浦横塘的间距：一圩 600 m 见方 ≈ 540 亩（江南宋以后分圩，一圩几百亩到一两千亩；湿地几 km² 到几十 km²）
+polder_block_min_km2 = 0.1    # 一格里的湿地够这么多才围成一圩，零碎的边角留作荡
+polder_pond_frac = 0.05       # 圩塘水面 = 圩的此比例（圩里留塘：水排到崖边就掉下去了，旱季要留水）
+polder_paddy_mm = 800.0       # 圩塘那格的局地年降水 ≥ 此值记作水田（paddy），否则是排干的泽田种旱作（800 mm 上下是旱地与水田的分界）
+polder_drain_max_cells = 30   # 排水渠：出水口顺流而下接到河 / 溪涧 / 湖，至多这么多格
