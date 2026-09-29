@@ -30,22 +30,25 @@ def river_area_for_q(q_m3s: float, P_mm: float, runoff: float, year_s: float) ->
 RAIN_Q = 16.0   # 雨量加权汇流的量子（1/16 mm）：权重取整后求和与次序无关，两个后端逐位相同
 
 
-def local_rain(height: np.ndarray, land: np.ndarray, P_mm: float, surface_m: float, u: float, v: float, res_km: float, hc: dict) -> np.ndarray:
-    """局地年降水（mm，P4，L11 的生成器那半）：海拔（与游戏 src/weather 的 orographic_per_km 同形同数）× 山脉尺度的迎风坡，再按全群陆地的均值归一——
-    群的雨总量是行星层给的，山只把它重新分。迎风 G = 顺风方向的地势升降（m/km），在 windward_smooth_km 见方的块均值上量（虚空按最近的陆地填：
-    岛浮在空中、风从底下绕过去，岸崖不算迎风的山），双线性放大回来。两个系数都 0：处处 P_mm。C++ 版 hydro.cpp 同式。"""
-    oro, wwg = float(hc.get("oro_per_km", 0.0)), float(hc.get("windward_gain", 0.0))
+def local_rain(height: np.ndarray, land: np.ndarray, P_mm: float, rim_cell: np.ndarray, u: float, v: float, res_km: float, hc: dict) -> np.ndarray:
+    """局地年降水（mm，P4，L11 的生成器那半）：本岛的起伏 × 山脉尺度的迎风坡，再按全群陆地的均值归一——群的雨总量是行星层给的，山只把它重新分。
+    起伏 = 高出本岛岸缘多少（rim_cell：每格所在那座岛的岸缘；用户 09-29 定：地形雨是山逼着气流抬升才多下的，整座岛浮得高并不逼气流上升，
+    只让它冷（气温照旧随高度降），不该让它更湿；旧口径「高程 − 主岛台面」让浮得高的小岛整座多雨）。
+    迎风 G = 顺风方向的起伏升降（m/km），在 windward_smooth_km 见方的块均值上量（虚空按最近的陆地的起伏填：岛浮在空中、风从底下绕过去，
+    岸崖不算迎风的山），双线性放大回来。两个系数都 0：处处 P_mm。C++ 版 hydro.cpp 同式。"""
+    oro, wwg = float(hc.get("oro_rise_per_km", 0.0)), float(hc.get("windward_gain", 0.0))
     rain = np.where(land, P_mm, 0.0)
     if oro == 0.0 and wwg == 0.0:
         return rain
     from .grid import block_mean, upsample_bilinear
     H, W = height.shape
-    hmin = float(np.min(height[land]))
     f = max(1, int(round(float(hc["windward_smooth_km"]) / res_km)))
-    # 虚空按最近的陆地填（3 块以内；再远按群里最低的陆地）：浮在空中的岛下面有风绕过去，岸崖不算迎风的「山」
+    # 迎风坡也按本岛的起伏（高出本岛岸缘多少）量：浮得高的岛不算山。虚空按最近的陆地填（3 块以内，取那座岛的起伏；再远按 0 = 岸缘）：
+    # 浮在空中的岛下面有风绕过去，岸崖不算迎风的「山」
     from .grid import nearest_propagate
     _nd, ns = nearest_propagate(land, 3 * f, 1.0)
-    hfill = np.where(land, height, np.where(ns >= 0, height.ravel()[np.maximum(ns, 0)], hmin))
+    rel = np.where(land, height - rim_cell, 0.0)
+    hfill = np.where(land, rel, np.where(ns >= 0, rel.ravel()[np.maximum(ns, 0)], 0.0))
     hc_ = block_mean(hfill, f)
     Hc, Wc = hc_.shape
     step = f * res_km
@@ -56,7 +59,7 @@ def local_rain(height: np.ndarray, land: np.ndarray, P_mm: float, surface_m: flo
     sp = math.hypot(u, v)
     Gc = np.zeros((Hc, Wc)) if sp < 1e-6 else (gx * u + gy * v) / sp               # 顺风方向地势升高 = 迎风坡
     G = upsample_bilinear(Gc, f, H, W)
-    r = (1.0 + oro * np.clip((height - float(surface_m)) / 1000.0, float(hc["oro_lo_km"]), float(hc["oro_hi_km"]))) \
+    r = (1.0 + oro * np.clip((height - rim_cell) / 1000.0, 0.0, float(hc["oro_rise_max_km"]))) \
         * (1.0 + wwg * np.clip(G / float(hc["windward_ref_m_per_km"]), -1.0, 1.0))
     rmean = np.mean(r[land])
     return np.where(land, P_mm * r / rmean, 0.0)
@@ -64,7 +67,7 @@ def local_rain(height: np.ndarray, land: np.ndarray, P_mm: float, surface_m: flo
 
 def local_precip_summary(rain_mm: np.ndarray, island_id: np.ndarray, hc: dict) -> dict:
     """island.json 的 hydro.local_precip（两个后端共用）：主岛局地雨的最少 / 最多 / 平均与分位（mm），全群平均（= 行星层的年降水）。"""
-    on = float(hc.get("oro_per_km", 0.0)) != 0.0 or float(hc.get("windward_gain", 0.0)) != 0.0
+    on = float(hc.get("oro_rise_per_km", 0.0)) != 0.0 or float(hc.get("windward_gain", 0.0)) != 0.0
     m = rain_mm[island_id == 0].astype(np.float64)
     a = rain_mm[island_id >= 0].astype(np.float64)
     q = np.quantile(m, [0.1, 0.5, 0.9]) if m.size else [0.0, 0.0, 0.0]
@@ -254,8 +257,11 @@ def build_hydro(ctx, node: int, c: dict, g: dict, log=print) -> None:
     from . import _rng
     from .grid import FractalNoise
     # 局地雨（P4）：水系改高程之前按拟合出来的地形算（C++ 同）
-    rain = local_rain(height, land, P_mm, float(inp["height_m"]), u, v, res_km, hc)
-    local_on = float(hc.get("oro_per_km", 0.0)) != 0.0 or float(hc.get("windward_gain", 0.0)) != 0.0
+    rim_cell = np.zeros((H, W))
+    for k_, J_ in enumerate(g["json"]["islands"]):
+        rim_cell[island_id == k_] = float(J_["rim_m"])
+    rain = local_rain(height, land, P_mm, rim_cell, u, v, res_km, hc)
+    local_on = float(hc.get("oro_rise_per_km", 0.0)) != 0.0 or float(hc.get("windward_gain", 0.0)) != 0.0
     pit = np.zeros((H, W))
     x0_, y0_ = g["json"]["raster"]["origin_km"]
     Xk_ = x0_ + (np.arange(W) + 0.5) * res_km
