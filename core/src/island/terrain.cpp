@@ -92,38 +92,155 @@ Shape island_shape(Rng& rng, double area_km2, double res_km, double elong, doubl
 }
 
 // ---------------------------------------------------------------- 基形
+// ---------------------------------------------------------------- 多核嵌合
+CoreSpec multicore_spec(Rng& rng, double area_km2, double age, double kernel, int btype, const Config& c) {
+    CoreSpec sp;
+    const double frac = c.get("terrain.multicore_frac", 0.0);
+    if (!(frac > 0.0)) return sp;
+    const double u = rng.uniform(0.0, 1.0);
+    const double min_km2 = c.get("terrain.multicore_min_km2");
+    if (btype != 0 || area_km2 < min_km2 || age < c.get("terrain.age_young")) return sp;
+    const double p = frac * clip(kernel / c.get("terrain.multicore_kernel_full"), 0.0, 1.0);
+    if (!(u < p)) return sp;
+    sp.on = true;
+    sp.n = 2;
+    if (area_km2 >= 2.0 * min_km2 && rng.uniform(0.0, 1.0) < c.get("terrain.multicore_three_frac")) sp.n = 3;
+    sp.primary = static_cast<int>(rng.integers(0, sp.n));
+    const double lo = c.get("terrain.core_low_min"), hi = c.get("terrain.core_low_max");
+    for (int k = 0; k < sp.n; ++k) sp.strength.push_back(k == sp.primary ? 1.0 : rng.uniform(lo, hi));
+    sp.rng.push_back(rng);
+    return sp;
+}
+
 namespace {
 
-struct Gullies {
-    std::vector<double> lat;
-    double cx, cy, amp;
-    int n;
-    double at(double X, double Y) const {
-        const double th = std::atan2(Y - cy, X - cx);
-        const double f = (th + PI) / (2 * PI) * n;
-        const double fl = std::floor(f);
-        const int64_t i0 = ((static_cast<int64_t>(fl) % n) + n) % n;
-        double t = f - fl;
-        t = t * t * (3 - 2 * t);
-        const double g = lat[i0] * (1 - t) + lat[(i0 + 1) % n] * t;
-        return 1.0 - amp * g;
+// 多核的造形（terrain.py 的 _multicore_form 同式）：核摆在岛形里（离第一个挑的峰最远的一格、再离它最远的一格，三核再加离两者都远的一格），
+// 格归（域扭曲后）最近的核；主核是山（脊线垂直于两核连线，嵌合挤出的褶皱与缝平行），小的、老的核是朝远端缓降的平原、中间一道浅槽收水成干流；
+// 缝两边按距离差平滑过渡，缝上挤出一道脊；向岸缘收（inside^0.35）
+void multicore_form(CoreSpec& sp, const Shape& s, const std::vector<int32_t>& cells, double R, double res_km, double half, double px, double py,
+                    const FractalNoise& fn_ridge, const FractalNoise& fn_fine, const Config& c, GridD& shape, CoreLayout& L) {
+    const int n = s.mask.H;
+    const double imin = c.get("terrain.core_inside_min");
+    std::vector<int32_t> cand;
+    for (int32_t q : cells)
+        if (s.inside.v[q] >= imin) cand.push_back(q);
+    if (cand.empty()) cand = cells;
+    auto far_from = [&](double x0, double y0) {
+        size_t best = 0;
+        double bd = -INF;
+        for (size_t t = 0; t < cand.size(); ++t) {
+            const double d = np_hypot(s.X(0, cand[t] % n) - x0, s.Y(cand[t] / n, 0) - y0);
+            if (d > bd) {
+                bd = d;
+                best = t;
+            }
+        }
+        return best;
+    };
+    const int nc = sp.n;
+    std::vector<double> sx(nc), sy(nc);
+    const size_t b = far_from(px, py);
+    sx[0] = s.X(0, cand[b] % n);
+    sy[0] = s.Y(cand[b] / n, 0);
+    const size_t c2 = far_from(sx[0], sy[0]);
+    sx[1] = s.X(0, cand[c2] % n);
+    sy[1] = s.Y(cand[c2] / n, 0);
+    if (nc == 3) {
+        size_t best = 0;
+        double bd = -INF;
+        for (size_t t = 0; t < cand.size(); ++t) {
+            const double x = s.X(0, cand[t] % n), y = s.Y(cand[t] / n, 0);
+            const double d = std::min(np_hypot(x - sx[0], y - sy[0]), np_hypot(x - sx[1], y - sy[1]));   // np.minimum 两者都不是 NaN
+            if (d > bd) {
+                bd = d;
+                best = t;
+            }
+        }
+        sx[2] = s.X(0, cand[best] % n);
+        sy[2] = s.Y(cand[best] / n, 0);
     }
-};
-
-Gullies radial_gullies(Rng& rng, double cx, double cy, int n_lobes, double amp) {
-    Gullies g;
-    g.lat.resize(n_lobes);
-    rng.uniform_fill(0.0, 1.0, g.lat.data(), n_lobes);
-    g.cx = cx;
-    g.cy = cy;
-    g.amp = amp;
-    g.n = n_lobes;
-    return g;
+    const int P = sp.primary;
+    Rng& rc = sp.rng[0];
+    const double wfeat = std::max(0.6 * R, 4 * res_km);
+    FractalNoise fwx(rc, -half, -half, half, half, wfeat, 3, 0.5);
+    FractalNoise fwy(rc, -half, -half, half, half, wfeat, 3, 0.5);
+    const double wamp = c.get("terrain.core_seam_warp") * R;
+    const double crad = c.get("terrain.core_radius_rel") * R, rw = c.get("terrain.core_ridge_w") * R;
+    const double tw = c.get("terrain.core_trough_w"), tamp = c.get("terrain.core_trough_amp");
+    const double blend = c.get("terrain.core_blend"), samp = c.get("terrain.core_seam_amp"), sw = c.get("terrain.core_seam_w");
+    // 主核的脊线方向：垂直于主核 → 第一个别的核（按核号）
+    int j0 = P == 0 ? 1 : 0;
+    const double dPx = sx[j0] - sx[P], dPy = sy[j0] - sy[P];
+    const double lP = np_hypot(dPx, dPy);
+    const double epx = lP > 0 ? dPx / lP : 1.0, epy = lP > 0 ? dPy / lP : 0.0;
+    // 各小核：主核 → 该核的轴
+    std::vector<double> ex(nc, 0.0), ey(nc, 0.0), dl(nc, 1.0);
+    for (int k = 0; k < nc; ++k) {
+        if (k == P) continue;
+        const double ddx = sx[k] - sx[P], ddy = sy[k] - sy[P];
+        const double l = np_hypot(ddx, ddy);
+        dl[k] = l > 0 ? l : 1.0;
+        ex[k] = l > 0 ? ddx / l : 1.0;
+        ey[k] = l > 0 ? ddy / l : 0.0;
+    }
+    auto surf = [&](int k, double X, double Y, double ridged) {
+        if (k == P) {
+            const double dperp = std::fabs((X - sx[P]) * epx + (Y - sy[P]) * epy);
+            const double rq = dperp / rw;
+            const double ridge = std::exp(-(rq * rq));
+            const double core = clip(1.0 - np_hypot(X - sx[P], Y - sy[P]) / crad, 0.0, 1.0);
+            return (0.2 + 0.45 * ridged + 0.35 * ridge) * (0.35 + 0.65 * core);
+        }
+        const double u = ((X - sx[P]) * ex[k] + (Y - sy[P]) * ey[k]) / dl[k];
+        const double v = std::fabs(-(X - sx[P]) * ey[k] + (Y - sy[P]) * ex[k]) / R;
+        const double plain = clip(1.5 - u, 0.0, 1.0);
+        const double vq = v / tw;
+        const double trough = std::exp(-(vq * vq)) * clip(2.0 * u - 1.0, 0.0, 1.0);
+        return sp.strength[k] * (0.35 + 0.65 * plain) * (0.85 + 0.15 * ridged) - tamp * trough;
+    };
+    L.n = nc;
+    L.primary = P;
+    L.sx = sx;
+    L.sy = sy;
+    L.strength = sp.strength;
+    L.member = Grid<int8_t>(n, n, -1);
+    std::vector<double> D(nc);
+    for (int32_t q : cells) {
+        const double X = s.X(0, q % n), Y = s.Y(q / n, 0);
+        const double Xw = X + wamp * fwx.sample(X, Y);
+        const double Yw = Y + wamp * fwy.sample(X, Y);
+        for (int k = 0; k < nc; ++k) D[k] = np_hypot(Xw - sx[k], Yw - sy[k]);
+        int k1 = 0;
+        double d1 = D[0];
+        for (int k = 1; k < nc; ++k)
+            if (D[k] < d1) {
+                k1 = k;
+                d1 = D[k];
+            }
+        int k2 = 0;
+        double d2 = INF;
+        for (int k = 0; k < nc; ++k)
+            if (k != k1 && D[k] < d2) {
+                k2 = k;
+                d2 = D[k];
+            }
+        L.member.v[q] = static_cast<int8_t>(k1);
+        const double delta = (d2 - d1) / R;
+        const double ridged = 1.0 - std::fabs(fn_ridge.sample(X, Y));
+        const double t = clip(delta / blend, 0.0, 1.0);
+        const double w = t * t * (3 - 2 * t);
+        const double S = surf(k1, X, Y, ridged) * (0.5 + 0.5 * w) + surf(k2, X, Y, ridged) * (0.5 - 0.5 * w);
+        const double dq = delta / sw;
+        const double seam = samp * (0.5 * (sp.strength[k1] + sp.strength[k2])) * std::exp(-(dq * dq));
+        const double v = S + seam;
+        shape.v[q] = np_pow(s.inside.v[q], 0.35) * (v > 0.0 ? v : 0.0) + 0.05 * fn_fine.sample(X, Y);   // np.maximum(v, 0.0)
+    }
 }
 
 }  // namespace
 
-GridD base_form(Rng& rng, const Shape& s, double age, double area_km2, double res_km, const Config& c, AgeKind& kind) {
+GridD base_form(Rng& rng, const Shape& s, double age, double area_km2, double res_km, const Config& c, AgeKind& kind,
+                CoreSpec* cores, CoreLayout* layout) {
     const double R = std::sqrt(area_km2 / PI);
     const int n = s.mask.H;
     double half = 0;
@@ -147,33 +264,19 @@ GridD base_form(Rng& rng, const Shape& s, double age, double area_km2, double re
     const int n_oct = static_cast<int>(clip(std::nearbyint(std::log2(std::max(0.15 * R, 3 * res_km) / (2.5 * res_km))) + 1, 2, 7));
     FractalNoise fn_fine(rng, -half, -half, half, half, std::max(0.15 * R, 3 * res_km), n_oct, 0.55);
     GridD shape(n, n, 0.0);
-    if (kind == YOUNG) {
-        int n_cones = 1;
-        if (area_km2 > 25.0 && rng.uniform(0.0, 1.0) < 0.4) n_cones = 2;
-        const double Rc = c.get("terrain.cone_radius_rel") * R;
-        const double cpow = c.get("terrain.cone_profile_pow"), gamp = c.get("terrain.gully_amp");
-        GridD sc(n, n, 0.0);
-        for (int k = 0; k < n_cones; ++k) {
-            double cx = px, cy = py;
-            if (k > 0) {
-                const double ang = rng.uniform(-PI, PI);
-                cx = px + 0.45 * R * std::cos(ang);
-                cy = py + 0.45 * R * std::sin(ang);
-            }
-            const int nl = static_cast<int>(rng.integers(9, 16));
-            const Gullies gul = radial_gullies(rng, cx, cy, nl, gamp);
-            const double mult = k == 0 ? 1.0 : rng.uniform(0.55, 0.9);
-            for (int32_t q : cells) {
-                const double X = s.X(0, q % n), Y = s.Y(q / n, 0);
-                const double d = np_hypot(X - cx, Y - cy) / Rc;
-                double cone = np_pow(clip(1.0 - d, 0.0, 1.0), cpow);
-                cone *= c_pow(gul.at(X, Y), clip(d, 0.0, 1.0));
-                sc.v[q] = std::max(sc.v[q], cone * mult);
-            }
-        }
+    if (cores && cores->on && kind != YOUNG) {
+        CoreLayout tmp;
+        multicore_form(*cores, s, cells, R, res_km, half, px, py, fn_ridge, fn_fine, c, shape, layout ? *layout : tmp);
+    } else if (kind == YOUNG) {
+        // 新岛成拱（P4，L17）：从海底挣脱出来的一整块，中间最厚、四周最薄——绕峰的抛物穹（半径 arch_radius_rel × R）
+        // 与岛形自己的「向内程度」（也是穹形，贴着轮廓）按 arch_inside_mix 混合；表面是抬起来的海底岩层，平整，细噪声小
+        const double Ra = c.get("terrain.arch_radius_rel") * R;
+        const double mix = c.get("terrain.arch_inside_mix"), namp = c.get("terrain.arch_noise_amp");
         for (int32_t q : cells) {
             const double X = s.X(0, q % n), Y = s.Y(q / n, 0);
-            shape.v[q] = sc.v[q] * (0.7 + 0.3 * std::sqrt(s.inside.v[q])) + 0.06 * fn_fine.sample(X, Y);
+            const double d = np_hypot(X - px, Y - py) / Ra;
+            const double radial = clip(1.0 - d * d, 0.0, 1.0);
+            shape.v[q] = (1.0 - mix) * radial + mix * s.inside.v[q] + namp * fn_fine.sample(X, Y);
         }
     } else if (kind == MID) {
         const double ang = rng.uniform(-PI, PI);
@@ -321,11 +424,12 @@ void fit_rim(double surface, double relief, double median_frac, double rim_min, 
 }
 
 Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, double res_km, double surface, double relief,
-                     double rim_min, bool is_main, const Config& c) {
+                     double rim_min, bool is_main, const Config& c, CoreSpec* cores) {
     Sculpt out;
     const int n = s.mask.H;
     const size_t N = s.mask.size();
-    GridD shape = base_form(rng, s, age, area_km2, res_km, c, out.kind);
+    CoreLayout lay;
+    GridD shape = base_form(rng, s, age, area_km2, res_km, c, out.kind, cores, &lay);
     double lo = INF, hi = -INF;
     std::vector<double> sm;
     for (size_t k = 0; k < N; ++k)
@@ -335,9 +439,11 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
         }
     const double den = std::max(1e-9, hi - lo);
     for (size_t k = 0; k < N; ++k) shape.v[k] = s.mask.v[k] ? (shape.v[k] - lo) / den : 0.0;
-    const char* kn = out.kind == YOUNG ? "terrain.median_frac_young" : (out.kind == MID ? "terrain.median_frac_mid" : "terrain.median_frac_old");
+    const char* kn = out.kind == YOUNG ? "terrain.median_frac_arch" : (out.kind == MID ? "terrain.median_frac_mid" : "terrain.median_frac_old");
     double m_t = c.get(kn);
-    m_t = std::min(m_t, std::max(c.get("terrain.median_frac_min"), (surface - rim_min) / std::max(1.0, relief)));
+    // 新岛是拱：分位最低只压到 median_frac_arch_min，装不下就压起伏
+    const double m_min = c.get(out.kind == YOUNG ? "terrain.median_frac_arch_min" : "terrain.median_frac_min");
+    m_t = std::min(m_t, std::max(m_min, (surface - rim_min) / std::max(1.0, relief)));
     for (size_t k = 0; k < N; ++k)
         if (s.mask.v[k]) sm.push_back(shape.v[k]);
     const double m_raw = np_median(sm);
@@ -407,6 +513,31 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
         if (s.mask.v[k]) out.h.v[k] = rim2 + R2 * u.v[k];
     out.rim = rim2;
     out.peak = rim2 + R2;
+    // 多核：每个核的载荷（高出岸缘的量）与载荷中心——根就在它正下方
+    for (int k = 0; k < lay.n; ++k) {
+        CoreRec r;
+        r.seed_x = lay.sx[k];
+        r.seed_y = lay.sy[k];
+        r.strength = lay.strength[k];
+        std::vector<double> a, ax, ay;
+        double pk = -INF;
+        for (size_t q = 0; q < N; ++q)
+            if (s.mask.v[q] && lay.member.v[q] == k) {
+                const double v = out.h.v[q] - rim2;
+                a.push_back(v);
+                ax.push_back(v * s.X(0, static_cast<int>(q % n)));
+                ay.push_back(v * s.Y(static_cast<int>(q / n), 0));
+                pk = std::max(pk, out.h.v[q]);
+            }
+        r.cells = static_cast<int64_t>(a.size());
+        r.load = np_sum(a.data(), a.size());
+        r.peak = r.cells ? pk : rim2;
+        const bool ok = r.load > 0.0;
+        r.load_x = ok ? np_sum(ax.data(), ax.size()) / r.load : r.seed_x;
+        r.load_y = ok ? np_sum(ay.data(), ay.size()) / r.load : r.seed_y;
+        r.mean_above = r.cells ? r.load / static_cast<double>(r.cells) : 0.0;
+        out.cores.push_back(r);
+    }
     return out;
 }
 

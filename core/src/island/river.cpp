@@ -8,7 +8,7 @@ namespace skyisle::island {
 
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
                         const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double rim,
-                        double keel, double res_m, double year_s, const Config& c, bool /*is_main*/) {
+                        double keel, double res_m, double year_s, const Config& c, bool /*is_main*/, const GridD* Qin) {
     const int H = h.H, W = h.W;
     const size_t N = h.size();
     Channels out;
@@ -41,7 +41,7 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     if (!any_r) amax = 1.0;
     const double inc_m = c.get("hydro.incise_m"), s_inc = c.get("hydro.stream_incise_m");
     for (size_t k = 0; k < N; ++k) {
-        Q[k] = Akm.v[k] * 1e6 * (P_mm / 1000.0) * runoff / year_s;
+        Q[k] = Qin ? Qin->v[k] : Akm.v[k] * 1e6 * (P_mm / 1000.0) * runoff / year_s;
         const double q = std::max(Q[k], 0.0);
         const double w = wa * np_pow(q, wb) * wsc;
         const double d = dc * np_pow(q, df) * dsc;

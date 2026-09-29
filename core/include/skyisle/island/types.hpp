@@ -75,8 +75,17 @@ struct Shape {
     double Y(int i, int) const { return -xs[i]; }
 };
 
+// 多核岛拟合后的一个核（P4；island.json 的 islands[].cores，局部栅格 km——前端加上局部栅格中心 gcx / gcy 换成群坐标）
+struct CoreRec {
+    double seed_x = 0, seed_y = 0, strength = 0;
+    int64_t cells = 0;
+    double peak = 0, load = 0, load_x = 0, load_y = 0, mean_above = 0;
+};
+
 struct IslandRec {
     int id = 0;
+    std::vector<CoreRec> cores;          // 多核嵌合的岛才有（P4）
+    double gcx = 0, gcy = 0;             // 局部栅格中心（群坐标 km）
     int64_t area_cells = 0;
     // surface / rim / peak / keel 都已含浮高 fl（整座平移的 δ，m；主岛 0，DESIGN-NOTES 四点二十八）
     double area_target = 0, cx = 0, cy = 0, surface = 0, relief_target = 0, rim = 0, peak = 0, keel = 0, age = 0, fl = 0;
@@ -92,6 +101,8 @@ struct IslandRec {
     int64_t lake_cells = 0;
     double max_flowacc = 0;
     bool has_perennial = false, has_stream = false;
+    bool cap_ran = false;               // 谷收拢跑过（P4）
+    int captures = 0;                   // 袭夺了几条小沟
 };
 
 struct Link {                         // 短渡（飞船航线）；P5 起没有索桥
@@ -259,6 +270,7 @@ struct Group {
     Grid<uint8_t> cultivable, cover_natural;
     std::vector<double> suit;
     GridD width_m, depth_m, cut_m, slope;
+    GridD rain;                     // 局地年降水（mm，P4；陆地格，关掉局地雨时 = P_mm）
     GridI recv_i, recv_j;
     std::vector<RiverLine> lines;
     std::vector<RiverRec> rivers;   // 主岛

@@ -220,6 +220,21 @@ nb::dict terrain_dict(Group& g) {
         e["age"] = r.age;
         e["kind"] = age_name(r.kind);
         e["bbox"] = nb::make_tuple(r.r0, r.c0, r.m, r.m);
+        // 多核嵌合（P4）：局部栅格 km 的原始数，前端（terrain.cores_json）加 gc 换成群坐标、四舍五入
+        nb::list cl;
+        for (const CoreRec& q : r.cores) {
+            nb::dict x;
+            x["seed"] = nb::make_tuple(q.seed_x, q.seed_y);
+            x["strength"] = q.strength;
+            x["cells"] = q.cells;
+            x["peak"] = q.peak;
+            x["load"] = q.load;
+            x["load_xy"] = nb::make_tuple(q.load_x, q.load_y);
+            x["mean_above"] = q.mean_above;
+            cl.append(x);
+        }
+        e["cores"] = cl;
+        e["gc"] = nb::make_tuple(r.gcx, r.gcy);
         isl.append(e);
     }
     d["islands"] = isl;
@@ -272,6 +287,7 @@ nb::dict hydro_dict(Group& g) {
     d["river_depth_m"] = f32_np(g.depth_m);
     d["cut_m"] = f32_np(g.cut_m);
     d["slope_deg"] = f32_np(g.slope);
+    d["rain_mm"] = f32_np(g.rain);
     d["recv_i"] = grid_np(GridI(g.recv_i));
     d["recv_j"] = grid_np(GridI(g.recv_j));
     d["P_mm"] = g.P_mm;
@@ -293,6 +309,8 @@ nb::dict hydro_dict(Group& g) {
         e["max_flowacc"] = r.max_flowacc;
         e["has_perennial"] = r.has_perennial;
         e["has_stream"] = r.has_stream;
+        e["cap_ran"] = r.cap_ran;
+        e["captures"] = r.captures;
         isl.append(e);
     }
     d["islands"] = isl;
@@ -603,6 +621,9 @@ void bind_island(nb::module_& m) {
             r.rim_j = dget(e, "rim_m");
             r.keel_j = dget(e, "keel_m");
             r.age_j = dget(e, "age");
+            // 谷收拢（P4）看岛龄档与是不是多核岛：新岛 × capture_young、多核岛不收（多核的核在这里只要「有没有」）
+            if (e.contains("young") && nb::cast<bool>(e["young"])) r.kind = YOUNG;
+            if (e.contains("multicore") && nb::cast<bool>(e["multicore"])) r.cores.resize(1);
             g.islands.push_back(r);
         }
         PlanetView pv_tmp;
@@ -638,6 +659,22 @@ void bind_island(nb::module_& m) {
         Rng rt = entity_rng(seed, ISLAND_STREAM, key);
         Sculpt sc = sculpt_island(rt, s, age, area, res_km, surface, relief, rim_min, is_main, c);
         return nb::make_tuple(grid_np(std::move(sc.h)), age_name(sc.kind), sc.rim, sc.peak);
+    });
+    // 多核岛（P4）：cores_key 是这座岛的核随机流（island:<节点>:cores:<岛号>），kernel / btype 是板块边界；返回同 sculpt_island 外加各核的原始数
+    m.def("sculpt_island_cores", [](uint64_t seed, const std::string& shape_key, const std::string& key, const std::string& cores_key, double area,
+                                    double res_km, double elong, double theta, double age, double surface, double relief, double rim_min, bool is_main,
+                                    double kernel, int btype, nb::dict cfg) {
+        const Config c = cfg_from(cfg);
+        Rng rs = entity_rng(seed, ISLAND_STREAM, shape_key);
+        Shape s = island_shape(rs, area, res_km, elong, theta, c);
+        Rng rc = entity_rng(seed, ISLAND_STREAM, cores_key);
+        CoreSpec sp = multicore_spec(rc, area, age, kernel, btype, c);
+        Rng rt = entity_rng(seed, ISLAND_STREAM, key);
+        Sculpt sc = sculpt_island(rt, s, age, area, res_km, surface, relief, rim_min, is_main, c, sp.on ? &sp : nullptr);
+        nb::list cl;
+        for (const CoreRec& q : sc.cores)
+            cl.append(nb::make_tuple(q.seed_x, q.seed_y, q.strength, q.cells, q.peak, q.load, q.load_x, q.load_y, q.mean_above));
+        return nb::make_tuple(grid_np(std::move(sc.h)), age_name(sc.kind), sc.rim, sc.peak, cl);
     });
     m.def("territory_limits", [](nb::dict planet, int64_t node, double gap_km, double reach, double reach_km) {
         const PlanetView pv = planet_from(planet);

@@ -222,9 +222,16 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
     std::vector<double> keels(n);
     const double ksf = c.get("terrain.keel_surface_frac"), cmin = c.get("terrain.cliff_min_m");
     for (int k = 0; k < n; ++k) keels[k] = std::min(keel, ksf * surfs[k]);
+    // 多核嵌合（P4）：每座岛一条随机流 island:<节点>:cores:<岛号>，按面积、岛龄、板块边界定（别的抽样次序不动）
+    std::vector<CoreSpec> specs(n);
+    for (int k = 0; k < n; ++k) {
+        Rng rc = part_rng(inp, "cores:" + std::to_string(k));
+        specs[k] = multicore_spec(rc, sizes[k], ages[k], kernel, btype, c);
+    }
     parallel_for(n, threads, [&](int k) {
         Rng rt = part_rng(inp, "terrain:" + std::to_string(k));
-        sc[k] = sculpt_island(rt, ss.shapes[k], ages[k], sizes[k], res_km, surfs[k], reliefs[k], keels[k] + cmin, k == 0, c);
+        sc[k] = sculpt_island(rt, ss.shapes[k], ages[k], sizes[k], res_km, surfs[k], reliefs[k], keels[k] + cmin, k == 0, c,
+                              specs[k].on ? &specs[k] : nullptr);
     });
     g.rims.assign(n, 0.0);
     g.islands.resize(n);
@@ -280,6 +287,9 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         rec.fl = fl;
         rec.age = ages[k];
         rec.kind = sc[k].kind;
+        rec.cores = sc[k].cores;
+        rec.gcx = gcx[k];
+        rec.gcy = gcy[k];
         rec.r0 = r0;
         rec.c0 = c0;
         rec.m = m;
