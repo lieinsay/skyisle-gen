@@ -925,6 +925,8 @@ canal_try_sep_km = 1.0        # 试过（走过一遍）的候选这么近的不
 canal_min_cmd_km2 = 0.5       # 一处渠首新灌的田（按整块田的面积）够这么多才修
 canal_cmd_frac = 0.5          # 一块田有这么多成的格在渠水面以下、走得到，才算这处渠首的灌区
 canal_lateral_km = 0.8        # 渠通到每块田的入口，再按此间距的格点（以渠首为原点）铺进田里：渠网从渠首散开成扇（支渠 / 斗渠的间距）
+canal_base_km = 0.5           # 修渠划不划算：按入口的工从近到远，一块田要从已经挖好的渠上新接出去的渠 ≤ canal_base_km + canal_km_per_km2 × 田的面积（km²）才修
+canal_km_per_km2 = 3.0        # （每 km² 田约 18 户，每户摊 170 m 新渠）；远处零碎的小块田不值得专门挖一条渠，靠雨和塘
 canal_q_per_km2 = 0.1         # 渠宽：每 km² 田要 0.1 m³/s（约 1 L/s/ha），宽 = 5·Q^0.5 m（与河的水力几何同式、不夸张），至少 canal_width_min_m
 canal_width_min_m = 1.5
 pond_near_cells = 2           # 村塘：村这么多格内能挖塘、汇流最大的格；没有就放宽到 pond_reach_cells
