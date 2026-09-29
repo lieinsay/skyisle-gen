@@ -46,8 +46,8 @@
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165；营建调试台 /town.html?run=seed42&node=2051&site=村037
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 242 个测试，约 7 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
-                                                  # 扩展没编时 C++ 的 120 个跳过，其余经 tests/conftest.py 自动用 python 后端）
+  $py -m pytest tests -q                          # 246 个测试，约 7 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
+                                                  # 扩展没编时 C++ 的 124 个跳过，其余经 tests/conftest.py 自动用 python 后端）
   $py docs/probes/transect.py out/seed42/islands 6615,6610,6329,6073,6072,5766,5498,2051 --run out/seed42
                                                   # 量剖面（Zhouzhu PLAN-LAND 第二节同口径：地形 / 河 / 湿地、宜垦 / 已垦 / 撂荒、小岛有没有人、有人用没人住的岛），直接读岛群产物
   ```
@@ -105,11 +105,16 @@ skyisle_gen/
                  layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、各岛台面高度与目标起伏（岛龄 × 面积^0.3，另一条随机流）、
                            浮高 float_offsets（四点二十八：其余岛按岛龄整座上下平移 δ，又一条随机流；往下的等岸缘拟合出来再按离 rim_floor_m 的余量缩，平移在 build_terrain 里、水系之前）、
                            短渡（P5 起没有索桥与导水槽，四点三十六）
-                 terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（锥 / 脊 / 台地）+ 幂次定测高曲线、粗网格**隐式河流功率下切**（只切汇流 ≥ 0.3 km² 的河道格、坡面靠休止角；随机流向 + 细网格平滑去方格纹）、
+                 terrain   5.2 岛形（椭圆 + 域扭曲 + 面积二分反解）、岛龄基形（**拱** / 脊 / 台地，四点三十五：新岛是从海底挣脱出来的拱，不是火山锥）+ 幂次定测高曲线、
+                           **多核嵌合**（multicore_spec / _multicore_form：汇聚带一部分大岛两三个核，随机流 island:<节点>:cores:<岛号>；拟合后量各核载荷 → island.json 的 cores，cores_json 两后端共用）、
+                           粗网格**隐式河流功率下切**（只切汇流 ≥ 0.3 km² 的河道格、坡面靠休止角；随机流向 + 细网格平滑去方格纹）、
                            仿射拟合（陆地中位 = 台面、峰 − 岸缘 = 目标起伏）；priority_fill / d8 / d8_random / accumulate（5.3 共用）
                  hydro     5.3 河（主岛按 has_river 调阈值）/ 溪涧 / 湖 / 河口盆地、地表 12 类、「上等地」按适宜度分位取到 arable_frac（g["arable"]，资源层避开它；
                            P5 起不是已垦）、宜垦 cultivable（farmland.cultivable_land 的钩子）；
-                           流向在「路由面」上算（填平面 + 弯曲噪声 + 朝岸缘微倾：河在缓坡上蜿蜒、不贴崖边平行跑），湖与抬洼仍按原填平面
+                           流向在「路由面」上算（填平面 + 弯曲噪声 + 朝岸缘微倾：河在缓坡上蜿蜒、不贴崖边平行跑），湖与抬洼仍按原填平面；
+                           四点三十五：**局地雨** local_rain（海拔 × 山脉尺度迎风坡、按全群均值归一 → rain_mm；流量 = 按雨加权的汇流，权重取整到 1/16 mm）、
+                           **谷收拢** capture_rivers（走水之前：大谷把 reach 以内小沟的上半截抢过来，切直沟只压低地面；多核岛与新岛不收 / 少收）、
+                           **湿地**（方窗最大汇流 × 雨³ × 离崖缘 × 洼 / tan(周围最陡的坡)）
                  river     5.3b 河道成形（DESIGN-NOTES 四点十六）：水力几何 w = 5·Q^0.5 × 8、d = 0.35·Q^0.4 × 3（夸张系数设 1 = 真实比例）→ 河宽 ≥ 2 格时加宽；
                            河床下切并向下游单调、河口切豁口成瀑布；两岸压成「漫滩 + 谷坡」剖面（峡谷 32° → 宽谷 9°，随 log Q）；溪涧浅切、按比降接到干流上
                  resources 5.3c 地形区（高山 / 山地 / 丘陵 / 台地平原 / 河谷 / 崖缘 / 水域）+ 16 类资源分三形态（四点十七 / **四点二十一** / **四点三十四**）：
@@ -268,6 +273,11 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   西风带以北 100% 四季分明，信风带一半冷暖两季一半风暴季。
   势力范围 `[island.territory]`（四点二十二）：缝 3 km（两边各退 1.5）、看群心距 ≤ 3 × 等效半径之和 + 40 km 的邻群、主岛转 8 个走向、拉长 1.6 / 2.4、重摆时群内最小岸距 0.3 km；
   seed 42 全行星重摆 67%（密接几乎全部、中疏 68%），仍越过分界线的 34 群（③ 里群心挤在一起的，第三层摆不开）；IS-terr 硬 / IS-terr-gap 软。
+  **地貌 P4（2026-09-29，四点三十五，Zhouzhu PLAN-LAND P4）**：新岛是拱（`median_frac_arch` 0.35、最低 0.3，旧 `median_frac_young` / `cone_*` 作废）；
+  多核嵌合 `multicore_frac` 0.3（**用户定三成**：汇聚带边界核 ≥ 0.5 的大主岛的 30%，折全行星 ≥ 300 km² 主岛 17%）、≥ 300 km²、不是新岛，缝脊 0.12、浅槽 0.2 × 0.5 等效半径，根深系数 5；
+  谷收拢 `[island.hydro] capture_reach_km` 3（**用户定「中」**：弱 1.5 / 强 5；山在中间的岛汇水 ≥ 5 km² 出岸缘的河少两三成）、大谷数 = 面积 / 150 km²、收完 ≤ 岛面积两成、新岛 × 0.1；
+  局地雨 `oro_per_km` 0.4（同游戏 weather）、`windward_gain` 0.3、迎风在 3 km 块均值上量；湿地 `wet_*` 改口径（旧 `wet_slope_deg` / `wet_acc_km2` / `wet_precip_mm` 作废），
+  指数 ≥ 5e5、周围最陡坡 < 2.5°、离崖缘 2 → 6 km、雨的三次方。
   浮高 `[island.float]`（2026-09-27，四点二十八，Zhouzhu 浮高计划 G 期）：主岛不动，其余岛整座平移 δ——z = 0.65 − 0.75 × Δ岛龄 / 0.08 + N(0, 1)，
   往上 1500 × tanh(550 z / 1500)、往下 500 × tanh(450 z / 500)，往下的再按 (岸缘 − 20) / 500 缩（岸缘 ≥ 20 m、不在下限堆一摞）；
   三 seed 全部非主岛：往上 70%、|δ| 中位 405 m、p90 1.02 km、最高 +1.47 km、与 Δ岛龄秩相关 −0.58；索桥当时按平移后的岸缘高差判（seed 42 全行星：旧判据 75,768 → 27,513，0.1 km / 30 m 下 64 座；P5 起索桥整个去掉）。
