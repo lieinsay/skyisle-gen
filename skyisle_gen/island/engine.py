@@ -458,11 +458,16 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         g["settle_fields"] = R["settle_fields"]
         g["cultivated"] = R["settle_cultivated"]          # P5：已垦（在种）与撂荒年头
         g["fallow_years"] = R["settle_fallow"]
+        g["polder_id"] = R["settle_polder"]                # P6：圩号
         set_settlements(g, S)
         if "to_grass_km2" in S["clearing"]:
             J["landcover"]["note_clearing"] = "林地在村 / 镇 / 专业聚落半径内已开垦：内圈草坡（牧场草场）、外圈灌丛（薪炭林）"
         log(f"  聚落（C++）：人口 {S['population']:.0f} → {S['households']} 户；田块 {S['n_fields']}，村 {S['n_villages']}，散户 {S['n_hamlets']}，"
             f"镇 {len(S['towns'])}，专业聚落 {len(S['specials'])}，泊场 {len(S['landings'])}")
+        if "waterworks" in S:
+            ws = S["waterworks"]["summary"]
+            log(f"  水利（C++）：渠首 {ws['n_heads']}（季节性 {ws['n_heads_seasonal']}），渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2']:.0f} km²；"
+                f"塘 {ws['n_ponds']}，闸 {ws['n_sluices']}；圩田 {ws['polder_km2']:.1f} km²（湿地 {ws['wetland_km2']:.1f} 的 {ws['polder_share']:.0%}，{ws['n_polders']} 圩）")
     if steps >= 2:
         resource_summary(g)
         Rr = g["resources"]

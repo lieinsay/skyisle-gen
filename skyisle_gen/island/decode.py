@@ -198,6 +198,22 @@ def _landing_kind(code: str) -> str:
     return f"{SPECIAL_ZH[code.split(':', 1)[1]]}泊场"
 
 
+def waterworks(Wj: dict) -> dict:
+    """P6 水利：渠 / 塘 / 闸的代码、渠首的水源 → 中文，加说明（waterworks.py 的 build_waterworks 同形）。"""
+    from .waterworks import CANAL_ZH, POND_ZH, SLUICE_ZH, SOURCE_ZH, WORKS_NOTE
+    W = dict(Wj)
+    W["heads"] = [dict(h, source=SOURCE_ZH[h["source"]]) for h in Wj["heads"]]
+    W["canals"] = [dict(x, kind=CANAL_ZH[x["kind"]]) for x in Wj["canals"]]
+    W["ponds"] = [dict(x, kind=POND_ZH[x["kind"]]) for x in Wj["ponds"]]
+    W["sluices"] = [dict(x, kind=SLUICE_ZH[x["kind"]]) for x in Wj["sluices"]]
+    s = dict(Wj["summary"])
+    s["ponds"] = {POND_ZH[k]: v for k, v in Wj["summary"]["ponds"].items()}
+    s["sluices"] = {SLUICE_ZH[k]: v for k, v in Wj["summary"]["sluices"].items()}
+    W["summary"] = s
+    W["note"] = WORKS_NOTE
+    return W
+
+
 def settlements(Sj: dict, climate_zh: dict | None) -> dict:
     from .farmland import OWNER_ZH, SPECIAL_OCC_ZH, STATUS_ZH, USE_OCC_ZH, USE_ZH, ruin_note, use_note
     from .settle import CITY_NOTE, RASTER_CODES, SETTLE_NOTE
@@ -260,6 +276,8 @@ def settlements(Sj: dict, climate_zh: dict | None) -> dict:
         uses.append(u)
     S["uses"] = uses
     S["land_tenure"] = [dict(t, status=STATUS_ZH[t["status"]], owner=OWNER_ZH[t["owner"]]) for t in Sj["land_tenure"]]
+    if "waterworks" in Sj:
+        S["waterworks"] = waterworks(Sj["waterworks"])
     S["raster_codes"] = dict(RASTER_CODES)
     S["note"] = SETTLE_NOTE
     return S

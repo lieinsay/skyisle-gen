@@ -99,7 +99,7 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     farm_total = hh_total - nonfarm_hh
     land_per_hh = arable_km2 / max(1, farm_total)       # 户均地量 km²（农户）
     # ---------- 已垦（P5）：好地先占 + 定居门槛；撂荒与废村（farmland.py） ----------
-    FL = fill_cultivated(g, sc, _rng(ctx, node, "settle:fallow"), water, land_per_hh, n_quota)
+    FL = fill_cultivated(g, sc, _rng(ctx, node, "settle:fallow"), water, land_per_hh, n_quota, c.get("works"))
     arable = g["cultivated"] > 0
     fallow = g["fallow_years"] > 0
     ar_isl = np.array([float((arable & (island_id == k)).sum()) for k in range(n_isl)]) * cell_km2
@@ -294,6 +294,9 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     # ---------- 第 2 步：水设施 ----------
     water_out = build_water(ctx, g, sc, villages, hamlets, sraster, km, res_km, dist_water)
     water_out["landings"] = lands
+    # ---------- 水利（P6，waterworks.py）：谷口的渠、村塘 / 山塘、圩田的纵浦横塘与圩塘、闸 ----------
+    from .waterworks import build_waterworks
+    works = build_waterworks(g, c["works"], fields, fields_raster, villages, sraster, FL["polders"], km)
     # ---------- 第 3 步：没人住的岛有人用（P5）、主家候选、前哨、都与城 ----------
     uses, status = island_uses(g, sc, _rng(ctx, node, "settle:uses"), villages, hamlets, specials, ruins, seat, km)
     for u in uses:
@@ -320,7 +323,7 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
          "village_hh_median": int(np.median([r["households"] for r in villages])) if villages else 0,
          "fields": fields, "villages": villages, "hamlets": hamlets, "towns": towns, "specials": specials, **water_out, **step3,
          "clearing": clearing, "workings": workings,
-         "farmland": FL["summary"], "ruins": ruins, "uses": uses, "land_tenure": tenure,
+         "farmland": FL["summary"], "ruins": ruins, "uses": uses, "land_tenure": tenure, "waterworks": works,
          "raster_codes": dict(RASTER_CODES), "note": SETTLE_NOTE}
     set_settlements(g, S)
     log(f"  聚落：人口 {pop:.0f}（{pop_src}）→ {hh_total} 户；宜垦 {FL['summary']['cultivable_km2']:.0f} km²，已垦 {FL['summary']['cultivated_km2']:.0f}，"
@@ -334,10 +337,15 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         f"村 1 km 内有水源 {S['water_ok_share']:.0%}；岛 常住 {status.count('常住')} / 季节住 {status.count('季节住')} / 有人用 {status.count('有人用')} / 荒岛 {status.count('荒岛')}"
         f"（{'、'.join(u['kind'] for u in uses) or '—'}）；前哨 {len(S['outposts'])}，主家候选 {[h['kind'] for h in S['home_candidates']]}"
         + (f"；{S['city']['role']} {S['city']['households']} 户（城 {S['city']['inner_households']} + 郭 {S['city']['guo_households']}，{S['city']['n_guo_islands']} 岛）" if S.get("city") else ""))
+    ws = works["summary"]
+    log(f"  水利：渠首 {ws['n_heads']}（季节性 {ws['n_heads_seasonal']}），渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2']:.0f} km²（已垦的 {ws['commanded_share']:.0%}）；"
+        f"塘 {ws['n_ponds']}（{'、'.join(f'{k} {v}' for k, v in ws['ponds'].items() if v) or '—'}），闸 {ws['n_sluices']}；"
+        f"圩田 {ws['polder_km2']:.1f} km²（湿地 {ws['wetland_km2']:.1f} 的 {ws['polder_share']:.0%}，{ws['n_polders']} 圩 / {ws['n_polder_patches']} 片，"
+        f"纵浦横塘 {ws['polder_canal_km']:.0f} km、圩堤 {ws['dike_km']:.0f} km）")
 
 
 RASTER_CODES = {"1": "田块", "2": "梯田", "3": "村", "4": "散户", "5": "泊场", "7": "蓄水池", "8": "取水点", "9": "镇", "10": "专业聚落",
-                "11": "撂荒田", "12": "废村", "13": "工棚 / 季节住", "14": "有人用（放牧 / 夏牧 / 烽火台 / 庙 / 墓岛）"}
+                "11": "撂荒田", "12": "废村", "13": "工棚 / 季节住", "14": "有人用（放牧 / 夏牧 / 烽火台 / 庙 / 墓岛）", "15": "塘", "16": "闸"}
 SETTLE_NOTE = ("第三层，人口只读 ⑨；村 / 镇 / 专业聚落只有位置与户数（原则乙）。名字是 村NNN / 镇NN 占位。"
                "飞船随处可停：没有码头，每个聚落旁一块泊场；岛与岛之间没有索桥，全靠船。households = 村农户 + 散户 + 镇的非农户 + 专业聚落户"
                "（工棚、季节住的专业聚落的户也在里面，人住在 home_village 那个村）。"
@@ -365,6 +373,10 @@ def set_settlements(g: dict, S: dict) -> None:
         "n_ruins": len(S["ruins"]), "uses": sorted({u["kind"] for u in S["uses"]}), "n_uses": len(S["uses"]),
         "specials_occupancy": {k: occ.count(k) for k in ("常住", "工棚", "季节住") if occ.count(k)},
         "island_status": {k: st.count(k) for k in ("常住", "季节住", "有人用", "荒岛") if st.count(k)}})
+    if "waterworks" in S:                                # P6：水利
+        ws = S["waterworks"]["summary"]
+        J["settlements"]["waterworks"] = {k: ws[k] for k in ("n_heads", "canal_km", "polder_canal_km", "commanded_km2", "n_ponds", "n_sluices",
+                                                             "wetland_km2", "polder_km2", "n_polders")}
     lf = J.get("landcover")
     if lf is not None:
         lf["note_farmland"] = "可耕地 / 梯田 = 已垦（此刻有人种）；宜垦见 terrain.npz 的 cultivable，撂荒见 fallow_years（地表按年头：草坡 → 灌丛 → 原本的地表）"

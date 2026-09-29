@@ -33,7 +33,7 @@ import numpy as np
 
 from .grid import binary_dilate, distance_bands, label_by_island
 
-LC_CLIFF, LC_ROCK, LC_ALPINE, LC_FOREST, LC_SHRUB, LC_GRASS, LC_ARABLE, LC_TERRACE = 1, 2, 3, 4, 5, 6, 7, 8
+LC_CLIFF, LC_ROCK, LC_ALPINE, LC_FOREST, LC_SHRUB, LC_GRASS, LC_ARABLE, LC_TERRACE, LC_WET = 1, 2, 3, 4, 5, 6, 7, 8, 9
 WORKCAMP_KINDS = ("浮石采石村", "矿村", "窑村")      # 光秃小岛上改成工棚的专业聚落
 SEASONAL_KINDS = ("烧炭营",)
 # cpp 后端的代码 → 中文（decode.py 用；两个后端的说明文字由下面几个函数拼，一处改）
@@ -79,16 +79,18 @@ def cultivable_land(g: dict, lc: dict, cover: np.ndarray, arable: np.ndarray, su
 
 
 # ---------------------------------------------------------------- 已垦、撂荒、废村（settle）
-def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: float, n_quota: int) -> dict:
+def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: float, n_quota: int, wc: dict | None = None) -> dict:
     """好地先占 + 定居门槛 → g["cultivated"]（0 / 1 田 / 2 梯田，在种）、g["fallow_years"]（撂荒了几年，0 = 不是撂荒地）；
-    改 g["landcover"]（上等地没人种的回原本的地表、已垦画成可耕地 / 梯田、撂荒按年头）与林场的 patch_id。
-    返回 {"ruins": [...（不含村址）], "summary": {...}, "tract": 片号栅格, "kept": 片留下与否}。"""
+    P6：wc（[island.works]）给了就在第一遍之后挑要排干的湿地（waterworks.polder_plan），第二遍圩田的格先占（额度之内）→ g["polder_id"]；
+    改 g["landcover"]（上等地没人种的回原本的地表、已垦画成可耕地 / 梯田、撂荒按年头、圩田画成可耕地）与林场 / 芦苇荡的 patch_id。
+    返回 {"ruins": [...（不含村址）], "summary": {...}, "polders": 圩田的安排}。"""
     island_id = g["island_id"]
     H, W = island_id.shape
     J = g["json"]
     res_km = float(g["res_km"])
     cell_km2 = res_km * res_km
     land = island_id >= 0
+    wet = (g["landcover"] == LC_WET) & land          # 聚落层动手之前的湿地（P6 的圩田从这里挑）
     cult = g["cultivable"]
     suit = g["suit"]
     R = g.get("resources")
@@ -133,25 +135,45 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
     n_g = int(gcells.size)
     reserved = np.zeros(H * W, dtype=bool)
     reserved[gcells] = True
-    ok1 = ok_t[t_ord] & ~reserved[order]
-    pick1 = np.concatenate([gcells, order[ok1][: n_quota - n_g]])
-    cnt1 = np.bincount(labf[pick1], minlength=n_lab + 1)
-    hh1 = cnt1.astype(np.float64) * cell_km2 / land_per_hh
-    kept = ok_t & (hh1 >= min_hh)
-    kept[np.unique(labf[gcells])] = True
-    kept[0] = False
-    ok2 = kept[t_ord] & ~reserved[order]
-    in_kept = order[ok2]
-    take = np.concatenate([gcells, in_kept[: n_quota - n_g]])
-    forced = 0
-    if take.size < n_quota:                       # 留下的片不够额度：按次序补让出来的片，再补不合门槛的片
-        rest = order[~kept[t_ord]]
-        rt = labf[rest]
-        extra = np.concatenate([rest[ok_t[rt]], rest[~ok_t[rt]]])[: n_quota - take.size]
-        forced = int(extra.size)
-        take = np.concatenate([take, extra])
+
+    def fill_pass(pcells):
+        """一遍好地先占：保底的格、圩田的格先占，其余按次序填留下的片；返回 (pick1, cnt1, hh1, kept, in_kept, take, forced)。"""
+        n_r = n_g + int(pcells.size)
+        ok1 = ok_t[t_ord] & ~reserved[order]
+        pick1 = np.concatenate([gcells, pcells, order[ok1][: n_quota - n_r]])
+        cnt1 = np.bincount(labf[pick1], minlength=n_lab + 1)
+        hh1 = cnt1.astype(np.float64) * cell_km2 / land_per_hh
+        kept = ok_t & (hh1 >= min_hh)
+        kept[np.unique(labf[gcells])] = True
+        kept[0] = False
+        ok2 = kept[t_ord] & ~reserved[order]
+        in_kept = order[ok2]
+        take = np.concatenate([gcells, pcells, in_kept[: n_quota - n_r]])
+        forced = 0
+        if take.size < n_quota:                   # 留下的片不够额度：按次序补让出来的片，再补不合门槛的片
+            rest = order[~kept[t_ord]]
+            rt = labf[rest]
+            extra = np.concatenate([rest[ok_t[rt]], rest[~ok_t[rt]]])[: n_quota - take.size]
+            forced = int(extra.size)
+            take = np.concatenate([take, extra])
+        return pick1, cnt1, hh1, kept, in_kept, take, forced
+
+    none = np.zeros(0, dtype=np.int64)
+    pick1, cnt1, hh1, kept, in_kept, take, forced = fill_pass(none)
+    # ---- 圩田（P6，waterworks.polder_plan）：第一遍填到了湿地边上（周围的平地种了过半）的湿地排干围圩，第二遍圩田的格先占（额度之内）
+    from .waterworks import polder_plan
+    take1 = np.zeros(H * W, dtype=bool)
+    take1[take] = True
+    PP = polder_plan(g, wc, wet, take1, n_quota - n_g) if wc is not None else \
+        {"patches": [], "cells": none, "polder_id": np.zeros((H, W), dtype=np.int32), "wetland_cells": int(wet.sum())}
+    pcells = PP["cells"]
+    n_p = int(pcells.size)
+    if n_p:
+        pick1, cnt1, hh1, kept, in_kept, take, forced = fill_pass(pcells)
+    g["polder_id"] = PP["polder_id"]
     cultivated = np.zeros(H * W, dtype=np.uint8)
     cultivated[take] = cult.ravel()[take]
+    cultivated[pcells] = 1                        # 圩田：平地、水田
     cultivated = cultivated.reshape(H, W)
     has_cult = np.zeros(n_lab + 1, dtype=bool)
     has_cult[np.unique(labf[take])] = True
@@ -159,7 +181,7 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
     # ---- 撂荒：留下的片里接着往外的一层（离在种的田 ≤ fallow_ring_cells）
     ring_n = int(round(n_quota * float(sc["fallow_frac"])))
     near_c = binary_dilate(cultivated > 0, int(sc["fallow_ring_cells"])).ravel()
-    after = in_kept[n_quota - n_g:]
+    after = in_kept[n_quota - n_g - n_p:]
     ring = after[near_c[after]][:ring_n]
     # ---- 废村：让出来的片里头一轮分得最多的几片
     cand = [t for t in range(1, n_lab + 1) if ok_t[t] and not kept[t] and not has_cult[t] and hh1[t] >= float(sc["ruin_min_hh"])]
@@ -205,6 +227,9 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
         tids = [d["id"] for d in R["deposits"] if d["kind"] == "timber"]
         pid = g["patch_id"]
         pid[((cultivated > 0) | f) & (cover != LC_FOREST) & np.isin(pid, tids)] = -1
+        if n_p:                                   # 排干围成圩田的湿地：从泥炭 / 芦苇荡的片里划掉
+            rids = [d["id"] for d in R["deposits"] if d["kind"] == "peat"]
+            pid[(PP["polder_id"] > 0) & np.isin(pid, rids)] = -1
     summary = {"quota_km2": round(float(n_quota) * cell_km2, 3),
                "cultivable_km2": round(float((cult > 0).sum()) * cell_km2, 3),
                "cultivated_km2": round(float((cultivated > 0).sum()) * cell_km2, 3),
@@ -215,8 +240,9 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
                "n_tracts": int(n_lab), "n_tracts_ok": int(ok_t.sum()), "n_tracts_kept": int(kept.sum()),
                "n_tracts_dropped": int((ok_t & ~kept).sum()), "n_ruins": len(ruins),
                "settle_min_hh": int(min_hh), "rain_ok": rain_ok,
-               "floor_islands": g_isl, "floor_km2": round(float(n_g) * cell_km2, 3)}
-    return {"ruins": ruins, "summary": summary}
+               "floor_islands": g_isl, "floor_km2": round(float(n_g) * cell_km2, 3),
+               "wetland_km2": round(float(PP["wetland_cells"]) * cell_km2, 3), "polder_km2": round(float(n_p) * cell_km2, 3)}
+    return {"ruins": ruins, "summary": summary, "polders": PP}
 
 
 def floor_cells(g: dict, sc: dict, lab: np.ndarray, n_lab: int, ok_t: np.ndarray, order: np.ndarray, t_ord: np.ndarray, pit: np.ndarray,

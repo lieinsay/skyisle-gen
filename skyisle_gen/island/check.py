@@ -2,8 +2,8 @@
 
 IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-float / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap 为软项；
 资源 RES-site / RES-occ / RES-work / RES-geo 为硬项，RES-quarry 为软项；
-聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home / SET-farm / SET-use 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八；
-SET-farm / SET-use 是 P5 加的：宜垦 / 已垦 / 撂荒与定居门槛、没人住的岛有人用）。
+聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home / SET-farm / SET-use / SET-works 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八；
+SET-farm / SET-use 是 P5 加的：宜垦 / 已垦 / 撂荒与定居门槛、没人住的岛有人用；SET-works 是 P6 加的：渠、塘、闸、圩田）。
 退出码：2 = 硬项失败；1 = 软项失败；0 = 全过。批跑（batch.py）复用 evaluate()。
 """
 from __future__ import annotations
@@ -269,8 +269,10 @@ def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
     sc = (c or {}).get("settle") or {}
     min_hh = float(S["farmland"].get("settle_min_hh", sc.get("settle_min_hh", 0)))
     lph = float(S["land_per_household_km2"])
-    bad_sub = int(((ct > 0) & (cv == 0)).sum())
-    bad_ter = int(((ct > 0) & (ct != cv)).sum())
+    pol = g["polder_id"] > 0 if "polder_id" in g else np.zeros_like(ct, dtype=bool)      # P6：圩田是排干的湿地，不在宜垦里
+    bad_sub = int(((ct > 0) & (cv == 0) & ~pol).sum())
+    bad_ter = int(((ct > 0) & (ct != cv) & ~pol).sum())
+    bad_pol = int((pol & ((ct != 1) | (cv > 0))).sum())
     bad_fal = int(((fy > 0) & ((cv == 0) | (ct > 0))).sum())
     n = len(J["islands"])
     ct_isl = np.bincount(iid[(iid >= 0) & (ct > 0)], minlength=n) * cell_km2
@@ -284,13 +286,17 @@ def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
     no_floor = [k for k in S["farmland"].get("floor_islands", []) if k not in vil_isl]     # 大岛保底（用户 09-29 定）：保底的岛都有村
     bad_ruin = [r["id"] for r in S.get("ruins", []) if r["abandoned_years"] < 1 or iid[r["cell"][0], r["cell"][1]] != r["island"]
                 or g["cliff"][r["cell"][0], r["cell"][1]] or g["lake"][r["cell"][0], r["cell"][1]] or g["river"][r["cell"][0], r["cell"][1]] > 0]
-    out.append({"id": "SET-farm", "name": "已垦 ⊂ 宜垦（梯田标记一致）、撂荒 ⊂ 宜垦且不与已垦重叠；有农户的岛已垦都够 settle_min_hh 户（定居门槛）、"
+    out.append({"id": "SET-farm", "name": "已垦 ⊂ 宜垦 ∪ 圩田（梯田标记一致；圩田是排干的湿地、记 1）、撂荒 ⊂ 宜垦且不与已垦重叠；有农户的岛已垦都够 settle_min_hh 户（定居门槛）、"
                 "有已垦的岛都有村或散户（这两条强填时不查）；大岛保底的岛都有村；废村在自己的岛上、撤空了 ≥ 1 年",
-                "value": {"not_cultivable": bad_sub, "terrace_mismatch": bad_ter, "bad_fallow": bad_fal, "below_threshold": small[:10],
+                "value": {"not_cultivable": bad_sub, "terrace_mismatch": bad_ter, "bad_polder": bad_pol, "bad_fallow": bad_fal, "below_threshold": small[:10],
                           "fields_without_people": no_field[:10], "bad_ruins": bad_ruin[:10], "forced_km2": S["farmland"].get("forced_km2", 0.0),
                           "floor_without_village": no_floor[:10], "floor_islands": len(S["farmland"].get("floor_islands", [])),
-                          "cultivable_km2": S["farmland"]["cultivable_km2"], "cultivated_km2": S["farmland"]["cultivated_km2"]},
-                "threshold": "全 0", "pass": bool(not (bad_sub or bad_ter or bad_fal or small or no_field or bad_ruin or no_floor)), "hard": True, "note": None})
+                          "cultivable_km2": S["farmland"]["cultivable_km2"], "cultivated_km2": S["farmland"]["cultivated_km2"],
+                          "polder_km2": S["farmland"].get("polder_km2", 0.0)},
+                "threshold": "全 0", "pass": bool(not (bad_sub or bad_ter or bad_pol or bad_fal or small or no_field or bad_ruin or no_floor)), "hard": True,
+                "note": None})
+    if "waterworks" in S:
+        out.append(_works_check(g, S))
     vids = {v["id"] for v in S["villages"]}
     bad_occ = [x["name"] for x in S["specials"] if x.get("occupancy") not in ("常住", "工棚", "季节住")
                or (x["occupancy"] != "常住" and S["villages"] and x.get("home_village") not in vids)
@@ -304,6 +310,50 @@ def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
                 "value": {"bad_occupancy": bad_occ[:10], "bad_uses": bad_use[:10], "bad_tenure": bad_ten[:10], "tenure_rows": len(T), "islands": n},
                 "threshold": "全 0、每岛一条", "pass": bool(not (bad_occ or bad_use or bad_ten) and len(T) == n), "hard": True, "note": None})
     return out
+
+
+def _works_check(g: dict, S: dict) -> dict:
+    """SET-works（P6 水利）：渠首在常年河 / 溪涧上；谷口的渠除渠首外都走在本岛陆地上（不上崖缘、湖、常年河）；塘在陆地上、不在水面崖缘上；
+    闸在本岛陆地上；圩号栅格与圩的格数一致；一块田只归一处渠首；一个村至多一口塘。"""
+    WK = S["waterworks"]
+    iid, cliff, lake, river, stream = g["island_id"], g["cliff"], g["lake"], g["river"] > 0, g["stream"] > 0
+    H, W = iid.shape
+    bad_head = [h["id"] for h in WK["heads"] if not (river[h["cell"][0], h["cell"][1]] or stream[h["cell"][0], h["cell"][1]])
+                or iid[h["cell"][0], h["cell"][1]] != h["island"]]
+    bad_canal = []
+    for c in WK["canals"]:
+        if c["kind"] in ("干渠", "支渠"):
+            for r, q in c["pts"][1:] if c["kind"] == "干渠" else c["pts"]:
+                i, j = int(r), int(q)
+                if iid[i, j] != c["island"] or cliff[i, j] or lake[i, j] or river[i, j]:
+                    bad_canal.append(c["id"])
+                    break
+        elif not all(0 <= r <= H and 0 <= q <= W for r, q in c["pts"]):
+            bad_canal.append(c["id"])
+    bad_pond = [p["id"] for p in WK["ponds"] if iid[p["cell"][0], p["cell"][1]] != p["island"] or cliff[p["cell"][0], p["cell"][1]]
+                or lake[p["cell"][0], p["cell"][1]] or river[p["cell"][0], p["cell"][1]]]
+    bad_sluice = [x["id"] for x in WK["sluices"] if iid[x["cell"][0], x["cell"][1]] != x["island"]]
+    pid = g["polder_id"] if "polder_id" in g else np.zeros((H, W), dtype=np.int32)
+    cnt = np.bincount(pid.ravel(), minlength=len(WK["polders"]) + 1)
+    bad_polder = [p["id"] for p in WK["polders"] if int(cnt[p["id"]]) != p["cells"]]
+    if int((pid > 0).sum()) != sum(p["cells"] for p in WK["polders"]):
+        bad_polder.append("raster")
+    seen, dup = set(), []
+    for h in WK["heads"]:
+        for f in h["fields"]:
+            if f in seen or not (1 <= f <= len(S["fields"])):
+                dup.append(f)
+            seen.add(f)
+    vp = [p["village"] for p in WK["ponds"] if p.get("village") is not None]
+    dup_pond = len(vp) - len(set(vp))
+    ok = not (bad_head or bad_canal or bad_pond or bad_sluice or bad_polder or dup or dup_pond)
+    ws = WK["summary"]
+    return {"id": "SET-works", "name": "水利（P6）：渠首在常年河 / 溪涧上；谷口的渠除渠首外走在本岛陆地上（不上崖缘、湖、常年河）；塘、闸在本岛陆地上；"
+            "圩号栅格与圩的格数一致；一块田只归一处渠首；一个村至多一口塘",
+            "value": {"bad_heads": bad_head[:10], "bad_canals": bad_canal[:10], "bad_ponds": bad_pond[:10], "bad_sluices": bad_sluice[:10],
+                      "bad_polders": bad_polder[:10], "field_in_two_heads": dup[:10], "village_two_ponds": dup_pond,
+                      "heads": ws["n_heads"], "canal_km": ws["canal_km"], "ponds": ws["n_ponds"], "sluices": ws["n_sluices"], "polder_km2": ws["polder_km2"]},
+            "threshold": "全 0", "pass": bool(ok), "hard": True, "note": None}
 
 
 def exit_code(items: list[dict]) -> int:

@@ -94,9 +94,9 @@ def write_terrain(out: Path, g: dict) -> None:
     g["json"]["raster"]["height_png_scale_m_per_unit"] = round(1.0 / scale, 6)
     arrays = {"height": h.astype(np.float32), "island_id": g["island_id"].astype(np.int16), "cliff": g["cliff"]}
     # P5：可耕地拆成 cultivable（宜垦 0 / 1 / 2 要修梯田）、cultivated（已垦、在种：0 / 1 田 / 2 梯田）、fallow_years（撂荒了几年，0 = 不是）；
-    # 旧的 arable（按额度画死的可耕地）不再写（含义变了就改键名）；rain_mm = 局地年降水（P4）
+    # 旧的 arable（按额度画死的可耕地）不再写（含义变了就改键名）；rain_mm = 局地年降水（P4）；polder_id = 圩号（P6，0 = 不是圩田；圩田也算已垦）
     for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "river_width_m",
-              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm"):
+              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "polder_id"):
         if k in g:
             arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)
@@ -119,17 +119,19 @@ def write_terrain(out: Path, g: dict) -> None:
     (out / "island.json").write_text(json.dumps(g["json"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
 
-FARMLAND_CLASSES = ["无", "宜垦（没开）", "已垦的田", "已垦的梯田", "撂荒"]
-FARMLAND_PALETTE = [(0, 0, 0), (120, 130, 80), (240, 205, 80), (210, 150, 40), (170, 110, 90)]
+FARMLAND_CLASSES = ["无", "宜垦（没开）", "已垦的田", "已垦的梯田", "撂荒", "已垦的圩田"]
+FARMLAND_PALETTE = [(0, 0, 0), (120, 130, 80), (240, 205, 80), (210, 150, 40), (170, 110, 90), (110, 200, 170)]
 
 
 def farmland_codes(g: dict) -> np.ndarray:
-    """farmland.png 的索引（P5）：1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒。"""
+    """farmland.png 的索引（P5）：1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒；P6：5 已垦的圩田（排干的湿地）。"""
     out = np.where(g["cultivable"] > 0, 1, 0).astype(np.uint8)
     if "cultivated" in g:
         out[g["cultivated"] == 1] = 2
         out[g["cultivated"] == 2] = 3
         out[g["fallow_years"] > 0] = 4
+    if "polder_id" in g:
+        out[g["polder_id"] > 0] = 5
     return out
 
 
@@ -269,7 +271,7 @@ def write_preview(out: Path, g: dict) -> Path:
 
 
 def write_preview_main(out: Path, g: dict) -> Path:
-    """主岛放大图：晕渲 + 等高线 + 河 / 湖 / 溪涧 + 已垦的田 + 地表底色，给策划与场景美术看岛内细节。"""
+    """主岛放大图：晕渲 + 等高线 + 河 / 湖 / 溪涧 + 已垦的田 + 地表底色 + 水利（P6：渠、塘、圩田），给策划与场景美术看岛内细节。"""
     J = g["json"]
     res_m = J["raster"]["res_m"]
     r0, c0, mm, _ = J["islands"][0]["bbox_cells"]
@@ -305,6 +307,20 @@ def write_preview_main(out: Path, g: dict) -> Path:
         fm = _fields_mask(g)
         if fm is not None:
             ax.contour(fm[sl][sub], levels=[0.5], colors="#ffdd33", linewidths=0.6)
+        WK = (g.get("settle") or {}).get("waterworks")
+        if WK:                                   # P6 水利：圩田（浅绿）、谷口的渠（青）、纵浦横塘与排水渠（蓝）、塘（蓝点）
+            from matplotlib.collections import LineCollection
+            oi, oj = sl[0].start + sub[0].start, sl[1].start + sub[1].start
+            if "polder_id" in g:
+                ax.imshow(np.where(g["polder_id"][sl][sub] > 0, 1.0, np.nan), cmap="summer", vmin=0, vmax=2, alpha=0.75, interpolation="nearest")
+            for kinds, col, lw in ((("干渠",), "#0aa5a0", 0.9), (("支渠",), "#30c8c0", 0.45), (("纵浦", "横塘", "排水渠"), "#1f5fd0", 0.45)):
+                segs = [np.array([[q[1] - oj - 0.5, q[0] - oi - 0.5] for q in c["pts"]]) for c in WK["canals"] if c["island"] == 0 and c["kind"] in kinds]
+                if segs:
+                    ax.add_collection(LineCollection(segs, colors=col, linewidths=lw, zorder=5))
+            P = [p["cell"] for p in WK["ponds"] if p["island"] == 0]
+            if P:
+                P = np.array(P, dtype=float)
+                ax.scatter(P[:, 1] - oj, P[:, 0] - oi, s=2.5, c="#2a7fff", linewidths=0, zorder=6)
     km = 10.0 * 1000.0 / res_m
     ax.plot([10, 10 + km], [h.shape[0] - 10, h.shape[0] - 10], color="w", lw=3)
     ax.text(10 + km / 2, h.shape[0] - 16, "10 km", color="w", ha="center", fontsize=9)
@@ -328,12 +344,12 @@ def write_preview_main(out: Path, g: dict) -> Path:
 
 
 SETTLE_PALETTE = [(0, 0, 0), (230, 200, 90), (210, 170, 60), (255, 255, 255), (255, 200, 200), (60, 200, 255), (0, 0, 0), (80, 120, 255), (120, 200, 255),
-                  (255, 150, 40), (200, 90, 220), (170, 110, 90), (120, 90, 80), (150, 120, 200), (90, 200, 160)]
-# 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用（放牧、烽火台、庙、墓岛）；6 原是桥头（P5 起没有索桥），空着
+                  (255, 150, 40), (200, 90, 220), (170, 110, 90), (120, 90, 80), (150, 120, 200), (90, 200, 160), (40, 150, 230), (20, 40, 90)]
+# 9 镇 / 10 专业聚落（常住）/ 11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用（放牧、烽火台、庙、墓岛）/ 15 塘 / 16 闸（P6）；6 原是桥头（P5 起没有索桥），空着
 
 
 def write_settlements(out: Path, g: dict) -> None:
     """settlements.json + settlements.png（8 位索引：1 田块 / 2 梯田 / 3 村 / 4 散户 / 5 泊场 / 7 蓄水池 / 8 取水点 / 9 镇 / 10 专业聚落 /
-    11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用）。"""
+    11 撂荒田 / 12 废村 / 13 工棚、季节住 / 14 有人用 / 15 塘 / 16 闸）。渠、圩堤是线，在 settlements.json 的 waterworks 里。"""
     write_png8(out / "settlements.png", g["settle_raster"], SETTLE_PALETTE)
     (out / "settlements.json").write_text(json.dumps(g["settle"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")

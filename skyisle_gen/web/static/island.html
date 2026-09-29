@@ -101,6 +101,7 @@ a{color:var(--acc2)}
     <label class="chk" title="随日期变化：积雪与雪线、植被枯荣与作物、溪涧断流 / 河道涨水漫滩 / 结冰、云海漫顶"><input type="checkbox" id="ovLive" checked> 季相与水情（随日期变）</label>
     <label class="chk" title="雨丝 / 雪花 / 风暴 / 多云 / 云雾 / 风的粒子"><input type="checkbox" id="ovFx" checked> 天气特效</label>
     <label class="chk" title="村（圆的大小 = 户数）、镇（橙圈，管几个村）、专业聚落（紫菱：矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地 / 盐井村；空心 = 工棚 / 季节住）、散户、泊场（拉近才画）/ 蓄水池、废村（灰 ✕）、有人用的岛（青三角：放牧 / 夏牧 / 烽火台 / 庙 / 墓岛）"><input type="checkbox" id="ovSettle" checked> 聚落</label>
+    <label class="chk" title="P6 水利：谷口的渠（青：干渠粗、支渠细，从渠首的红三角散开）、圩田的纵浦横塘与排水渠（蓝）、圩（绿框）、塘（蓝圆，按水面大小：村塘 / 山塘 / 圩塘 / 堰塘）、闸（拉近才画，褐方块：渠首闸 / 圩闸 / 排水闸）"><input type="checkbox" id="ovWorks" checked> 水利（渠 / 塘 / 闸 / 圩田）</label>
     <label class="chk" title="采场（矿坑 ■ / 硫磺坑 ✕ / 盐井 ■ / 淘金点 ● / 采石场 ◆ / 土坑、采砂场 ·）、点（洞穴 ▲ / 泉眼 ○ / 温泉 ✱ / 盐泉 ○ / 贝壳化石 ◆）、片（泥炭 / 鸟粪 / 浮石露头）；拉近后标出赋存区。林木与各类赋存只在「资源分布」底图上"><input type="checkbox" id="ovRes"> 资源点位（采场 / 点 / 片）</label>
     <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="1.5"><span id="exagV" class="small">1.5</span></div>
     <div id="legend" class="legend"></div>
@@ -237,6 +238,8 @@ function renderSide(){
       ${S.farmland ? `<br>宜垦 ${fmt(S.farmland.cultivable_km2, 0)} km² · 已垦 ${fmt(S.farmland.cultivated_km2, 0)} · 撂荒 ${fmt(S.farmland.fallow_km2, 1)}（废村 ${(S.ruins||[]).length}）· 宜垦片 ${S.farmland.n_tracts}，合门槛 ${S.farmland.n_tracts_ok}、留下 ${S.farmland.n_tracts_kept}
       · 岛 ${['常住','季节住','有人用','荒岛'].map(k => `${k} ${(S.land_tenure||[]).filter(t => t.status === k).length}`).join(' / ')} · 有人用：${(S.uses||[]).map(u => u.kind).join('、') || '—'}` : ''}
       <br>泊场 ${(S.landings||[]).length}（飞船随处可停，无码头）· 蓄水池 ${(S.cisterns||[]).length} · 取水点 ${(S.intakes||[]).length} · 前哨 ${(S.outposts||[]).length} · 村 1 km 内有水 ${fmt((S.water_ok_share||0)*100,0)}%${S.clearing ? ` · 村周开垦 ${fmt(S.clearing.cleared_km2, 0)} km²，林地 ${fmt(S.clearing.forest_share_before * 100, 0)}% → ${fmt(S.clearing.forest_share_after * 100, 0)}%` : ''}</td></tr>`
+      + (S.waterworks ? (w => `<tr><td>水利</td><td>渠首 ${w.n_heads}（季节性 ${w.n_heads_seasonal}）· 谷口的渠 ${fmt(w.canal_km, 0)} km，灌田 ${fmt(w.commanded_km2, 0)} km²（已垦的 ${fmt(w.commanded_share * 100, 0)}%）· 塘 ${w.n_ponds}（${Object.entries(w.ponds).filter(([k, v]) => v).map(([k, v]) => k + ' ' + v).join('、') || '—'}）· 闸 ${w.n_sluices}
+      <br>圩田 ${fmt(w.polder_km2, 1)} km²（湿地 ${fmt(w.wetland_km2, 1)} 的 ${fmt(w.polder_share * 100, 0)}%；${w.n_polders} 圩 / ${w.n_polder_patches} 片）· 纵浦横塘 ${fmt(w.polder_canal_km, 0)} km · 排水渠 ${fmt(w.drain_km, 1)} km · 圩堤 ${fmt(w.dike_km, 0)} km</td></tr>`)(S.waterworks.summary) : '')
       + (S.city ? `<tr><td>都</td><td><b style="color:#ffd75a">${S.city.role}</b> ${S.city.households} 户（城 ${S.city.inner_households} + 郭 ${S.city.guo_households}，郭 ${S.city.n_guo_islands} 岛）· 邦人口 ${fmt(S.city.state_pop, 0)} × 集聚率 ${S.city.gather_rate}<div class="small">${S.city.note}</div></td></tr>` : '')
       + `<tr><td>主家候选</td><td>${(S.home_candidates||[]).map(h => `<div><b>${h.id}·${h.kind}</b>（岛 ${h.island}，${fmt(h.elev_m,0)} m，离邑治 ${h.dist_seat_km ?? '—'} km，离主泊场 ${h.dist_main_landing_km ?? h.dist_main_dock_km ?? '—'} km）：${h.note}；${h.season_type}，雪 ${h.snow_days} 日 / 风暴 ${h.storm_days} 日 / 可出航 ${h.sailable_days} 日${h.island_has_river ? '，岛上有河' : ''}${h.island_lakes ? '，湖 ' + h.island_lakes : ''}</div>`).join('')}</td></tr>`; }
   const rv = hy.rivers || [];
@@ -512,6 +515,7 @@ function draw(){
     ctx.setLineDash([]);
   }
   if ($('ovRes').checked && D.resources) drawResources(ctx);
+  if ($('ovWorks').checked && D.settlements && D.settlements.waterworks) drawWorks(ctx);
   if ($('ovSettle').checked && D.settlements) drawSettlements(ctx);
   if ($('ovLabels').checked) { ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const i of J.islands) { const p = pos(i); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(p[0] - 9, p[1] - 7, 18, 14); ctx.fillStyle = '#fff'; ctx.fillText(i.id, p[0], p[1]); } }
   // 比例尺
@@ -548,7 +552,7 @@ function draw(){
   ['baseSel','resKind','ovWater','ovVec','ovFlood','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
   const resRow = () => { $('resKindRow').style.display = $('baseSel').value === 'resource' ? '' : 'none'; }; $('baseSel').addEventListener('change', resRow); resRow();
   $('ovFx').addEventListener('change', () => { if (!$('ovFx').checked) { const f = $('fx'); f.getContext('2d').clearRect(0, 0, f.width, f.height); } });
-  ['ovLinks','ovLabels','ovSettle','ovRes'].forEach(id => $(id).addEventListener('change', draw));
+  ['ovLinks','ovLabels','ovSettle','ovRes','ovWorks'].forEach(id => $(id).addEventListener('change', draw));
   $('exag').addEventListener('input', () => { $('exagV').textContent = $('exag').value; base = null; draw(); });
   $('btnFit').onclick = () => { fitView(); draw(); }; $('btnMain').onclick = () => zoomIsland(0);
   $('btnGo').onclick = () => { run = $('runIn').value.trim(); node = +$('nodeIn').value; load(); };
@@ -646,6 +650,26 @@ function drawSettlements(ctx){
     for (const gid of S.city.guo_villages || []) { const g2 = S.villages.find(x => x.id === gid); if (g2) { const p = cellPos(g2.cell); ctx.strokeStyle = '#ffd75a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p[0], p[1], 5 + Math.sqrt(g2.households) * 0.6, 0, 7); ctx.stroke(); } }
     if (S.city.altar_cell) { const p = cellPos(S.city.altar_cell); star(p[0], p[1], 7, '#e6c8ff'); ctx.fillStyle = '#e6c8ff'; ctx.font = '11px sans-serif'; ctx.fillText('祭台', p[0] + 9, p[1] + 4); }
     const gd = (S.landings || []).find(d => d.id === S.city.granary_landing); if (gd) { const p = cellPos(gd.cell); ctx.strokeStyle = '#ffd75a'; ctx.lineWidth = 2; ctx.strokeRect(p[0] - 6, p[1] - 6, 12, 12); ctx.fillStyle = '#ffd75a'; ctx.font = '11px sans-serif'; ctx.fillText('仓城·主泊场', p[0] + 9, p[1] + 4); } }
+}
+
+function drawWorks(ctx){
+  // P6 水利（settlements.json 的 waterworks）：pts 是群栅格的 [行, 列]（格心 = 整数 + 0.5，纵浦横塘走在格边上）
+  const WK = D.settlements.waterworks, s = view.s / R.step, pxPerM = view.s / R.res_m, cv = ctx.canvas;
+  const X = p => p[1] * s + view.tx, Y = p => p[0] * s + view.ty;
+  const vis = pts => pts.some(p => { const x = X(p), y = Y(p); return x > -40 && x < cv.width + 40 && y > -40 && y < cv.height + 40; });
+  const zoomed = view.s * (10 / R.step) > 14;
+  const COL = {'干渠': '#20c8c0', '支渠': '#6fe4dc', '排水渠': '#4a82ff', '纵浦': '#4a8cff', '横塘': '#4a8cff'};
+  for (const p of WK.polders || []) { const b = p.cells_bbox; ctx.strokeStyle = p.paddy ? 'rgba(140,235,140,0.85)' : 'rgba(215,215,120,0.85)'; ctx.lineWidth = 1;
+    ctx.strokeRect(b[1] * s + view.tx, b[0] * s + view.ty, (b[3] - b[1]) * s, (b[2] - b[0]) * s); }
+  for (const c of WK.canals || []) { if (!vis(c.pts)) continue;
+    ctx.strokeStyle = COL[c.kind] || '#4a8cff'; ctx.lineWidth = c.kind === '干渠' ? Math.max(1.8, c.width_m * pxPerM) : (c.kind === '支渠' ? Math.max(0.9, c.width_m * pxPerM) : 1.1);
+    ctx.beginPath(); c.pts.forEach((p, k) => k ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p))); ctx.stroke(); }
+  for (const p of WK.ponds || []) { const q = [p.cell[0] + 0.5, p.cell[1] + 0.5]; const r = Math.max(zoomed ? 2.5 : 1.3, Math.sqrt(p.area_m2 / Math.PI) * pxPerM);
+    ctx.fillStyle = p.kind === '圩塘' ? '#7cc8ff' : (p.kind === '山塘' || p.kind === '堰塘' ? '#2a6fd8' : '#3fa0ff'); ctx.beginPath(); ctx.arc(X(q), Y(q), r, 0, 7); ctx.fill(); }
+  if (zoomed) for (const x of WK.sluices || []) { const q = [x.cell[0] + 0.5, x.cell[1] + 0.5]; ctx.fillStyle = x.kind === '渠首闸' ? '#e04040' : '#5a3a20'; ctx.fillRect(X(q) - 2.5, Y(q) - 2.5, 5, 5); }
+  for (const h of WK.heads || []) { const q = [h.cell[0] + 0.5, h.cell[1] + 0.5], x = X(q), y = Y(q);
+    ctx.fillStyle = h.seasonal ? '#ff9a5a' : '#ff4040'; ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y + 4); ctx.lineTo(x - 5, y + 4); ctx.closePath(); ctx.fill(); ctx.stroke();
+    if (zoomed) { ctx.fillStyle = '#ffd0c0'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`渠首${h.id}（${h.source}，灌 ${fmt(h.served_km2, 1)} km²）`, x + 7, y + 3); } }
 }
 
 // ------------------------------------------------------------ 季相与水情（随日期变化的地貌）
