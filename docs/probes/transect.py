@@ -176,7 +176,7 @@ def group(d: Path, node: int, run: Path | None) -> dict:
             continue
         for u in us:
             by_use[u] += 1
-    out["used_not_lived_by_use"] = dict(sorted(by_use.items(), key=lambda kv: -kv[1]))
+    out["used_not_lived_by_use"] = dict(sorted(by_use.items(), key=lambda kv: (-kv[1], kv[0])))     # 同数按名字排（集合的次序每次跑不一样）
     out["used_not_lived_islands"] = {int(k): sorted(us) for k, us in sorted(uses.items())
                                      if k != 0 and not (farm[k] or hamlet[k] or spec_res[k])}
     fl = S.get("farmland")
