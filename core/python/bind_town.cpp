@@ -135,6 +135,9 @@ nb::dict obb_dict(const Obb& o) {
 nb::dict plan_dict(Plan&& P, const Style& st) {
     nb::dict d;
     d["op"] = P.op;
+    nb::list fit;
+    for (const std::string& o : P.ops_fit) fit.append(o);
+    d["ops_fit"] = fit;
     d["center"] = xy(P.center);
     d["facing_deg"] = P.facing / DEG;
     d["radius_m"] = P.radius;
@@ -209,6 +212,7 @@ nb::dict plan_dict(Plan&& P, const Style& st) {
         q["r"] = f.r;
         q["facing_deg"] = f.facing / DEG;
         q["z"] = f.z;
+        if (f.compound >= 0) q["compound"] = f.compound;
         fl.append(q);
     }
     d["features"] = fl;

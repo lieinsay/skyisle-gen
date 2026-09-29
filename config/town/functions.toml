@@ -4,10 +4,12 @@
 #   enabled   默认开不开（各风格特有的设施默认关，由风格打开）
 #   mode      怎么落：compound（占一块地块，套 template 宅院模板；在户落位之前挑）
 #                     roadside（路边一栋小房，size_w_m × size_d_m）· pond 塘 · threshing 晒场 / 场院 · well 井 · tree 树 · landing 泊场
+#                     moat 環濠 · channel 水圳 · arch 牌坊 · shuikou 水口（亭 + 林）· open_fields 敞田的条田
+#   ops       只在这些形态算子下修（如 ["organic"]；不写 = 都修）
 #   count     数量 = base + floor(户数 / per_households)，户数 < min_households 时为 0，最多 max
 #   site      选址谓词的权重（候选处各项归一到 0–1 后加权求和，取最高）：
 #               center 近村心 · crossroad 路口 · main 主街边 · entrance 村口（出村大路离开建成区处）· edge 村边
-#               low 低处（小尺度 TPI）· high 高处 · water 近水 · pond 近塘 · farmland 近田 · flat 平 · sun 朝阳 · landing 近泊场
+#               low 低处（小尺度 TPI）· high 高处 · water 近水 · pond 近塘 · farmland 近田 · flat 平 · sun 朝阳 · landing 近泊场 · green 近公地 · bridge 近桥
 #   face      roadside 的朝向：road 朝路 / sun 朝阳 / pond 朝塘 / water 朝水（朝塘或谓词里有 pond 的，村里没塘就不修）
 #   reach_m   roadside / tree 离建成区边最远多远（默认 40 m）；要塘的改看 pond_reach_m：离塘边最远多远（默认 20 m）
 #   required  TP-func：风格要求它必须在（数量规则给出 ≥ 1 时）
@@ -104,3 +106,100 @@ platform_max_m = 3.5                  # 坡地上找不到平地时，垫台地�
 ring_m = [10.0, 120.0]                # 离建成区边
 site = { flat = 2.0, landing = 2.0, edge = 1.0 }
 required = true
+
+# ---------------------------------------------------------------- 第三步加的（各风格按需打开、改名）
+[ancestral]                 # 祠堂（徽州总祠、岭南宗祠；梳式的祠堂由算子排在前沿）
+name = "祠堂"
+enabled = false
+mode = "compound"
+template = "ancestral"
+count = { base = 1, per_households = 0, min_households = 15, max = 1 }
+site = { center = 2.0, pond = 3.0, main = 1.0 }
+
+[church]                    # 村教堂（中欧、英格兰、地中海；绿地村的教堂由算子落在公地上）
+name = "教堂"
+enabled = false
+mode = "compound"
+template = "church"
+count = { base = 1, per_households = 0, min_households = 20, max = 1 }
+site = { green = 4.0, high = 2.0, center = 1.5, main = 1.0 }
+
+[manor]                     # 庄园（英格兰：占村端的大地块）
+name = "庄园"
+enabled = false
+mode = "compound"
+template = "manor"
+count = { base = 1, per_households = 0, min_households = 24, max = 1 }
+site = { edge = 2.0, main = 2.0, high = 1.0 }
+
+[castle]                    # 城堡 / 望楼（地中海山城：最高处）
+name = "城堡"
+enabled = false
+mode = "roadside"
+size_w_m = [12.0, 18.0]
+size_d_m = [12.0, 18.0]
+eave_m = 9.0
+roof = "flat"
+storeys = 3
+plinth_m = 0.8
+face = "sun"
+reach_m = 60.0
+count = { base = 1, per_households = 0, min_households = 30, max = 1 }
+site = { high = 5.0, center = 1.0 }
+
+[smithy]                    # 铁匠铺（中欧：公地边）
+name = "铁匠铺"
+enabled = false
+mode = "roadside"
+size_w_m = [6.0, 8.0]
+size_d_m = [5.0, 6.0]
+eave_m = 3.2
+roof = "gable"
+face = "road"
+count = { base = 1, per_households = 0, min_households = 25, max = 1 }
+site = { green = 3.0, entrance = 1.0 }
+
+[moat]                      # 環濠（日本環濠集落）：建成区外廓外一圈水，路过处是桥
+name = "環濠"
+enabled = false
+mode = "moat"
+width_m = [7.0, 15.0]       # 濠宽 7–15 m（TOWN-SOURCES §14）
+offset_m = 6.0              # 离建成区外廓
+required = true
+
+[channel]                   # 水圳（徽州）：主街边的明渠
+name = "水圳"
+enabled = false
+mode = "channel"
+width_m = 0.6
+
+[arch]                      # 牌坊（徽州）：进村大路上，村口往外
+name = "牌坊"
+enabled = false
+mode = "arch"
+dist_m = [20.0, 60.0]
+count = { base = 1, per_households = 0, min_households = 20, max = 2 }
+
+[shuikou]                   # 水口（徽州）：村子下游溪边的亭与水口林
+name = "水口"
+enabled = false
+mode = "shuikou"
+dist_m = [200.0, 800.0]     # 离村心（TOWN-SOURCES §3：200–800 m，估）
+size_w_m = [4.0, 5.0]
+size_d_m = [4.0, 5.0]
+eave_m = 3.0
+roof = "hip"
+pavilion_name = "水口亭"
+grove_name = "水口林"
+grove_radius_m = [20.0, 35.0]
+
+[open_fields]               # 敞田（英格兰）：田分两三大块，块里是一 furlong 长的条田
+name = "敞田"
+enabled = false
+mode = "open_fields"
+fields = [2, 3]
+furlong_m = 201.0
+selion_m = [8.0, 12.0]      # 一条 selion 的宽（估）
+block_w_m = [60.0, 140.0]
+reach_m = 700.0
+max_blocks = 60

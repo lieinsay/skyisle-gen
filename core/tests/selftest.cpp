@@ -8,6 +8,7 @@
 #include "skyisle/flow.hpp"
 #include "skyisle/grid.hpp"
 #include "skyisle/rng.hpp"
+#include "skyisle/town/contour.hpp"
 #include "skyisle/town/geom.hpp"
 #include "skyisle/town/network.hpp"
 #include "skyisle/town/orient.hpp"
@@ -163,6 +164,35 @@ int main() {
         for (int i = 0; i < H; ++i)
             for (int j = 40; j < 43; ++j) s.water(i, j) = WATER_LAKE;
         CHECK(!find_path(s, blocked, road, goal, pp, s.center(20, 5), out));  // 湖：不过
+    }
+    {
+        // 等值线（等高线算子的台线、環濠的外廓用它）：锥面 g = 到 (30, 20) 的距离，= 10 的线是闭合的圆；斜面 g = x 的线是直的、不闭合；NaN 格断开
+        using namespace skyisle::town;
+        const int H = 40, W = 60;
+        Site s;
+        s.res_m = 1.0, s.H = H, s.W = W, s.x0 = 0.0, s.y0 = 40.0;
+        GridF cone(H, W, 0.0f), ramp(H, W, 0.0f);
+        const V2 c0{30.0, 20.0};
+        for (int i = 0; i < H; ++i)
+            for (int j = 0; j < W; ++j) cone(i, j) = static_cast<float>(len(s.center(i, j) - c0)), ramp(i, j) = static_cast<float>(s.center(i, j).x);
+        auto L = iso_lines(s, cone, 10.0, 1, c0, 100.0);
+        CHECK(L.size() == 1 && L[0].size() > 20);
+        if (L.size() == 1) {
+            CHECK(len(L[0].front() - L[0].back()) < 1e-9);   // 闭合
+            double e = 0.0;
+            for (const V2& p : L[0]) e = std::max(e, std::fabs(len(p - c0) - 10.0));
+            CHECK(e < 0.3);
+        }
+        L = iso_lines(s, ramp, 20.5, 1, c0, 100.0);
+        CHECK(L.size() == 1 && L[0].size() >= 30 && len(L[0].front() - L[0].back()) > 30.0);
+        if (!L.empty()) {
+            double e = 0.0;
+            for (const V2& p : L[0]) e = std::max(e, std::fabs(p.x - 20.5));
+            CHECK(e < 1e-6);
+        }
+        for (int j = 0; j < W; ++j) ramp(20, j) = std::nanf("");   // 横着一行 NaN：竖线断成两段
+        CHECK(iso_lines(s, ramp, 20.5, 1, c0, 100.0).size() == 2);
+        CHECK(iso_lines(s, cone, 10.0, 1, c0, 5.0).empty());      // 半径外不看
     }
     if (fails) {
         std::printf("%d 项失败\n", fails);

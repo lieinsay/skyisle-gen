@@ -31,6 +31,9 @@ void instantiate_compound(Work& w, int ci, Rng& r) {
     const double W = 2.0 * C.plot.hw, D = 2.0 * C.plot.hd;
     const double t = C.walled ? w.st.wall_thickness_m : 0.0;
     const double bay = T.bay_m.sample(r);
+    const double pit_depth = 6.5;   // 地坑院的坑深 6–7 m（TOWN-SOURCES §6）
+    // 地块后部做园（croft）时，房只摆在前面那一截：「后沿」是园的前沿
+    const double y_back = -0.5 * D + t + T.garden_frac * D, Deff = (1.0 - T.garden_frac) * D;
     std::vector<Local> bs;
     double back_d = 0.0, front_d = 0.0;
     int last_back = -1, last_front = -1;   // 同一条边上前一栋（耳房贴它）
@@ -48,11 +51,12 @@ void instantiate_compound(Work& w, int ci, Rng& r) {
     for (int k = 0; k < static_cast<int>(T.b.size()); ++k) {
         const BuildingSpec& b = T.b[k];
         if (b.side != SIDE_BACK && b.side != SIDE_FRONT) continue;
+        if (b.detached_m.hi > 0) continue;
         if (r.random() >= b.prob) continue;
         const double avail = W - 2.0 * t;
         if (avail < 2.0) continue;
         Local q;
-        double d = std::min(b.depth_m.sample(r), 0.45 * D);
+        double d = std::min(b.depth_m.sample(r), 0.45 * Deff);
         if (!b.attach.empty()) {
             const int base = b.side == SIDE_BACK ? last_back : last_front;
             if (base < 0) continue;
@@ -70,7 +74,7 @@ void instantiate_compound(Work& w, int ci, Rng& r) {
             q.x0 = xc - 0.5 * L, q.x1 = xc + 0.5 * L;
         }
         if (b.side == SIDE_BACK) {
-            q.y0 = -0.5 * D + t, q.y1 = q.y0 + d;
+            q.y0 = y_back, q.y1 = q.y0 + d;
             q.facing = b.face == FACE_OUT ? PI : 0.0;
             back_d = std::max(back_d, d);
         } else {
@@ -83,12 +87,13 @@ void instantiate_compound(Work& w, int ci, Rng& r) {
         if (b.attach.empty()) (b.side == SIDE_BACK ? last_back : last_front) = static_cast<int>(bs.size()) - 1;
     }
     // 2. 两厢：在两排之间
-    const double yb = -0.5 * D + t + back_d + (back_d > 0 ? 0.8 : 0.0);
+    const double yb = y_back + back_d + (back_d > 0 ? 0.8 : 0.0);
     const double yf = 0.5 * D - t - front_d - (front_d > 0 ? 0.8 : 2.0);
     double left_d = 0.0;
     for (int k = 0; k < static_cast<int>(T.b.size()); ++k) {
         const BuildingSpec& b = T.b[k];
         if (b.side != SIDE_LEFT && b.side != SIDE_RIGHT) continue;
+        if (b.detached_m.hi > 0) continue;
         if (r.random() >= b.prob) continue;
         const double avail = yf - yb;
         if (avail < 2.5) continue;
@@ -273,16 +278,258 @@ void instantiate_compound(Work& w, int ci, Rng& r) {
             b.func = "gate", b.role = q.spec == -1 ? "gatehouse" : "gate", b.name = q.spec == -1 ? "gatehouse" : "gate";
             b.roof = "gable", b.storeys = 1, b.eave_m = q.spec == -1 ? 3.0 : 2.6, b.pitch_deg = 30.0;
         }
-        b.base_m = ground + plinth;
-        for (double h : hs) {
-            if (h > ground) b.cut_m3 += (h - ground) * cell;
-            else b.fill_m3 += (ground - h) * cell;
-            b.max_cut_m = std::max(b.max_cut_m, std::fabs(h - ground));
+        const bool cave = b.roof == "cave" || T.dug_in;   // 靠崖窑院里的房也落在削出来的院子上（院子整块是挖的）
+        if (cave) {
+            // 窑是挖出来的：靠崖窑的地面 = 院子，地坑院的 = 坑底；挖方记下，不算台基的挖填（TP-ground 不查）
+            ground = T.sunken ? C.base_m - pit_depth : C.base_m;
+            b.base_m = ground;
+            for (double h : hs)
+                if (h > ground) b.cut_m3 += (h - ground) * cell;
+        } else {
+            b.base_m = ground + plinth;
+            for (double h : hs) {
+                if (h > ground) b.cut_m3 += (h - ground) * cell;
+                else b.fill_m3 += (ground - h) * cell;
+                b.max_cut_m = std::max(b.max_cut_m, std::fabs(h - ground));
+            }
         }
         raster_obb(w.s, b.box, 0.0, [&](int i, int j) { w.plan.occ(i, j) = OCC_BUILDING; });
         C.buildings.push_back(static_cast<int>(w.plan.buildings.size()));
         w.plan.buildings.push_back(b);
     }
+    // 5. 园（地块后部）、地坑院的坑
+    if (T.garden_frac > 0.0) {
+        Feature g;
+        g.kind = "garden";
+        g.compound = ci;
+        const double y1 = -0.5 * D + T.garden_frac * D;
+        g.poly = {world(-0.5 * W + t, -0.5 * D + t), world(0.5 * W - t, -0.5 * D + t), world(0.5 * W - t, y1), world(-0.5 * W + t, y1)};
+        g.p = world(0.0, 0.5 * (-0.5 * D + y1));
+        g.facing = C.plot.facing;
+        w.plan.features.push_back(g);
+    }
+    if (T.sunken) {
+        double x0 = -0.5 * W + t, x1 = 0.5 * W - t, y0 = -0.5 * D + t, y1 = 0.5 * D - t;
+        for (const Local& q : out) {
+            if (q.gatehouse) continue;
+            const double cx = 0.5 * (q.x0 + q.x1), cy = 0.5 * (q.y0 + q.y1);
+            if (std::fabs(cx) * D > std::fabs(cy) * W) {
+                if (cx < 0) x0 = std::max(x0, q.x1);
+                else x1 = std::min(x1, q.x0);
+            } else {
+                if (cy < 0) y0 = std::max(y0, q.y1);
+                else y1 = std::min(y1, q.y0);
+            }
+        }
+        if (x1 - x0 > 3.0 && y1 - y0 > 3.0) {
+            Feature g;
+            g.kind = "pit";
+            g.compound = ci;
+            g.poly = {world(x0, y0), world(x1, y0), world(x1, y1), world(x0, y1)};
+            g.p = world(0.5 * (x0 + x1), 0.5 * (y0 + y1));
+            g.z = C.base_m - pit_depth;
+            g.facing = C.plot.facing;
+            w.plan.features.push_back(g);
+        }
+    }
+    // 6. 院外单栋（北欧：浴房近水、铁匠房离主院 ≥ 20 m）
+    for (const BuildingSpec& S : T.b) {
+        if (S.detached_m.hi <= 0 || r.random() >= S.prob) continue;
+        const double L = S.bays.hi > 0 ? S.bays.sample_int(r) * bay : S.depth_m.sample(r) * 1.3, d = S.depth_m.sample(r);
+        const double r0 = std::hypot(C.plot.hw, C.plot.hd);
+        double best = -INF;
+        Obb arg{};
+        for (int k = 0; k < 24; ++k) {
+            const double th = C.plot.facing + 2.0 * PI * k / 24.0;
+            for (double dd = S.detached_m.lo; dd <= S.detached_m.hi + 1e-9; dd += 4.0) {
+                const V2 p = C.plot.c + bearing_vec(th) * (r0 + dd);
+                const Obb o{p, wrap_pi(th + PI), 0.5 * L, 0.5 * d};
+                if (!obb_free(w, o, 0.0, false, 15.0) || road_hits_obb(w, o, -0.5) || hits_built(w, o, 1.5)) continue;
+                bool clash = false;
+                for (const Compound& o2 : w.plan.compounds) clash = clash || (len(o2.plot.c - p) < 120.0 && overlap(o2.plot, o, 2.0));
+                if (clash) continue;
+                double sc = -dd / 50.0 + 0.05 * r.random();
+                if (S.near == "water") {
+                    int i, j;
+                    const double dw = w.s.cell_of(p, i, j) ? w.s.water_dist_m(i, j) : 1e9;
+                    if (dw > 100.0) continue;   // 桑拿在湖岸 20–100 m（估）
+                    sc -= dw / 30.0;
+                }
+                if (sc > best) best = sc, arg = o;
+            }
+        }
+        if (!std::isfinite(best)) continue;
+        Building b;
+        b.compound = ci;
+        b.box = arg;
+        b.func = S.func, b.role = S.role, b.name = S.name, b.roof = S.roof, b.material = S.material;
+        b.storeys = S.storeys, b.eave_m = S.eave_m, b.pitch_deg = S.pitch_deg;
+        std::vector<double> hs;
+        raster_obb(w.s, arg, 0.0, [&](int i, int j) {
+            const double h = w.s.height(i, j);
+            if (std::isfinite(h)) hs.push_back(h);
+        });
+        double ground = C.base_m;
+        if (!hs.empty()) {
+            std::vector<double> tmp = hs;
+            std::nth_element(tmp.begin(), tmp.begin() + tmp.size() / 2, tmp.end());
+            ground = tmp[tmp.size() / 2];
+        }
+        b.base_m = ground + S.plinth_m;
+        for (double h : hs) {
+            if (h > ground) b.cut_m3 += (h - ground) * cell;
+            else b.fill_m3 += (ground - h) * cell;
+            b.max_cut_m = std::max(b.max_cut_m, std::fabs(h - ground));
+        }
+        mark_obb(w, arg, OCC_BUILDING, 0.0);
+        C.buildings.push_back(static_cast<int>(w.plan.buildings.size()));
+        w.plan.buildings.push_back(b);
+    }
 }
+
+// ---------------------------------------------------------------- 围合单体：圆楼 / 方楼 / 围龙屋
+// 局部坐标同上（x 右、y 前）；环上的房间朝院心，一段几间合成一栋（段宽按内圈算，段与段在外圈留楔形缝，不相交）；
+// 门在前方正中（占一段），中间祖堂；户 = 竖向一列房间，列数由算子按户数定、这里按地块尺寸排段。
+void instantiate_enclosure(Work& w, int ci, Rng& r) {
+    Compound& C = w.plan.compounds[ci];
+    const TemplateSpec& T = w.st.templates[w.st.template_index(C.tmpl)];
+    const double W = 2.0 * C.plot.hw, D = 2.0 * C.plot.hd;
+    const double depth = T.ring_depth_m.sample(r), room = T.ring_room_m.sample(r);
+    const int storeys = std::max(1, T.ring_storeys.sample_int(r));
+    const BuildingSpec *ring = nullptr, *hall = nullptr, *gate = nullptr, *side = nullptr;
+    for (const BuildingSpec& S : T.b) {
+        if (S.role == "ring" && !ring) ring = &S;
+        else if (S.role == "hall" && !hall) hall = &S;
+        else if (S.role == "gate" && !gate) gate = &S;
+        else if (S.role == "side_row" && !side) side = &S;
+    }
+    const V2 fv = bearing_vec(C.plot.facing), rv = bearing_right(C.plot.facing);
+    auto world = [&](double x, double y) { return C.plot.c + rv * x + fv * y; };
+    struct Piece {
+        V2 c;              // 局部
+        double facing;     // 相对地块朝向
+        double L, d;
+        const BuildingSpec* spec;
+        int storeys;
+        std::string role;
+    };
+    std::vector<Piece> ps;
+    // o = 圆心（局部）；角从地块前方（+y）起、顺时针为正；[th0, th1] 这一段弧；gate_front：正前方那一段做门
+    auto ring_arc = [&](V2 o, double R_out, double th0, double th1, bool gate_front) {
+        const double R_in = R_out - depth, R_mid = 0.5 * (R_out + R_in);
+        const double arc = (th1 - th0) * R_mid;
+        const int n_rooms = std::max(4, static_cast<int>(std::floor(arc / room)));
+        const int nseg = std::max(3, static_cast<int>(std::lround(n_rooms / 2.0)));   // 两间一段：外圈看着是圆的
+        const double dth = (th1 - th0) / nseg;
+        const double width = std::max(1.5, 2.0 * R_in * std::tan(0.5 * dth) - 0.1);
+        int gate_k = -1;
+        if (gate_front) {
+            double bd = INF;
+            for (int k = 0; k < nseg; ++k) {
+                const double d = std::fabs(wrap_pi(th0 + (k + 0.5) * dth));
+                if (d < bd) bd = d, gate_k = k;
+            }
+        }
+        for (int k = 0; k < nseg; ++k) {
+            const double th = th0 + (k + 0.5) * dth;
+            const V2 c = o + V2{std::sin(th), std::cos(th)} * R_mid;
+            const bool is_gate = k == gate_k;
+            ps.push_back({c, wrap_pi(th + PI), width, depth, is_gate && gate ? gate : ring, is_gate ? 1 : storeys, is_gate ? "gate" : "ring"});
+        }
+        return n_rooms;
+    };
+    int rooms = 0;
+    double gate_y = 0.5 * D;
+    if (T.shape == "ring") {
+        const double R_out = 0.5 * std::min(W, D) - 0.3;
+        rooms = ring_arc({0.0, 0.0}, R_out, -PI, PI, true);
+        gate_y = R_out;
+        const double R_in = R_out - depth;
+        if (hall && R_in > 7.0) ps.push_back({{0.0, 0.0}, 0.0, std::min(12.0, 0.8 * R_in), std::min(8.0, 0.6 * R_in), hall, 1, "hall"});
+    } else if (T.shape == "square_ring") {
+        const double x0 = -0.5 * W + 0.3, x1 = 0.5 * W - 0.3, y0 = -0.5 * D + 0.3, y1 = 0.5 * D - 0.3;
+        const double gw = std::max(4.0, 1.5 * room);
+        ps.push_back({{0.0, y0 + 0.5 * depth}, 0.0, x1 - x0, depth, ring, storeys, "ring"});                            // 后排
+        ps.push_back({{x0 + 0.5 * depth, 0.0}, 0.5 * PI, y1 - y0 - 2.0 * depth - 0.2, depth, ring, storeys, "ring"});   // 左排（朝院心）
+        ps.push_back({{x1 - 0.5 * depth, 0.0}, -0.5 * PI, y1 - y0 - 2.0 * depth - 0.2, depth, ring, storeys, "ring"});  // 右排
+        const double half = 0.5 * (x1 - x0 - gw) - 0.1;
+        ps.push_back({{x0 + 0.5 * half, y1 - 0.5 * depth}, PI, half, depth, ring, storeys, "ring"});                     // 前排左半
+        ps.push_back({{x1 - 0.5 * half, y1 - 0.5 * depth}, PI, half, depth, ring, storeys, "ring"});                     // 前排右半
+        ps.push_back({{0.0, y1 - 0.5 * depth}, 0.0, gw, depth, gate ? gate : ring, 1, "gate"});
+        rooms = static_cast<int>(std::floor((2.0 * (x1 - x0) + 2.0 * (y1 - y0) - 4.0 * depth - gw) / room));
+        gate_y = y1;
+        const double inner = std::min(x1 - x0, y1 - y0) - 2.0 * depth;
+        if (hall && inner > 12.0) ps.push_back({{0.0, 0.0}, 0.0, std::min(12.0, 0.5 * inner), std::min(8.0, 0.4 * inner), hall, 1, "hall"});
+    } else {   // weilong：两堂两横一围龙（后面半圈），前面下堂开门
+        const double Rw = 0.5 * W - 0.3;                    // 围龙半径
+        const double yc = -0.5 * D + 0.3 + Rw;              // 围龙圆心（局部 y）
+        rooms = ring_arc({0.0, yc}, Rw, 0.5 * PI, 1.5 * PI, false);   // 后半圈：从右（90°）经正后方到左（270°）
+        const double row_d = side ? side->depth_m.mid() : depth;
+        const double ys0 = yc + 0.3, ys1 = 0.5 * D - 0.3;
+        const double xs = 0.5 * W - 0.3 - 0.5 * row_d;
+        if (ys1 - ys0 > 6.0) {
+            // 横屋朝轴线；依山前低后高，按每四间一段分开（各段分台）
+            const BuildingSpec* sr = side ? side : ring;
+            const int nsg = std::max(1, static_cast<int>(std::ceil((ys1 - ys0) / (4.0 * room))));
+            const double sl = (ys1 - ys0) / nsg;
+            for (int k = 0; k < nsg; ++k) {
+                const double yc = ys0 + (k + 0.5) * sl;
+                ps.push_back({{-xs, yc}, 0.5 * PI, sl - 0.3, row_d, sr, 1, "side_row"});
+                ps.push_back({{xs, yc}, -0.5 * PI, sl - 0.3, row_d, sr, 1, "side_row"});
+            }
+            rooms += 2 * static_cast<int>(std::floor((ys1 - ys0) / room));
+        }
+        const double inner_w = W - 2.0 * (row_d + 0.3) - 4.0;
+        const double hw = std::min(inner_w, 18.0);
+        if (hw > 8.0) {
+            const double hd = std::min(9.0, 0.25 * (ys1 - ys0));
+            ps.push_back({{0.0, ys1 - 0.5 * hd}, 0.0, hw, hd, gate ? gate : hall, 1, "gate"});                 // 下堂（门）
+            if (hall) ps.push_back({{0.0, yc + 0.4 * (ys1 - yc)}, 0.0, hw, hd, hall, 1, "hall"});           // 上堂（祖堂）
+        }
+        gate_y = ys1;
+    }
+    // 落到平面：整座楼一个台基（地块中位 + 台高）
+    const double cell = w.s.res_m * w.s.res_m;
+    for (const Piece& q : ps) {
+        if (!q.spec) continue;
+        Building b;
+        b.compound = ci;
+        b.box = {world(q.c.x, q.c.y), wrap_pi(C.plot.facing + q.facing), 0.5 * q.L, 0.5 * q.d};
+        b.func = q.spec->func, b.role = q.role, b.name = q.spec->name, b.roof = q.spec->roof, b.material = q.spec->material;
+        b.storeys = q.storeys;
+        b.eave_m = q.role == "ring" ? q.spec->eave_m * q.storeys : q.spec->eave_m;
+        b.pitch_deg = q.spec->pitch_deg;
+        // 台基：圆楼、方楼整座一个；围龙屋依山，各栋按自己脚下分台（前低后高、化胎在后）
+        double ground = C.base_m;
+        if (T.shape == "weilong") {
+            std::vector<double> hs;
+            raster_obb(w.s, b.box, 0.0, [&](int i, int j) {
+                const double h = w.s.height(i, j);
+                if (std::isfinite(h)) hs.push_back(h);
+            });
+            if (!hs.empty()) {
+                std::nth_element(hs.begin(), hs.begin() + hs.size() / 2, hs.end());
+                ground = hs[hs.size() / 2];
+            }
+        }
+        b.base_m = ground + q.spec->plinth_m;
+        raster_obb(w.s, b.box, 0.0, [&](int i, int j) {
+            const double h = w.s.height(i, j);
+            if (std::isfinite(h)) {
+                if (h > ground) b.cut_m3 += (h - ground) * cell;
+                else b.fill_m3 += (ground - h) * cell;
+                b.max_cut_m = std::max(b.max_cut_m, std::fabs(h - ground));
+            }
+            w.plan.occ(i, j) = OCC_BUILDING;
+        });
+        C.buildings.push_back(static_cast<int>(w.plan.buildings.size()));
+        w.plan.buildings.push_back(b);
+    }
+    C.access_side = SIDE_FRONT;
+    C.gate = world(0.0, gate_y);
+    C.gate_bearing = C.plot.facing;
+    w.plan.metrics["enclosure_rooms_sum"] += rooms;
+}
+
 
 }  // namespace skyisle::town

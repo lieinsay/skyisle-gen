@@ -34,8 +34,14 @@ bool slot_ground(const Work& w, Slot& sl, const Mask* extra) {
     double sL = 0, sR = 0, sB = 0, sF = 0;
     int nL = 0, nR = 0, nB = 0, nF = 0;
     const V2 fv = bearing_vec(sl.box.facing), rv = bearing_right(sl.box.facing);
+    // 靠崖窑（dug_in）：院子是在坡上削出来的台，窑挖进后面的崖——整块地都是挖出来的，只要不是水、虚空、崖缘、不陡过 60°
+    const bool dug = sl.tmpl >= 0 && w.st.templates[sl.tmpl].dug_in;
     raster_obb(w.s, sl.box, 0.0, [&](int i, int j) {
-        if (!w.f.buildable(i, j) || (extra && (*extra)(i, j))) ok = false;
+        bool can = w.f.buildable(i, j);
+        if (!can && dug)
+            can = !w.s.sky(i, j) && !w.s.edge(i, j) && w.s.water(i, j) == WATER_NONE && (w.st.allow_flood || !w.s.flood(i, j)) &&
+                  w.f.slope_deg(i, j) <= 60.0f;
+        if (!can || (extra && (*extra)(i, j))) ok = false;
         const double h = w.s.height(i, j);
         if (std::isfinite(h)) {
             hs.push_back(h);
@@ -60,12 +66,27 @@ bool slot_ground(const Work& w, Slot& sl, const Mask* extra) {
     double mc = 0.0;
     for (double h : hs) mc = std::max(mc, std::fabs(h - sl.base_m));
     sl.max_cut = mc;
-    sl.valid = ok && mc <= w.st.max_terrace_m;
-    // 正房顺面阔、厢房顺进深：一栋房两头的高差（坡 × 半长）也得在 max_cut_m 以内
-    if (nL && nR && nB && nF) {
+    // 靠崖窑：地块里的高差不按台地查（挖方记在窑上）
+    // 围龙屋依山分台（前低后高、化胎在后）：地块高差放到台地上限的 2.5 倍，各栋自己查挖填
+    const bool terraced = sl.tmpl >= 0 && w.st.templates[sl.tmpl].shape == "weilong";
+    sl.valid = ok && (dug || mc <= (terraced ? 2.5 : 1.0) * w.st.max_terrace_m);
+    // 每栋房两头的高差（面阔方向坡 × 半长 + 进深方向坡 × 半深）也得在 max_cut_m 以内：前后两边的房顺面阔、左右两边的顺进深；
+    // 窑（挖进去的）与院外单栋不算
+    if (nL && nR && nB && nF && sl.tmpl >= 0 && !dug) {
         const double gr = std::fabs(sR / nR - sL / nL) / (4.0 / 3.0 * sl.box.hw), gf = std::fabs(sF / nF - sB / nB) / (4.0 / 3.0 * sl.box.hd);
-        const double main = gr * sl.box.hw + gf * 3.5, wing = gf * 5.0 + gr * 2.3;
-        if (std::max(main, wing) > w.st.max_cut_m + 0.2) sl.valid = false;
+        const TemplateSpec& T = w.st.templates[sl.tmpl];
+        double worst = 0.0;
+        for (const BuildingSpec& S : T.b) {
+            if (S.roof == "cave" || S.detached_m.hi > 0) continue;
+            const bool along_w = S.side == SIDE_FRONT || S.side == SIDE_BACK;
+            const double span = along_w ? 2.0 * sl.box.hw : 2.0 * sl.box.hd;
+            const double L = S.bays.hi > 0 ? std::min(span, S.bays.hi * T.bay_m.hi) : S.len_frac.hi * span;
+            const double d = S.depth_m.mid();
+            worst = std::max(worst, along_w ? gr * 0.5 * L + gf * 0.5 * d : gf * 0.5 * L + gr * 0.5 * d);
+        }
+        if (T.b.empty() || T.shape != "yard") worst = gr * sl.box.hw + gf * 3.5;
+        if (T.shape == "weilong") worst = gr * 0.5 * T.ring_room_m.hi * 4.0 + gf * 0.5 * T.ring_depth_m.hi;   // 围龙屋依山：各栋分台（前低后高），只看一段房两头的高差
+        if (worst > w.st.max_cut_m + 0.2) sl.valid = false;
     }
     // 要做台地的院子（高差超过一栋房的挖填上限）排后一点
     if (mc > w.st.max_cut_m) sl.interest -= 0.5 * (mc - w.st.max_cut_m) / std::max(0.1, w.st.max_terrace_m - w.st.max_cut_m);
@@ -90,7 +111,15 @@ OrientCtx orient_ctx(const Work& w, V2 p) {
 }
 
 int pick_template(const Work& w, Rng& r) {
-    const std::vector<int> ids = w.st.house_templates();
+    // 围合单体（圆楼、方楼、围龙屋）只由围合算子按户数定尺寸落，这里只挑院落
+    std::vector<int> ids, yards;
+    for (int k : w.st.house_templates())
+        if (w.st.templates[k].shape == "yard") {
+            yards.push_back(k);
+            if (w.st.templates[k].allows(w.plan.op)) ids.push_back(k);
+        }
+    if (ids.empty()) ids = yards;   // 风格没给这个算子的模板：院落都行
+    if (ids.empty()) ids = w.st.house_templates();
     std::vector<double> p;
     for (int k : ids) p.push_back(w.st.templates[k].weight);
     return ids[static_cast<size_t>(r.choice_p(p))];
@@ -145,6 +174,16 @@ bool road_hits_obb(const Work& w, const Obb& o, double tol) {
     return false;
 }
 
+// 几何地查一个框会不会碰到已有的房或宅院地块（小房子落在格上可能一格都不占，光看占用格会漏）
+bool hits_built(const Work& w, const Obb& o, double clearance) {
+    const double r = std::hypot(o.hw, o.hd) + clearance;
+    for (const Building& b : w.plan.buildings)
+        if (len(b.box.c - o.c) < r + std::hypot(b.box.hw, b.box.hd) && overlap(o, b.box, clearance)) return true;
+    for (const Compound& c : w.plan.compounds)
+        if (len(c.plot.c - o.c) < r + std::hypot(c.plot.hw, c.plot.hd) && overlap(o, c.plot, clearance)) return true;
+    return false;
+}
+
 void mark_obb(Work& w, const Obb& o, uint8_t code, double shrink) {
     raster_obb(w.s, o, shrink, [&](int i, int j) {
         if (w.plan.occ(i, j) == OCC_FREE || w.plan.occ(i, j) == OCC_PLOT || code == OCC_BUILDING) w.plan.occ(i, j) = code;
@@ -163,6 +202,35 @@ bool obb_free(const Work& w, const Obb& o, double shrink, bool need_buildable, d
         else if (!(w.f.slope_deg(i, j) <= max_slope_deg)) ok = false;
     });
     return ok && any;
+}
+
+bool plot_fits(Work& w, Slot& sl, const Mask* extra) {
+    bool clear = true;
+    raster_obb(w.s, sl.box, 0.0, [&](int i, int j) {
+        if (w.plan.occ(i, j) != OCC_FREE) clear = false;
+    });
+    if (!clear) return false;
+    // 栅格看不出不到一格的相交：与附近的地块再按矩形判一次，与路按「路中线离地块 ≥ 半宽」判
+    const double reach = sl.box.hw + sl.box.hd + 60.0;
+    for (const Compound& c : w.plan.compounds)
+        if (len(c.plot.c - sl.box.c) < reach + c.plot.hw + c.plot.hd && overlap(c.plot, sl.box, -0.05)) return false;
+    if (road_hits_obb(w, sl.box, 0.05)) return false;
+    return slot_ground(w, sl, extra);
+}
+
+double total_slope_share(const Work& w, V2 c, double radius, double min_deg) {
+    const Site& s = w.s;
+    int ci, cj;
+    if (!s.cell_of(c, ci, cj)) return 0.0;
+    const int rc = static_cast<int>(std::ceil(radius / s.res_m));
+    int n = 0, k = 0;
+    for (int i = std::max(0, ci - rc); i <= std::min(s.H - 1, ci + rc); i += 2)
+        for (int j = std::max(0, cj - rc); j <= std::min(s.W - 1, cj + rc); j += 2) {
+            if (len(s.center(i, j) - c) > radius || s.sky(i, j) || s.water(i, j) != WATER_NONE) continue;
+            ++n;
+            k += w.f.slope_deg(i, j) >= min_deg;
+        }
+    return n ? static_cast<double>(k) / n : 0.0;
 }
 
 int commit_compound(Work& w, const Slot& sl, const std::string& kind, const std::string& func, const std::string& name,
@@ -339,12 +407,23 @@ void choose_facing(Work& w) {
     w.facing = solve_facing(rules, c, w.st.snap, c.sun);
 }
 
+// 按风格的权重挑，只在这块地能用的算子里挑（滨水要河、等高线要坡、地坑院要平塬、小村的算子看户数）；
+// 一个都不能用就用风格里权重最大的那个（风格不合这块地：照风格硬做，校验会说地不够），风格一个算子都没写才团块生长
 std::string pick_operator(Work& w) {
     if (!w.req.force_operator.empty()) return w.req.force_operator;
     Rng r = w.rng("operator");
     std::vector<double> p;
-    for (auto& kv : w.st.operators) p.push_back(std::max(0.0, kv.second));
-    return w.st.operators[static_cast<size_t>(r.choice_p(p))].first;
+    std::vector<std::string> ids;
+    for (auto& kv : w.st.operators)
+        if (kv.second > 0.0 && op_fits(w, kv.first)) ids.push_back(kv.first), p.push_back(kv.second);
+    if (ids.empty()) {
+        std::string best = "organic";
+        double bw = 0.0;
+        for (auto& kv : w.st.operators)
+            if (kv.second > bw) bw = kv.second, best = kv.first;
+        return best;
+    }
+    return ids[static_cast<size_t>(r.choice_p(p))];
 }
 
 }  // namespace
@@ -392,25 +471,43 @@ Plan plan_site(const Site& s, const Style& st, const PlanRequest& req) {
         w.plan.op = "single";
         op_single(w);
     } else {
+        for (auto& kv : w.st.operators)
+            if (kv.second > 0.0 && op_fits(w, kv.first)) w.plan.ops_fit.push_back(kv.first);
         w.plan.op = pick_operator(w);
-        if (w.plan.op == "fishbone") op_fishbone(w);
-        else if (w.plan.op == "organic") op_organic(w);
-        else throw std::invalid_argument("town plan: operator " + w.plan.op + " is not implemented yet");
+        const std::string& op = w.plan.op;
+        if (op == "fishbone") op_fishbone(w);
+        else if (op == "organic") op_organic(w);
+        else if (op == "street_village") op_street(w, false);
+        else if (op == "hufen") op_street(w, true);
+        else if (op == "waterfront") op_waterfront(w);
+        else if (op == "dispersed") op_dispersed(w);
+        else if (op == "green") op_green(w);
+        else if (op == "comb") op_comb(w);
+        else if (op == "contour") op_contour(w);
+        else if (op == "enclosure") op_enclosure(w);
+        else throw std::invalid_argument("town plan: unknown operator " + op);
+        place_missing_public(w);
     }
     lap(w, "layout");
     {
         Rng r = w.rng("compounds");
-        for (int ci = 0; ci < static_cast<int>(w.plan.compounds.size()); ++ci) instantiate_compound(w, ci, r);
+        for (int ci = 0; ci < static_cast<int>(w.plan.compounds.size()); ++ci) {
+            const TemplateSpec& T = w.st.templates[w.st.template_index(w.plan.compounds[ci].tmpl)];
+            if (T.shape == "yard") instantiate_compound(w, ci, r);
+            else instantiate_enclosure(w, ci, r);
+        }
     }
     lap(w, "compounds");
     if (req.scale != "compound") {
         place_exits(w);
         lap(w, "exits");
+        place_moat(w);
         if (req.want_landing) place_landing(w);
         place_ponds(w);
         place_roadside(w);
         place_threshing(w);
         place_wells(w);
+        place_extras(w);
         lap(w, "functions");
     }
     verify(w);

@@ -13,6 +13,7 @@ sources = []
 # ---------------------------------------------------------------- 选址（7.2）
 [site]
 center_search_m = 300.0     # 村心在上游点位多远以内挑（TP-shift）
+window_factor = 1.0         # 窗口放大（散居的林盘、北欧农庄要比集村大得多的地；地面只按来源坐标取，放大只是多裁一圈）
 water_scale_m = 200.0       # 「近水」这一场按 exp(−离水 / 它) 衰减
 edge_scale_m = 80.0         # 「近崖缘」按 exp(−离虚空 / 它)
 [site.weights]              # 住宅兴趣图 = Σ 权重 × 归一化的场（负数 = 躲开）
@@ -32,10 +33,15 @@ allow_flood = false         # 漫水区能不能建（吊脚楼风格才开）
 
 # ---------------------------------------------------------------- 村的形态（6.2）
 [village]
-operators = { fishbone = 1.0 }       # 形态算子与权重：每个村按权重挑一个（第二步有 fishbone / organic）
+# 形态算子与权重：每个村按权重挑一个，只在这块地能用的里挑（滨水要河、等高线要坡），一个都不能用就团块生长。
+# fishbone 鱼骨街村 / organic 团块生长 / street_village 街村 / hufen 林地排村 / waterfront 滨水 / dispersed 散居 /
+# green 围绿 / comb 梳式 / contour 等高线 / enclosure 围合单体
+operators = {}                       # 风格必须自己给（表逐键深合并：这里写了的键会混进每个风格）
 households_per_compound = [1, 1]     # 一个宅院住几户
 founders = [1, 3]                    # 开基户
 kin_p = 0.6                          # 一户有「父户」（同一房支）的概率，否则算外来户
+[village.max_households]             # 某个算子只在户数 ≤ 它时用（列村、环村是小村）；不写 = 不限
+[village.operator_names]             # 形态算子在这个风格里叫什么（出图、调试台显示；子预设就是算子，如 hufen = "林地排村"）
 
 [street]                             # 路的宽度（m）
 trunk_width_m = [4.0, 6.0]           # 出村大路
@@ -67,6 +73,90 @@ jitter_deg = 4.0                     # 与邻户朝向的偏差
 stagger_m = 1.5                      # 与左右邻户前沿（前后邻户侧边）错开多少（0 = 对齐成排）
 lane_reach_m = 40.0                  # 门离现有路多远以内才考虑（再远就要修太长的巷）
 main_street = true                   # 先按坡度代价修一条过村心的主街
+squares = [0, 0]                     # 先占几块广场（地中海山城 1–3）
+square_radius_m = [8.0, 14.0]
+square_kind = "square"               # square 广场 / pond 塘（徽州的月沼）
+square_name = ""
+lane_clearance_m = 0.5               # 新修的巷中线离两边院墙比半巷宽多留多少（密实的山城、宗族村取小）
+
+[street_village]                     # 街村：一条主街两边按面宽切条地（中欧街村、宿場町、瑞典列村、英格兰 toft & croft）
+axis = "auto"                        # auto：有坡顺等高线、有河顺河、否则朝最要紧的出村方向 / contour / exit / across（垂直于朝阳）
+sides = 2                            # 街的一边还是两边
+front_w_m = [0.0, 0.0]               # 面宽（沿街）；[0, 0] = 按模板
+depth_m = [0.0, 0.0]                 # 进深；[0, 0] = 按模板
+face_street = true                   # 地块一律朝街（门开在临街一边）；false 按朝向链
+length_factor = 1.15                 # 主街长 = 需要的面宽 × 它
+branch_spacing_m = [90.0, 140.0]     # 主街排满后分出的支街间距
+branch_len_m = [80.0, 160.0]
+back_lane = false                    # 地块后面各一条背巷（英格兰 back lane）
+back_lane_gap_m = 2.0
+
+[hufen]                              # 林地排村（Waldhufendorf）：每户一条长地，房在条头临路，条身是自家田
+frontage_m = [40.0, 100.0]           # 每户条地的临街宽（TOWN-SOURCES §10：约 100 m）
+min_frontage_m = 20.0                # 窗口里的街放不下时，最窄压到这里（再窄就换分支街）
+strip_len_m = [300.0, 2400.0]        # 条地往后伸多长（到窗口边、虚空、水、陡坡为止）
+axis = "auto"                        # 沿溪（有河顺河）、沿等高线
+strip_name = "条地"
+
+[waterfront]                         # 滨水（江南）：以河为骨，前街后河 / 前河后街
+reach_m = 80.0                       # 河离预计半径外多远以内才用滨水
+min_width_m = 3.0                    # 河至少这么宽
+modes = { qianjie_houhe = 0.7, qianhe_houjie = 0.3 }   # 前街后河：街在陆上、房在街与河之间；前河后街：街沿水、房在街的陆侧
+row_depth_m = [10.0, 18.0]           # 前街后河时街与河之间那一排的进深
+bank_m = 1.5                         # 房后到水边留多少（河埠头的平台）
+steps_every = [3, 6]                 # 几户一个河埠头（水弄通到水边的石阶）
+water_lane_m = [1.2, 2.0]            # 水弄宽
+steps_name = "河埠头"
+bridge_spacing_m = [80.0, 200.0]     # 桥距（估，按周庄）
+length_factor = 1.2
+
+[dispersed]                          # 散居：按加权泊松盘撒点，每点一户或一簇
+cluster_hh = [1, 1]                  # 一个点住几户（林盘 3–5）
+spacing_m = [120.0, 250.0]           # 点与点的最小间距（林盘 300–600 m；砺波 50–100 m）
+cluster_radius_m = 28.0              # 一簇在点周围多大范围里摆
+w_interest = 1.0                     # 撒点的评分：兴趣图
+w_farmland = 0.5                     # 在田中间（林盘、散居村被自家田围着）
+w_center = 0.4                       # 离村心近一点（整个窗口的尺度上）；散居得匀的（砺波）取小
+grove = "none"                       # ring 环林（林盘竹林）/ windward 冬季风上风侧的屋敷林（砺波カイニョ）/ none
+grove_width_m = [10.0, 25.0]
+grove_name = ""
+
+[green]                              # 围绿：路绕一块公地（中欧绿地村 Angerdorf、英格兰 village green；小村成环村 Rundling）
+modes = { anger = 1.0, rundling = 0.0 }   # 户数 ≤ rundling_max_hh 时才挑 rundling
+rundling_max_hh = 12
+width_m = [30.0, 100.0]              # 公地宽（TOWN-SOURCES §10：30–100 m，估）
+length_m = [150.0, 600.0]            # 公地长
+church_on_green = true               # 教堂落在公地上（公地够宽时）
+pond_on_green = true
+green_name = "公地"
+pond_name = "池塘"
+
+[comb]                               # 梳式（岭南）：前沿一排塘 + 晒坪 + 祠堂，垂直于前沿开平行巷
+lane_spacing_m = [12.0, 14.0]        # 巷距（估）
+rows = [5, 15]                       # 一条巷两边排几进（估）
+row_gap_m = [0.4, 1.2]               # 前后栋的间隙（很小）
+threshing_depth_m = [18.0, 28.0]     # 前沿外的晒坪进深
+pond_depth_m = [25.0, 45.0]          # 晒坪外风水塘的进深
+pond_name = "风水塘"
+threshing_name = "晒坪"
+hall_every_hh = 25                   # 每多少户一座祠堂（前排）
+halls_max = 3
+
+[contour]                            # 等高线（窑洞、山地村）：房背靠坡、朝下坡，沿台线排，层间之字路
+min_slope_deg = 8.0                  # 坡 ≥ 它的格
+min_share = 0.35                     # 占村心一带这么多时才用等高线
+layer_m = [3.0, 5.0]                 # 层差
+max_slope_deg = 55.0                 # 比它陡的坡不挖
+min_line_m = 25.0                    # 太短的台线不要
+
+[enclosure]                          # 围合单体（客家土楼 / 围龙屋）：户 = 竖向一列房间
+hh_columns = [1, 2]                  # 一户占几列
+max_rooms = 72                       # 一座楼一圈最多几间（圆楼外环每层 48–72 间）
+min_rooms = 24
+gap_factor = 1.0                     # 楼距 ≥ 这么多个直径
+front_pond = true                    # 门前半月池 + 禾坪（围龙屋）
+pond_name = "半月池"
+threshing_name = "禾坪"
 
 [growth]                             # 一户一户落位的评分（值越大越先）
 w_dist = 1.0                         # 离村心（直线）
@@ -101,6 +191,11 @@ width_m = [2.4, 3.2]
 [compound]
 wall_thickness_m = 0.4
 yard_min_m = 4.0                     # 院心最窄（两厢之间、前后排之间）
+
+# 围合单体（shape = ring 圆楼 / square_ring 方楼 / weilong 围龙屋）不按边摆：各栋按 role 取——ring 环上的房间（户）、hall 祖堂、gate 大门、
+# side_row 横屋；ring_room_m 每间弧长、ring_depth_m 房进深、ring_storeys 层数。ops = ["contour"] 这样的模板只给这些算子用。
+# dug_in = true：后排挖进坡里（靠崖窑，roof = "cave" 的栋不算台基挖填）；sunken = true：地坑院（院心是坑）；garden_frac：地块后部做园。
+# 院外单栋：b 里写 detached_m = [lo, hi]（离地块边多远）与 near = "water"（近水，桑拿）。
 
 [compound.templates.temple]          # 通用的庙：正殿 + 山门 + 两庑（风格可以覆盖）
 name = "庙"
@@ -151,6 +246,144 @@ prob = 0.5
 eave_m = 3.2
 roof = "gable"
 plinth_m = 0.45
+
+[compound.templates.church]          # 通用的村教堂：中殿 + 西塔，围一圈墓园墙（中欧、英格兰、北欧、地中海）
+name = "教堂"
+kind = "public"
+weight = 0.0
+plot_w_m = [20.0, 28.0]
+plot_d_m = [40.0, 50.0]
+bay_m = [4.0, 5.0]
+wall = true
+gate = "right"                      # 墓园门偏在一侧，让开正中的塔
+[[compound.templates.church.b]]
+role = "hall"
+name = "中殿"
+func = "worship"
+side = "back"
+len_frac = [0.4, 0.5]
+depth_m = [16.0, 22.0]
+face = "front"
+eave_m = 6.0
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.5
+[[compound.templates.church.b]]
+role = "tower"
+name = "钟塔"
+func = "worship"
+side = "front"
+len_frac = [0.22, 0.28]
+depth_m = [5.0, 7.0]
+face = "front"
+storeys = 4
+eave_m = 16.0
+roof = "spire"
+pitch_deg = 70.0
+plinth_m = 0.5
+
+[compound.templates.ancestral]       # 通用的祠堂：享堂 + 门厅 + 两廊（徽州、岭南、客家）
+name = "祠堂"
+kind = "public"
+weight = 0.0
+plot_w_m = [14.0, 20.0]
+plot_d_m = [26.0, 36.0]
+bay_m = [3.8, 4.4]
+wall = true
+gate = "center"
+gate_house = true
+[[compound.templates.ancestral.b]]
+role = "hall"
+name = "享堂"
+func = "worship"
+side = "back"
+bays = [3, 3]
+depth_m = [9.0, 11.0]
+face = "front"
+eave_m = 5.0
+roof = "hip_gable"
+pitch_deg = 30.0
+plinth_m = 0.8
+[[compound.templates.ancestral.b]]
+role = "front"
+name = "门厅"
+func = "worship"
+side = "front"
+bays = [3, 3]
+depth_m = [5.0, 6.0]
+face = "in"
+eave_m = 4.2
+roof = "gable"
+plinth_m = 0.6
+[[compound.templates.ancestral.b]]
+role = "side_hall"
+name = "廊"
+func = "worship"
+side = "left"
+len_frac = [0.8, 1.0]
+depth_m = [2.5, 3.0]
+face = "in"
+eave_m = 3.2
+roof = "shed"
+plinth_m = 0.4
+[[compound.templates.ancestral.b]]
+role = "side_hall"
+name = "廊"
+func = "worship"
+side = "right"
+len_frac = [0.8, 1.0]
+depth_m = [2.5, 3.0]
+face = "in"
+eave_m = 3.2
+roof = "shed"
+plinth_m = 0.4
+
+[compound.templates.manor]           # 庄园（英格兰：村端的大地块）：主厅 + 两侧谷仓马厩 + 门楼
+name = "庄园"
+kind = "public"
+weight = 0.0
+plot_w_m = [40.0, 55.0]
+plot_d_m = [45.0, 65.0]
+bay_m = [4.0, 5.0]
+wall = true
+gate = "center"
+gate_house = true
+[[compound.templates.manor.b]]
+role = "hall"
+name = "主厅"
+func = "manor"
+side = "back"
+bays = [5, 7]
+odd = true
+depth_m = [8.0, 10.0]
+face = "front"
+storeys = 2
+eave_m = 6.0
+roof = "gable"
+pitch_deg = 45.0
+plinth_m = 0.6
+[[compound.templates.manor.b]]
+role = "wing"
+name = "谷仓"
+func = "barn"
+side = "left"
+len_frac = [0.5, 0.7]
+depth_m = [8.0, 10.0]
+face = "in"
+eave_m = 4.5
+roof = "gable"
+pitch_deg = 45.0
+[[compound.templates.manor.b]]
+role = "wing"
+name = "马厩"
+func = "byre"
+side = "right"
+len_frac = [0.4, 0.6]
+depth_m = [6.0, 8.0]
+face = "in"
+eave_m = 3.5
+roof = "gable"
+pitch_deg = 40.0
 
 # ---------------------------------------------------------------- 公共设施（6.4）
 # 通用功能表在 config/town/functions.toml；风格在 [functions.<id>] 里改名、改数、改谓词、enabled = false 关掉。

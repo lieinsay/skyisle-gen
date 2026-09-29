@@ -14,7 +14,9 @@
 namespace skyisle::town {
 
 // 占地栅格的码（plan.occ）
-enum Occ : uint8_t { OCC_FREE = 0, OCC_ROAD = 1, OCC_PLOT = 2, OCC_BUILDING = 3, OCC_POND = 4, OCC_THRESH = 5, OCC_LANDING = 6, OCC_BRIDGE = 7 };
+// OCC_OPEN：公地、广场、林带、坑——不盖房、路能过；OCC_MOAT：環濠的水，只在桥上过
+enum Occ : uint8_t { OCC_FREE = 0, OCC_ROAD = 1, OCC_PLOT = 2, OCC_BUILDING = 3, OCC_POND = 4, OCC_THRESH = 5, OCC_LANDING = 6, OCC_BRIDGE = 7,
+                     OCC_OPEN = 8, OCC_MOAT = 9 };
 enum HouseholdKind : int { HH_FARM = 0, HH_MARKET = 1, HH_SPECIAL = 2 };
 
 struct Road {
@@ -53,13 +55,17 @@ struct Compound {
 };
 
 struct Feature {
-    std::string kind;        // pond / threshing / well / tree / landing
+    // pond 塘 / threshing 场 / well 井 / tree 树 / landing 泊场 / grove 林带（林盘竹林、屋敷林、水口林）/ garden 园（croft）/ strip 条地（林地排村）/
+    // green 公地 / square 广场 / pit 地坑院的坑 / steps 河埠头 / moat 環濠（poly = 闭合中线，r = 宽）/ channel 水圳（poly = 折线，r = 宽）/
+    // arch 牌坊（p、facing、r = 跨度）/ furlong 条田块（poly、facing = 条的走向、r = 条宽）
+    std::string kind;
     std::string func, name;
-    std::vector<V2> poly;    // 塘、场、泊场的外形
+    std::vector<V2> poly;    // 外形（面）或中线（moat、channel）
     V2 p;
-    double r = 0.0;          // 井、树的半径
+    double r = 0.0;          // 井、树的半径；moat / channel 的宽；arch 的跨度；furlong 的条宽
     double facing = 0.0;
     double z = 0.0;          // 塘的水面 / 场的地面
+    int compound = -1;       // 属于哪个宅院（园、坑）
 };
 
 struct Household {
@@ -94,6 +100,7 @@ struct PlanRequest {
 
 struct Plan {
     std::string op;                  // 用了哪个形态算子
+    std::vector<std::string> ops_fit;   // 风格的算子里这块地能用的（滨水要河、等高线要坡……）
     V2 center;
     double facing = 0.0, radius = 0.0;
     std::vector<Road> roads;

@@ -58,6 +58,15 @@ add_library(skyisle_core STATIC
   src/town/functions.cpp
   src/town/compound.cpp
   src/town/verify.cpp
+  src/town/contour.cpp
+  src/town/op_common.cpp
+  src/town/op_street.cpp
+  src/town/op_waterfront.cpp
+  src/town/op_dispersed.cpp
+  src/town/op_green.cpp
+  src/town/op_comb.cpp
+  src/town/op_contour.cpp
+  src/town/op_enclosure.cpp
 )
 target_include_directories(skyisle_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(skyisle_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

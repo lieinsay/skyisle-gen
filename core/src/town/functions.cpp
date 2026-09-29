@@ -13,6 +13,12 @@ namespace {
 
 double clamp01(double x) { return std::clamp(x, 0.0, 1.0); }
 
+// 风格启用了、且本村的形态算子用得上的功能（没有返回 nullptr）
+const FuncSpec* func_for(const Work& w, const std::string& id) {
+    const FuncSpec* f = w.st.func(id);
+    return f && f->allows(w.plan.op) ? f : nullptr;
+}
+
 float at(const Work& w, const GridF& g, V2 p, float fb) {
     int i, j;
     if (!w.s.cell_of(p, i, j)) return fb;
@@ -192,6 +198,17 @@ double predicate(const Work& w, const std::string& name, V2 p) {
             if (f.kind == "pond") d = std::min(d, std::max(0.0, len(p - f.p) - f.r));
         return std::isfinite(d) ? std::exp(-d / 15.0) : 0.0;
     }
+    if (name == "green") {
+        double d = INF;
+        for (const Feature& f : w.plan.features)
+            if (f.kind == "green" && f.poly.size() >= 3) d = std::min(d, point_in_polygon(f.poly, p) ? 0.0 : len(p - f.p) - f.r);
+        return std::isfinite(d) ? std::exp(-std::max(0.0, d) / 15.0) : 0.0;
+    }
+    if (name == "bridge") {
+        double d = INF;
+        for (const Bridge& b : w.plan.bridges) d = std::min(d, dist_point_segment(p, b.a, b.b));
+        return std::isfinite(d) ? std::exp(-d / 20.0) : 0.0;
+    }
     if (name == "landing") {
         const V2 q = w.req.landings.empty() ? w.req.anchor : w.req.landings[0];
         return std::exp(-len(p - q) / 100.0);
@@ -210,7 +227,7 @@ int place_public_compounds(Work& w, std::vector<Slot>& cands) {
     int placed = 0;
     const int N = total_households(w);
     for (const FuncSpec& f : w.st.funcs) {
-        if (f.mode != "compound") continue;
+        if (f.mode != "compound" || !f.allows(w.plan.op)) continue;
         const int tmpl = w.st.template_index(f.tmpl);
         const int n = f.count(N);
         for (int q = 0; q < n; ++q) {
@@ -284,6 +301,9 @@ void place_exits(Work& w) {
         pp.clearance_m = 0.5 * width + 0.3;
         double fit = INF;
         if (!find_path(s, w.blocked, w.road_mask, goal, pp, end, path, &fit)) continue;
+        // 格上的间距在平滑、拐角处会被吃掉：按几何再量，挤得比半条路还窄（从人家院边蹭过去）就不修这条
+        fit = std::min(fit, road_fit(w, path));
+        if (fit < std::max(0.8, 0.5 * width)) continue;
         std::reverse(path.begin(), path.end());
         const int rid = add_road(w, path, RC_TRUNK, std::min(width, fit));
         if (rid < 0) continue;
@@ -308,7 +328,7 @@ void place_exits(Work& w) {
 
 // ---------------------------------------------------------------- 泊场（空岛特有，照上游）
 void place_landing(Work& w) {
-    const FuncSpec* f = w.st.func("landing");
+    const FuncSpec* f = func_for(w, "landing");
     if (!f) return;
     const Site& s = w.s;
     Rng r = w.rng("landing");
@@ -322,30 +342,13 @@ void place_landing(Work& w) {
     const GridF db = built_distance(w);
     const Mask body = built_outline(w);
     const int stride = std::max(1, static_cast<int>(std::lround(4.0 / s.res_m)));
-    // 先找平地（坡 ≤ max_slope_deg、挖填 ≤ 0.8 m）；坡地上找不到就退一步：垫一块台地（坡 ≤ 14°、挖填 ≤ platform_max_m）
+    // 先找平地（坡 ≤ max_slope_deg、挖填 ≤ 0.8 m）；坡地上找不到就退一步：垫一块台地（坡 ≤ 14°、挖填 ≤ platform_max_m）；
+    // 还没有（村子占满了沟间的塬、四周是沟坡）就再退一步：离村远一点（离建成区到 2 倍、离上游点位到 2.5 倍），修条路过去
     const double pmax = f->getn("platform_max_m", 3.5);
     struct C {
         double sc;
         Obb pad;
     };
-    std::vector<C> cands;
-    for (int pass = 0; pass < 2 && cands.empty(); ++pass) {
-        const double slope_lim = pass == 0 ? ms : 14.0, cut_lim = pass == 0 ? 0.8 : pmax;
-        for (int i = 0; i < s.H; i += stride)
-            for (int j = 0; j < s.W; j += stride) {
-                const V2 p = s.center(i, j);
-                if (len(p - L0) > search * (pass == 0 ? 1.0 : 1.5) || db(i, j) < ring.lo || db(i, j) > ring.hi || body(i, j)) continue;
-                if (w.plan.occ(i, j) != OCC_FREE || !(w.f.slope_deg(i, j) <= slope_lim)) continue;
-                for (double rot : {0.0, 0.5 * PI}) {
-                    const Obb pad{p, wrap_pi(fac + rot), 0.5 * pd, 0.5 * pw};
-                    if (!obb_free(w, pad, 0.0, false, slope_lim) || !outside_outline(w, body, pad)) continue;
-                    const double cut = ground_max_cut(w, pad, nullptr);
-                    if (cut > cut_lim) continue;
-                    cands.push_back({site_score(w, *f, p) - 0.5 * len(p - L0) / search - (rot > 0 ? 0.2 : 0.0) - 0.3 * cut, pad});
-                }
-            }
-    }
-    std::sort(cands.begin(), cands.end(), [](const C& a, const C& b) { return a.sc > b.sc; });
     bool any_road = false;
     for (uint8_t v : w.road_mask.v) any_road = any_road || v;
     const double width = road_width(w, RC_STREET, r);
@@ -356,35 +359,55 @@ void place_landing(Work& w) {
     int road_side = -1;
     double road_fit = INF;
     bool found = false;
-    std::vector<Obb> tried;
-    for (const C& c : cands) {
-        if (tried.size() >= 24) break;
-        bool near = false;
-        for (const Obb& t : tried) near = near || len(t.c - c.pad.c) < 25.0;   // 挨着试过的不再试
-        if (near) continue;
-        tried.push_back(c.pad);
-        const auto cs = corners(c.pad);
-        int side = 0;
-        double bd = INF;
-        for (int k = 0; k < 4; ++k) {
-            const V2 m = lerp(cs[k], cs[(k + 1) % 4], 0.5);
-            if (len(m - w.center) < bd) bd = len(m - w.center), side = k;
-        }
-        if (!any_road) {
-            arg = c.pad, road_side = side, found = true;
-            break;
-        }
-        const V2 m = lerp(cs[side], cs[(side + 1) % 4], 0.5);
-        const V2 from = m + (m - c.pad.c) * ((pp.clearance_m + 0.5) / std::max(1e-6, len(m - c.pad.c)));
-        Mask blk = w.blocked;
-        raster_obb(s, c.pad, 0.0, [&](int i, int j) { blk(i, j) = 1; });
-        std::vector<V2> path;
-        double fit = INF;
-        if (find_path(s, blk, w.road_mask, w.road_core, pp, from, path, &fit)) {
-            std::reverse(path.begin(), path.end());
-            path.push_back(m);   // 一直通到场边
-            arg = c.pad, road = path, road_side = side, found = true, road_fit = fit;
-            break;
+    // 每一轮连修路一起试：这一轮的平地都修不出路（隔着沟）才放宽到下一轮
+    for (int pass = 0; pass < 3 && !found; ++pass) {
+        std::vector<C> cands;
+        const double slope_lim = pass == 0 ? ms : 14.0, cut_lim = pass == 0 ? 0.8 : pmax;
+        const double reach = search * (pass == 0 ? 1.0 : pass == 1 ? 1.5 : 2.5), ring_hi = ring.hi * (pass == 2 ? 2.0 : 1.0);
+        for (int i = 0; i < s.H; i += stride)
+            for (int j = 0; j < s.W; j += stride) {
+                const V2 p = s.center(i, j);
+                if (len(p - L0) > reach || db(i, j) < ring.lo || db(i, j) > ring_hi || body(i, j)) continue;
+                if (w.plan.occ(i, j) != OCC_FREE || !(w.f.slope_deg(i, j) <= slope_lim)) continue;
+                for (double rot : {0.0, 0.5 * PI}) {
+                    const Obb pad{p, wrap_pi(fac + rot), 0.5 * pd, 0.5 * pw};
+                    if (!obb_free(w, pad, 0.0, false, slope_lim) || !outside_outline(w, body, pad)) continue;
+                    const double cut = ground_max_cut(w, pad, nullptr);
+                    if (cut > cut_lim) continue;
+                    cands.push_back({site_score(w, *f, p) - 0.5 * len(p - L0) / search - (rot > 0 ? 0.2 : 0.0) - 0.3 * cut, pad});
+                }
+            }
+        std::sort(cands.begin(), cands.end(), [](const C& a, const C& b) { return a.sc > b.sc; });
+        std::vector<Obb> tried;
+        for (const C& c : cands) {
+            if (tried.size() >= 24) break;
+            bool near = false;
+            for (const Obb& t : tried) near = near || len(t.c - c.pad.c) < 25.0;   // 挨着试过的不再试
+            if (near) continue;
+            tried.push_back(c.pad);
+            const auto cs = corners(c.pad);
+            int side = 0;
+            double bd = INF;
+            for (int k = 0; k < 4; ++k) {
+                const V2 m = lerp(cs[k], cs[(k + 1) % 4], 0.5);
+                if (len(m - w.center) < bd) bd = len(m - w.center), side = k;
+            }
+            if (!any_road) {
+                arg = c.pad, road_side = side, found = true;
+                break;
+            }
+            const V2 m = lerp(cs[side], cs[(side + 1) % 4], 0.5);
+            const V2 from = m + (m - c.pad.c) * ((pp.clearance_m + 0.5) / std::max(1e-6, len(m - c.pad.c)));
+            Mask blk = w.blocked;
+            raster_obb(s, c.pad, 0.0, [&](int i, int j) { blk(i, j) = 1; });
+            std::vector<V2> path;
+            double fit = INF;
+            if (find_path(s, blk, w.road_mask, w.road_core, pp, from, path, &fit) && (fit = std::min(fit, skyisle::town::road_fit(w, path))) >= std::max(0.8, 0.5 * width)) {   // 局部变量 road_fit 遮住了同名函数
+                std::reverse(path.begin(), path.end());
+                path.push_back(m);   // 一直通到场边
+                arg = c.pad, road = path, road_side = side, found = true, road_fit = fit;
+                break;
+            }
         }
     }
     if (!found) return;
@@ -411,7 +434,7 @@ void place_landing(Work& w) {
             const double edge_len = len(b - a);
             if (edge_len < sw + 1.0) continue;
             const Obb o{m + out * (0.5 * sd + 3.0), bearing_of(out * -1.0), 0.5 * sw, 0.5 * sd};
-            if (!obb_free(w, o, 0.0, false, 8.0) || road_hits_obb(w, o, -0.3)) continue;
+            if (!obb_free(w, o, 0.0, false, 8.0) || road_hits_obb(w, o, -0.3) || hits_built(w, o, 0.5)) continue;
             const double sc = len(o.c - w.center) - 0.5 * edge_len;
             if (sc < bs) bs = sc, best_o = o;
         }
@@ -428,7 +451,7 @@ void place_landing(Work& w) {
 
 // ---------------------------------------------------------------- 塘
 void place_ponds(Work& w) {
-    const FuncSpec* f = w.st.func("pond");
+    const FuncSpec* f = func_for(w, "pond");
     if (!f) return;
     const Site& s = w.s;
     const int N = total_households(w);
@@ -502,7 +525,7 @@ void place_roadside(Work& w) {
     bool any_pond = false;
     for (const Feature& ft : w.plan.features) any_pond = any_pond || ft.kind == "pond";
     for (const FuncSpec& f : w.st.funcs) {
-        if (f.mode != "roadside" && f.mode != "tree") continue;
+        if ((f.mode != "roadside" && f.mode != "tree") || !f.allows(w.plan.op)) continue;
         // 塘边庙要先有塘：没挖塘的村（坡上、山顶）就不修
         bool wants_pond = f.gets("face", "road") == "pond";
         for (auto& [k, wt] : f.site) wants_pond = wants_pond || (k == "pond" && wt > 0.0);
@@ -555,7 +578,7 @@ void place_roadside(Work& w) {
                             if (ft.kind == "pond") dp = std::min(dp, len(ft.p - o.c) - ft.r);
                         if (dp > f.getn("pond_reach_m", 20.0)) continue;
                     } else if (at(w, db, o.c, 1e9f) > reach) continue;
-                    if (!obb_free(w, o, 0.0, false, 12.0) || road_hits_obb(w, o, -0.3)) continue;   // 离路边至少 0.3 m
+                    if (!obb_free(w, o, 0.0, false, 12.0) || road_hits_obb(w, o, -0.3) || hits_built(w, o, 0.5)) continue;   // 离路边至少 0.3 m
                     const double sc = site_score(w, f, o.c) + 0.05 * r.random();
                     if (sc > best) best = sc, arg = o;
                 }
@@ -576,7 +599,7 @@ void place_roadside(Work& w) {
 
 // ---------------------------------------------------------------- 场院
 void place_threshing(Work& w) {
-    const FuncSpec* f = w.st.func("threshing");
+    const FuncSpec* f = func_for(w, "threshing");
     if (!f) return;
     const Site& s = w.s;
     const int N = total_households(w);
@@ -656,7 +679,7 @@ void place_threshing(Work& w) {
 
 // ---------------------------------------------------------------- 井：按覆盖半径贪心
 void place_wells(Work& w) {
-    const FuncSpec* f = w.st.func("well");
+    const FuncSpec* f = func_for(w, "well");
     if (!f) return;
     Rng r = w.rng("wells");
     const double R = f->getr("radius_m", {70, 100}).sample(r);
@@ -669,37 +692,281 @@ void place_wells(Work& w) {
         double pref;
     };
     std::vector<Cand> cand;
-    for (const RoadPt& x : road_points(w, RC_LANE, 5.0)) {
-        const V2 p = x.p + V2{-x.t.y, x.t.x} * std::max(0.0, 0.5 * x.width - 0.9);
-        int i, j;
-        if (!w.s.cell_of(p, i, j) || w.s.water(i, j) != WATER_NONE || w.plan.occ(i, j) == OCC_BRIDGE) continue;
-        cand.push_back({p, site_score(w, *f, p)});
-    }
+    auto collect = [&](int max_cls) {
+        cand.clear();
+        for (const RoadPt& x : road_points(w, max_cls, 5.0)) {
+            const V2 p = x.p + V2{-x.t.y, x.t.x} * std::max(0.0, 0.5 * x.width - 0.9);
+            int i, j;
+            if (!w.s.cell_of(p, i, j) || w.s.water(i, j) != WATER_NONE || w.plan.occ(i, j) == OCC_BRIDGE) continue;
+            cand.push_back({p, site_score(w, *f, p)});
+        }
+    };
+    collect(RC_LANE);
     std::vector<uint8_t> covered(gates.size(), 0);
     size_t left = gates.size();
-    while (left > 0 && !cand.empty()) {
-        double best = -INF;
-        int arg = -1;
-        for (int k = 0; k < static_cast<int>(cand.size()); ++k) {
-            int cnt = 0;
-            for (size_t g = 0; g < gates.size(); ++g) cnt += !covered[g] && len(gates[g] - cand[k].p) <= R;
-            const double sc = cnt + 0.3 * cand[k].pref;
-            if (cnt > 0 && sc > best) best = sc, arg = k;
+    // 巷以上的路边铺完还有盖不到的户（散居的簇只临田间道）：再在田间道边上补
+    for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1) {
+            if (left == 0) break;
+            collect(RC_PATH);
         }
-        if (arg < 0) break;
-        Feature ft;
-        ft.kind = "well";
-        ft.func = f->id;
-        ft.name = f->name;
-        ft.p = cand[arg].p;
-        ft.r = 0.8;
-        ft.z = at(w, w.s.height, ft.p, 0.0f);
-        w.plan.features.push_back(ft);
-        for (size_t g = 0; g < gates.size(); ++g)
-            if (!covered[g] && len(gates[g] - ft.p) <= R) covered[g] = 1, --left;
-        cand.erase(cand.begin() + arg);
+        while (left > 0 && !cand.empty()) {
+            double best = -INF;
+            int arg = -1;
+            for (int k = 0; k < static_cast<int>(cand.size()); ++k) {
+                int cnt = 0;
+                for (size_t g = 0; g < gates.size(); ++g) cnt += !covered[g] && len(gates[g] - cand[k].p) <= R;
+                const double sc = cnt + 0.3 * cand[k].pref;
+                if (cnt > 0 && sc > best) best = sc, arg = k;
+            }
+            if (arg < 0) break;
+            Feature ft;
+            ft.kind = "well";
+            ft.func = f->id;
+            ft.name = f->name;
+            ft.p = cand[arg].p;
+            ft.r = 0.8;
+            ft.z = at(w, w.s.height, ft.p, 0.0f);
+            w.plan.features.push_back(ft);
+            for (size_t g = 0; g < gates.size(); ++g)
+                if (!covered[g] && len(gates[g] - ft.p) <= R) covered[g] = 1, --left;
+            cand.erase(cand.begin() + arg);
+        }
     }
     w.plan.metrics["well_radius_m"] = R;
+}
+
+
+// ---------------------------------------------------------------- 環濠（日本環濠集落）：建成区外廓外一圈水，路过处是桥
+void place_moat(Work& w) {
+    const FuncSpec* f = func_for(w, "moat");
+    if (!f) return;
+    const Site& s = w.s;
+    Rng r = w.rng("moat");
+    const double width = f->getr("width_m", {7, 15}).sample(r);
+    const double off = f->getn("offset_m", 6.0);
+    const Mask body = built_outline(w);
+    bool any = false;
+    for (uint8_t v : body.v) any = any || v;
+    if (!any) return;
+    GridF d;
+    edt(body, d, nullptr);
+    for (float& x : d.v) x = static_cast<float>(x * s.res_m);
+    std::vector<std::vector<V2>> lines = iso_lines(s, d, off + 0.5 * width, 1, w.center, 1e9);
+    std::vector<V2> best;
+    for (auto& l : lines)
+        if (l.size() > best.size() && len(l.front() - l.back()) < 3.0 * s.res_m) best = l;
+    if (best.size() < 8) return;
+    chaikin(best, nullptr, 1);
+    // 挖得下去吗：中线上 85% 以上是可挖的地（不是虚空、崖缘、水）
+    int ok = 0, n = 0;
+    for (const V2& p : best) {
+        int i, j;
+        ++n;
+        if (s.cell_of(p, i, j) && !s.sky(i, j) && !s.edge(i, j) && s.water(i, j) == WATER_NONE) ++ok;
+    }
+    if (ok < 0.85 * n) return;
+    Feature ft;
+    ft.kind = "moat";
+    ft.func = f->id;
+    ft.name = f->name;
+    ft.poly = best;
+    ft.p = polygon_centroid(best);
+    ft.r = width;
+    // 路过濠处是桥
+    std::vector<V2> closed = best;
+    closed.push_back(best.front());
+    for (int k = 0; k < static_cast<int>(w.plan.roads.size()); ++k) {
+        const Road& rd = w.plan.roads[k];
+        for (size_t a = 0; a + 1 < rd.line.size(); ++a)
+            for (size_t b = 0; b + 1 < closed.size(); ++b) {
+                const V2 p = rd.line[a], q = rd.line[a + 1], u = closed[b], v = closed[b + 1];
+                const double den = cross(q - p, v - u);
+                if (std::fabs(den) < 1e-12) continue;
+                const double t = cross(u - p, v - u) / den, m = cross(u - p, q - p) / den;
+                if (t < 0 || t > 1 || m < 0 || m > 1) continue;
+                const V2 x = lerp(p, q, t), dir = (q - p) * (1.0 / std::max(1e-9, len(q - p)));
+                const double half = 0.5 * width + 1.0;
+                w.plan.bridges.push_back({x - dir * half, x + dir * half, rd.width_m, k});
+            }
+    }
+    raster_line(s, best, width, [&](int i, int j) {
+        uint8_t& o = w.plan.occ(i, j);
+        if (o == OCC_ROAD) o = OCC_BRIDGE;
+        else if (o == OCC_FREE || o == OCC_OPEN) o = OCC_MOAT, w.blocked(i, j) = 1;
+    });
+    w.plan.features.push_back(ft);
+}
+
+// ---------------------------------------------------------------- 其余设施
+namespace {
+
+// 水圳（徽州）：主街边上一道明渠，只画在村里那一段
+void place_channel(Work& w, const FuncSpec& f) {
+    const GridF db = built_distance(w);
+    const double width = f.getn("width_m", 0.6);
+    for (const Road& rd : w.plan.roads) {
+        if (rd.cls > RC_MAIN) continue;
+        std::vector<V2> cur;
+        const double L = polyline_length(rd.line);
+        for (double a = 0.5; a < L - 0.5; a += 2.0) {
+            const std::vector<V2> seg = subline(rd.line, a - 0.5, a + 0.5);
+            if (seg.size() < 2) continue;
+            V2 t = seg.back() - seg.front();
+            t = t * (1.0 / std::max(1e-9, len(t)));
+            const V2 p = lerp(seg.front(), seg.back(), 0.5) + V2{-t.y, t.x} * (0.5 * rd.width_m - 0.5 * width - 0.2);
+            if (at(w, db, p, 1e9f) <= 12.0) cur.push_back(p);
+            else if (cur.size() >= 2) {
+                Feature ft;
+                ft.kind = "channel", ft.func = f.id, ft.name = f.name, ft.poly = cur, ft.r = width, ft.p = cur[cur.size() / 2];
+                w.plan.features.push_back(ft);
+                cur.clear();
+            } else cur.clear();
+        }
+        if (cur.size() >= 2) {
+            Feature ft;
+            ft.kind = "channel", ft.func = f.id, ft.name = f.name, ft.poly = cur, ft.r = width, ft.p = cur[cur.size() / 2];
+            w.plan.features.push_back(ft);
+        }
+    }
+}
+
+// 牌坊（徽州）：进村大路上，村口往外 dist_m 处，跨在路上
+void place_arch(Work& w, const FuncSpec& f, Rng& r) {
+    if (w.entrance_road < 0) return;
+    const Road& rd = w.plan.roads[w.entrance_road];
+    const double L = polyline_length(rd.line);
+    int seg;
+    double t;
+    dist_point_polyline(w.entrance, rd.line, &seg, &t);
+    double a0 = 0.0;
+    for (int k = 0; k < seg; ++k) a0 += len(rd.line[k + 1] - rd.line[k]);
+    a0 += t * len(rd.line[seg + 1] - rd.line[seg]);
+    // 路是从村里往外画的：往弧长大的方向走
+    const int n = std::max(1, f.count(static_cast<int>(w.plan.households.size())));
+    double a = a0;
+    for (int q = 0; q < n; ++q) {
+        a += f.getr("dist_m", {20, 60}).sample(r);
+        if (a > L - 2.0) break;
+        const std::vector<V2> sg = subline(rd.line, a - 0.5, a + 0.5);
+        if (sg.size() < 2) break;
+        Feature ft;
+        ft.kind = "arch", ft.func = f.id, ft.name = f.name;
+        ft.p = lerp(sg.front(), sg.back(), 0.5);
+        ft.facing = bearing_of(sg.back() - sg.front());
+        ft.r = rd.width_m + 1.5;
+        w.plan.features.push_back(ft);
+    }
+}
+
+// 水口（徽州）：村子下游 dist_m 处的溪边——亭 + 水口林
+void place_shuikou(Work& w, const FuncSpec& f, Rng& r) {
+    const Site& s = w.s;
+    const River* best = nullptr;
+    double bd = INF;
+    for (const River& rv : s.rivers) {
+        const double d = dist_point_polyline(w.center, rv.line);
+        if (d < bd) bd = d, best = &rv;
+    }
+    if (!best || bd > w.R + 150.0) return;
+    const Range dist = f.getr("dist_m", {200, 800});
+    int seg;
+    double t;
+    dist_point_polyline(w.center, best->line, &seg, &t);
+    const GridF db = built_distance(w);
+    // 顺流往下走，到离村心 dist.lo 以外、又离建成区 ≥ 40 m 的第一个点
+    V2 at_p{};
+    V2 dir{};
+    bool found = false;
+    for (int k = seg; k + 1 < static_cast<int>(best->line.size()) && !found; ++k) {
+        const V2 a = best->line[k], b = best->line[k + 1];
+        const int m = std::max(1, static_cast<int>(len(b - a) / 4.0));
+        for (int q = 0; q <= m; ++q) {
+            const V2 p = lerp(a, b, static_cast<double>(q) / m);
+            const double dc = len(p - w.center);
+            if (dc > dist.hi) break;
+            if (dc >= dist.lo && at(w, db, p, 1e9f) >= 40.0) {
+                at_p = p, dir = (b - a) * (1.0 / std::max(1e-9, len(b - a))), found = true;
+                break;
+            }
+        }
+    }
+    if (!found) return;
+    const double pw = f.getr("size_w_m", {4, 5}).sample(r), pd = f.getr("size_d_m", {4, 5}).sample(r);
+    const double half_w = 0.5 * best->width_m[std::min(static_cast<size_t>(seg), best->width_m.size() - 1)];
+    for (double sg : {1.0, -1.0}) {
+        const V2 n = V2{-dir.y, dir.x} * sg;
+        const Obb o{at_p + n * (half_w + 5.0 + 0.5 * pd), bearing_of(n * -1.0), 0.5 * pw, 0.5 * pd};
+        if (!obb_free(w, o, 0.0, false, 15.0) || road_hits_obb(w, o, -0.3)) continue;
+        Building b = small_building(w, f, o, "pavilion");
+        b.name = f.gets("pavilion_name", f.name);
+        add_building(w, b);
+        break;
+    }
+    Feature g;
+    g.kind = "grove";
+    g.func = f.id;
+    g.name = f.gets("grove_name", "");
+    const double gr = f.getr("grove_radius_m", {20, 35}).sample(r);
+    g.poly = ellipse_poly(at_p, gr * 1.3, gr, bearing_of(dir), r, 0.15);
+    g.p = at_p;
+    g.r = gr;
+    w.plan.features.push_back(g);
+}
+
+// 敞田的条田块（英格兰）：田分成两三大块（按方位扇区），每块里铺一 furlong 长的条田块，条宽 selion_m
+void place_open_fields(Work& w, const FuncSpec& f, Rng& r) {
+    const Site& s = w.s;
+    const int nf = std::max(2, static_cast<int>(std::lround(f.getr("fields", {2, 3}).sample(r))));
+    const double flen = f.getn("furlong_m", 201.0), sel = f.getr("selion_m", {8, 12}).sample(r);
+    const Range bw = f.getr("block_w_m", {60, 140});
+    const double reach = f.getn("reach_m", 700.0);
+    const double rot0 = r.uniform(0, 2 * PI);
+    int made = 0;
+    const int max_blocks = static_cast<int>(f.getn("max_blocks", 60));
+    for (int k = 0; k < nf; ++k) {
+        const double a0 = rot0 + 2 * PI * k / nf, a1 = rot0 + 2 * PI * (k + 1) / nf;
+        const double ori = r.uniform(0, PI);   // 这一大块里条田的走向
+        const V2 u = bearing_vec(ori), v = bearing_right(ori);
+        const double bwk = bw.sample(r);
+        for (double x = -reach; x <= reach; x += flen + 6.0)
+            for (double y = -reach; y <= reach; y += bwk + 4.0) {
+                if (made >= max_blocks) return;
+                const V2 c = w.center + u * (x + 0.5 * flen) + v * (y + 0.5 * bwk);
+                const double ang = wrap_pi(bearing_of(c - w.center) - a0), span = wrap_pi(a1 - a0);
+                const double aa = ang < 0 ? ang + 2 * PI : ang, sp = span <= 0 ? span + 2 * PI : span;
+                if (aa > sp || len(c - w.center) > reach) continue;
+                const Obb o{c, ori, 0.5 * bwk, 0.5 * flen};
+                int tot = 0, farm = 0;
+                bool clash = false;
+                raster_obb(s, o, 0.0, [&](int i, int j) {
+                    ++tot;
+                    farm += s.farmland(i, j) && w.plan.occ(i, j) == OCC_FREE;
+                    clash = clash || (w.plan.occ(i, j) != OCC_FREE && w.plan.occ(i, j) != OCC_ROAD);
+                });
+                if (tot == 0 || clash || farm < 0.75 * tot) continue;
+                Feature ft;
+                ft.kind = "furlong", ft.func = f.id, ft.name = f.name;
+                const auto cs = corners(o);
+                ft.poly.assign(cs.begin(), cs.end());
+                ft.p = c, ft.facing = ori, ft.r = sel;
+                w.plan.features.push_back(ft);
+                ++made;
+            }
+    }
+}
+
+}  // namespace
+
+void place_extras(Work& w) {
+    for (const FuncSpec& f : w.st.funcs) {
+        if (!f.allows(w.plan.op)) continue;
+        Rng r = w.rng("extra." + f.id);
+        if (f.mode == "channel") place_channel(w, f);
+        else if (f.mode == "arch") place_arch(w, f, r);
+        else if (f.mode == "shuikou") place_shuikou(w, f, r);
+        else if (f.mode == "open_fields") place_open_fields(w, f, r);
+    }
 }
 
 }  // namespace skyisle::town

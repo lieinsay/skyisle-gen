@@ -61,37 +61,7 @@ struct RoadIndex {
     }
 };
 
-// 地块压不压任何东西（路、别的地块、房、塘……）且地面可建、挖填在上限内
-bool fits(Work& w, Slot& sl) {
-    bool clear = true;
-    raster_obb(w.s, sl.box, 0.0, [&](int i, int j) {
-        if (w.plan.occ(i, j) != OCC_FREE) clear = false;
-    });
-    if (!clear) return false;
-    // 栅格看不出不到一格的相交：与附近的地块再按矩形判一次，与路按「路中线离地块 ≥ 半宽」判
-    const double reach = sl.box.hw + sl.box.hd + 40.0;
-    for (const Compound& c : w.plan.compounds)
-        if (len(c.plot.c - sl.box.c) < reach && overlap(c.plot, sl.box, -0.05)) return false;
-    if (road_hits_obb(w, sl.box, 0.05)) return false;
-    return slot_ground(w, sl, nullptr);
-}
-
-// 门在地块哪条边的哪个位置（与宅院成形同一规则，门宽取中值）
-V2 gate_point(const Work& w, const Obb& plot, int side, const TemplateSpec& T) {
-    const double W = 2 * plot.hw, D = 2 * plot.hd, t = T.wall ? w.st.wall_thickness_m : 0.0;
-    const double inset = t + 0.5 * w.st.gate_w.mid() + 0.3;
-    std::string rule = side == SIDE_FRONT ? w.st.gate_front : side == SIDE_BACK ? w.st.gate_back : w.st.gate_side;
-    if (!T.gate.empty()) rule = T.gate;
-    double x, y;
-    if (side == SIDE_FRONT || side == SIDE_BACK) {
-        x = rule == "left" ? -0.5 * W + inset : rule == "right" ? 0.5 * W - inset : 0.0;
-        y = side == SIDE_FRONT ? 0.5 * D : -0.5 * D;
-    } else {
-        y = rule == "back" ? -0.5 * D + inset : rule == "center" ? 0.0 : 0.5 * D - inset;
-        x = side == SIDE_LEFT ? -0.5 * W : 0.5 * W;
-    }
-    return plot.c + bearing_right(plot.facing) * x + bearing_vec(plot.facing) * y;
-}
+bool fits(Work& w, Slot& sl) { return plot_fits(w, sl, nullptr); }
 
 // 朝向别漂出朝阳规则的容差（邻户一户户偏下去会越偏越远）：夹到容差的 0.7 以内
 double clamp_facing(const Work& w, double fac) {
@@ -103,9 +73,31 @@ double clamp_facing(const Work& w, double fac) {
     return fac;
 }
 
-V2 side_normal(const Obb& o, int side) {
-    const V2 f = bearing_vec(o.facing), r = bearing_right(o.facing);
-    return side == SIDE_FRONT ? f : side == SIDE_BACK ? f * -1.0 : side == SIDE_LEFT ? r * -1.0 : r;
+// 从村边往外长一条新街：随机挑个方向，从建成区最外那户再往外 40–90 m 处按坡度代价修回路网
+bool grow_street(Work& w, Rng& r) {
+    const Site& s = w.s;
+    for (int tries = 0; tries < 10; ++tries) {
+        const double th = r.uniform(-PI, PI);
+        const V2 dir = bearing_vec(th);
+        double far = 0.0;
+        for (const Compound& c : w.plan.compounds) far = std::max(far, dot(c.plot.c - w.center, dir) + std::hypot(c.plot.hw, c.plot.hd));
+        const V2 tip = w.center + dir * (far + r.uniform(40.0, 90.0));
+        int i, j;
+        if (!s.cell_of(tip, i, j) || !w.f.buildable(i, j) || w.plan.occ(i, j) != OCC_FREE) continue;
+        const double sw = road_width(w, RC_STREET, r);
+        PathParams pp = w.pp;
+        pp.bbox_margin = static_cast<int>(std::lround(120.0 / s.res_m));
+        pp.clearance_m = 0.5 * sw + 0.5;
+        pp.allow_squeeze = false;
+        std::vector<V2> path;
+        double fit = INF;
+        if (!find_path(s, w.blocked, w.road_mask, w.road_core, pp, tip, path, &fit) || path.size() < 2) continue;
+        fit = std::min(fit, road_fit(w, path));
+        if (fit < std::max(0.8, w.st.lane_w.lo)) continue;
+        std::reverse(path.begin(), path.end());
+        if (add_road(w, path, RC_STREET, std::min(sw, fit)) >= 0) return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -130,7 +122,12 @@ void organic_fill(Work& w, size_t first_group) {
         {
             double a = INF;
             for (int k : st.house_templates())
-                if (st.templates[k].plot_w.lo * st.templates[k].plot_d.lo < a) a = st.templates[k].plot_w.lo * st.templates[k].plot_d.lo, small = k;
+                if (st.templates[k].shape == "yard" && st.templates[k].allows(w.plan.op) && st.templates[k].plot_w.lo * st.templates[k].plot_d.lo < a)
+                    a = st.templates[k].plot_w.lo * st.templates[k].plot_d.lo, small = k;
+            if (small < 0)
+                for (int k : st.house_templates())
+                    if (st.templates[k].shape == "yard" && st.templates[k].plot_w.lo * st.templates[k].plot_d.lo < a)
+                        a = st.templates[k].plot_w.lo * st.templates[k].plot_d.lo, small = k;
         }
         // 退一步时的朝向：进深顺等高线（下坡方向 ± 90°，挑离朝阳近的）；平地就朝阳
         auto contour_facing = [&](V2 p) {
@@ -170,7 +167,7 @@ void organic_fill(Work& w, size_t first_group) {
                 Slot sl = slot_along(w, rp.p, rp.t, V2{-rp.t.y, rp.t.x} * sg, rp.hw, tmpl, relax ? T.plot_w.lo : T.plot_w.sample(r),
                                      relax ? T.plot_d.lo : T.plot_d.sample(r), st.setback.sample(r), relax ? contour_facing(rp.p) : NaN);
                 if (!fits(w, sl)) continue;
-                cands.push_back({sl, 0.0, gate_point(w, sl.box, sl.access_side, T)});
+                cands.push_back({sl, 0.0, gate_point_of(w, sl.box, sl.access_side, T)});
             }
             // (b) 贴着邻户
             std::vector<int> nb;
@@ -190,7 +187,7 @@ void organic_fill(Work& w, size_t first_group) {
                 if (dir == 0) c = N.plot.c + rv * (N.plot.hw + 0.5 * Wd + gap) + fv * (N.plot.hd - 0.5 * Dp + stg);
                 else if (dir == 1) c = N.plot.c - rv * (N.plot.hw + 0.5 * Wd + gap) + fv * (N.plot.hd - 0.5 * Dp + stg);
                 else {
-                    const double lane = st.lane_w.hi + 0.8;   // 前后之间留一条巷（按最宽的巷留）
+                    const double lane = st.lane_w.hi + 2.0 * st.pn("organic.lane_clearance_m") - 0.2;   // 前后之间留一条巷（按最宽的巷留）
                     const double off = N.plot.hd + 0.5 * Dp + lane;
                     const double al = (r.random() < 0.5 ? 1.0 : -1.0) * (N.plot.hw - 0.5 * Wd);
                     c = N.plot.c + fv * (dir == 2 ? off : -off) + rv * (al + stg);
@@ -204,7 +201,7 @@ void organic_fill(Work& w, size_t first_group) {
                 int side = SIDE_FRONT;
                 V2 gate{};
                 for (int sd = 0; sd < 4; ++sd) {
-                    const V2 gp = gate_point(w, sl.box, sd, T);
+                    const V2 gp = gate_point_of(w, sl.box, sd, T);
                     int k = -1;
                     const double d = ri.nearest(gp + side_normal(sl.box, sd), st.og_lane_reach_m + 10.0, &k) + (sd == SIDE_FRONT ? 0.0 : sd == SIDE_BACK ? 3.0 : 5.0);
                     if (k >= 0 && d < best) best = d, side = sd, gate = gp;
@@ -235,7 +232,7 @@ void organic_fill(Work& w, size_t first_group) {
                 const double lane_w = Range{st.lane_w.lo, st.lane_w.mid()}.sample(r);
                 // 巷的尽头离门外 0.5 × 巷宽 + 0.8 m：起点本身就在间距以外，巷不会拐着蹭自家的墙角
                 const V2 from = cd.gate + side_normal(sl.box, sl.access_side) * (0.5 * lane_w + 0.8);
-                pp.clearance_m = 0.5 * lane_w + 0.5;
+                pp.clearance_m = 0.5 * lane_w + st.pn("organic.lane_clearance_m");   // 巷边离墙（密的山城、宗族村小一点）
                 std::vector<V2> path;
                 // 先占住地块再找路，免得巷从自家院里穿
                 Slot tmp = sl;
@@ -245,7 +242,7 @@ void organic_fill(Work& w, size_t first_group) {
                 const bool from_ok = s.cell_of(from, fi, fj) && (w.plan.occ(fi, fj) == OCC_FREE || w.plan.occ(fi, fj) == OCC_ROAD);
                 bool ok = from_ok && find_path(s, w.blocked, w.road_mask, w.road_core, pp, from, path, &fit) && path.size() >= 2;
                 // 格上的间距在平滑、拐角处会被吃掉：按几何再量一次，挤得比最窄的巷一半还窄（蹭着人家的墙、门楼）就不修
-                if (ok) fit = std::min(fit, road_fit(w, path)), ok = fit >= 0.5 * st.lane_w.lo;
+                if (ok) fit = std::min(fit, road_fit(w, path)), ok = fit >= std::max(0.8, 0.5 * st.lane_w.lo);
                 if (!ok) {
                     // 修不出巷：撤回这块
                     w.plan.compounds.pop_back();
@@ -265,8 +262,13 @@ void organic_fill(Work& w, size_t first_group) {
             }
             placed = true;
         }
-        if (!placed && small >= 0) {
-            // 随机试不出来：沿所有路点两侧挨个试最小的宅院（进深顺等高线），取离村心近、兴趣高的一块——坡上、山顶的村就顺着出村的路往下长
+        // 随机试不出来：沿所有路点两侧挨个试最小的宅院（进深顺等高线），取离村心近、兴趣高的一块——坡上、山顶的村就顺着出村的路往下长；
+        // 路边都排满了就从村边往外长一条新街（村子长大时街也跟着长），再试
+        for (int grow = 0; !placed && small >= 0 && grow < 8; ++grow) {
+            if (grow > 0) {
+                if (!grow_street(w, r)) continue;
+                ri.sync(w);
+            }
             const TemplateSpec& T = st.templates[small];
             double bs = -INF;
             Slot best{};
@@ -294,20 +296,27 @@ void op_organic(Work& w) {
         s.cell_of(w.center, ci, cj);
         Mask goal(s.H, s.W, 0);
         goal(ci, cj) = 1;
-        std::vector<V2> halves[2];
-        for (int k = 0; k < 2; ++k) {
-            // 端点：沿主街方向往外，退到走得通的格
-            V2 e = w.center;
-            for (double a = L; a > 10.0; a -= 5.0) {
-                const V2 p = w.center + tu * (k == 0 ? a : -a);
+        // 端点：沿主街方向从远往近退，落在走得通的格上；修不通（落在沟壁上、沟底里，纵坡爬不上来）就再往里退一截再试；
+        // 主轴两头都修不出来（塬面的村心两边都是沟）就换几个方向，至少要有一条过村心的街让团块长
+        auto half = [&](V2 dir, std::vector<V2>& out) {
+            int tries = 0;
+            for (double a = L; a > 10.0 && tries < 8; a -= 5.0) {
+                const V2 p = w.center + dir * a;
                 int i, j;
-                if (s.cell_of(p, i, j) && !s.sky(i, j) && !s.edge(i, j) && s.water(i, j) == WATER_NONE) {
-                    e = p;
-                    break;
-                }
+                if (!s.cell_of(p, i, j) || s.sky(i, j) || s.edge(i, j) || s.water(i, j) != WATER_NONE) continue;
+                ++tries;
+                if (find_path(s, w.blocked, w.road_mask, goal, w.pp, p, out) && out.size() >= 2) return true;
+                a -= 15.0;   // 这一处修不通：多退一截再试
             }
-            if (len(e - w.center) < 10.0) continue;
-            find_path(s, w.blocked, w.road_mask, goal, w.pp, e, halves[k]);
+            out.clear();
+            return false;
+        };
+        std::vector<V2> halves[2];
+        half(tu, halves[0]);
+        half(tu * -1.0, halves[1]);
+        for (double turn : {45.0, -45.0, 90.0, -90.0, 135.0, -135.0}) {
+            if (!halves[0].empty() || !halves[1].empty()) break;
+            half(bearing_right(w.facing + turn * PI / 180.0), halves[0]);
         }
         std::vector<V2> main;
         for (auto it = halves[0].begin(); it != halves[0].end(); ++it) main.push_back(*it);
@@ -323,11 +332,75 @@ void op_organic(Work& w) {
             w.net.edges[e].used_a = w.net.edges[e].len;
         }
     }
+    // 广场 / 月沼（organic.squares 个）：先占住，房子围着长
+    {
+        Rng rq = w.rng("organic.squares");
+        const int nsq = w.st.pr("organic.squares").sample_int(rq);
+        const std::string kind = w.st.ps("organic.square_kind", "square");
+        std::vector<V2> done;
+        for (int q = 0; q < nsq; ++q) {
+            const double rr = w.st.pr("organic.square_radius_m").sample(rq);
+            struct C {
+                double sc;
+                V2 c;
+            };
+            std::vector<C> cs;
+            for (const Road& rd : w.plan.roads) {
+                const double L = polyline_length(rd.line);
+                for (double a = 3.0; a < L - 3.0; a += 5.0) {
+                    const std::vector<V2> seg = subline(rd.line, a - 0.5, a + 0.5);
+                    if (seg.size() < 2) continue;
+                    V2 t = seg.back() - seg.front();
+                    t = t * (1.0 / std::max(1e-9, len(t)));
+                    const V2 p = lerp(seg.front(), seg.back(), 0.5);
+                    const double dc = len(p - w.center);
+                    if (dc > 0.9 * w.R) continue;
+                    bool near = false;
+                    for (const V2& d : done) near = near || len(d - p) < 50.0 + 2.0 * rr;
+                    if (near) continue;
+                    for (double sg : {1.0, -1.0}) {
+                        // 广场让街从边上擦过；塘整个在街的一侧
+                        const double off = kind == "pond" ? rr + 0.5 * rd.width_m + 2.0 : 0.55 * rr;
+                        cs.push_back({-dc / w.R + 0.1 * rq.random() + (done.empty() ? 0.0 : dc / w.R), p + V2{-t.y, t.x} * (sg * off)});
+                    }
+                }
+            }
+            std::sort(cs.begin(), cs.end(), [](const C& a, const C& b) { return a.sc > b.sc; });
+            for (const C& c : cs) {
+                std::vector<V2> poly;
+                for (int k = 0; k < 20; ++k) poly.push_back(c.c + bearing_vec(2 * PI * k / 20) * (rr * (1.0 + 0.08 * std::sin(3.0 * k))));
+                bool ok = true;
+                double zmin = INF;
+                raster_polygon(s, poly, [&](int i, int j) {
+                    const uint8_t o = w.plan.occ(i, j);
+                    if (s.sky(i, j) || s.edge(i, j) || s.water(i, j) != WATER_NONE || w.f.slope_deg(i, j) > 8.0f) ok = false;
+                    if (o != OCC_FREE && !(kind != "pond" && o == OCC_ROAD)) ok = false;
+                    if (std::isfinite(s.height(i, j))) zmin = std::min(zmin, static_cast<double>(s.height(i, j)));
+                });
+                if (!ok) continue;
+                Feature ft;
+                ft.kind = kind == "pond" ? "pond" : "square";
+                ft.func = kind == "pond" ? "pond" : "square";
+                ft.name = w.st.ps("organic.square_name", "");
+                ft.poly = poly;
+                ft.p = c.c;
+                ft.r = rr;
+                ft.z = kind == "pond" ? zmin - 0.5 : zmin;
+                raster_polygon(s, poly, [&](int i, int j) {
+                    if (kind == "pond") w.plan.occ(i, j) = OCC_POND, w.blocked(i, j) = 1;
+                    else if (w.plan.occ(i, j) == OCC_FREE) w.plan.occ(i, j) = OCC_OPEN;
+                });
+                w.plan.features.push_back(ft);
+                done.push_back(c.c);
+                break;
+            }
+        }
+    }
     // 公共宅院（庙）：临主街、靠村心的几块候选
     {
         std::vector<Slot> pc;
         for (const FuncSpec& f : w.st.funcs) {
-            if (f.mode != "compound") continue;
+            if (f.mode != "compound" || !f.allows(w.plan.op)) continue;
             const int tmpl = w.st.template_index(f.tmpl);
             const TemplateSpec& T = w.st.templates[tmpl];
             for (const Road& rd : w.plan.roads) {

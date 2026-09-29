@@ -41,6 +41,8 @@ struct BuildingSpec {
     double prob = 1.0;
     int storeys = 1;
     double eave_m = 3.0, pitch_deg = 30.0, plinth_m = 0.3;
+    Range detached_m;          // hi > 0：院外单栋，离地块边这么远（北欧的浴房、铁匠房按防火规矩离开主院）
+    std::string near;          // 院外单栋挑哪里：water 近水（桑拿在湖岸）/ 空 = 离院近
 };
 
 struct TemplateSpec {
@@ -50,6 +52,14 @@ struct TemplateSpec {
     bool wall = true, gate_house = false;
     std::string gate;             // 非空时覆盖风格的门规则（left / right / center）
     std::vector<BuildingSpec> b;
+    std::vector<std::string> ops; // 只给这些形态算子用（空 = 都行）：靠崖窑只在等高线上、町家只在街村
+    // 形状：yard 院落（各栋贴边）/ ring 圆楼 / square_ring 方楼 / weilong 围龙屋（围合单体，户 = 竖向一列房间）
+    std::string shape = "yard";
+    bool dug_in = false;          // 后排挖进坡里（靠崖窑）：不查后排的挖填，台基按院子
+    bool sunken = false;          // 下沉式（地坑院）：院心是坑，四壁是窑
+    double garden_frac = 0.0;     // 地块后部这么多是园（英格兰 croft、菜园）
+    Range ring_room_m, ring_depth_m, ring_storeys;   // 围合单体：每间弧长、房进深、层数
+    bool allows(const std::string& op) const;
 };
 
 // 功能（functions.toml ← 风格覆盖）：通用字段 + 各 mode 自己的数、区间、串
@@ -62,6 +72,8 @@ struct FuncSpec {
     std::map<std::string, double> num;
     std::map<std::string, Range> range;
     std::map<std::string, std::string> str;
+    std::vector<std::string> ops;   // 只在这些形态算子下修（空 = 都修）：環濠只围環濠集落
+    bool allows(const std::string& op) const;
     double getn(const std::string& k, double fb) const;
     Range getr(const std::string& k, Range fb) const;
     std::string gets(const std::string& k, const std::string& fb) const;
@@ -106,6 +118,17 @@ struct Style {
     std::vector<FuncSpec> funcs;
     // 目标（TP-style）
     std::map<std::string, Range> targets;
+    std::map<std::string, std::map<std::string, Range>> op_targets;   // [targets.<算子>]：子预设各自的目标（盖过通用的）
+    // 各形态算子自己的参数（[street_village] [hufen] [waterfront] [dispersed] [green] [comb] [contour] [enclosure] 与 [organic] 的其余键），
+    // 按 "green.width_m" 这样的键取；base.toml 给全了默认值，取不到就抛异常
+    std::map<std::string, double> op_num;
+    std::map<std::string, Range> op_range;
+    std::map<std::string, std::string> op_str;
+    std::map<std::string, int> op_max_hh;              // 某个算子只在户数 ≤ 它时用（列村、环村是小村）
+    std::map<std::string, double> op_flat_deg, op_flat_share;   // 某个算子要村心一带坡 ≤ flat_deg 的地占到 flat_share 以上（地坑院要平塬）
+    double pn(const std::string& k) const;
+    Range pr(const std::string& k) const;
+    std::string ps(const std::string& k, const std::string& fb = "") const;
 
     int template_index(const std::string& id) const;   // 没有返回 −1
     const FuncSpec* func(const std::string& id) const; // 没启用返回 nullptr

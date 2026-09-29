@@ -99,8 +99,39 @@ void verify(Work& w) {
             if (h.compound >= 0) ++placed, ++kinds_placed[h.kind];
         }
         const bool ok = placed == want && want == w.req.hh_farm + w.req.hh_market + w.req.hh_special;
+        // 住不下时说一句地的情形：村心一带（1.5 R + 60 m）能盖房的地（坡 ≤ 风格上限、不是水、崖缘、漫水）占几成
+        std::string why;
+        {
+            const double rad = 1.5 * w.R + 60.0;
+            int ci, cj, n = 0, k = 0;
+            if (s.cell_of(w.center, ci, cj)) {
+                const int rc = static_cast<int>(std::ceil(rad / s.res_m));
+                for (int i = std::max(0, ci - rc); i <= std::min(s.H - 1, ci + rc); i += 2)
+                    for (int j = std::max(0, cj - rc); j <= std::min(s.W - 1, cj + rc); j += 2) {
+                        if (len(s.center(i, j) - w.center) > rad || s.sky(i, j)) continue;
+                        ++n;
+                        k += w.f.buildable(i, j) ? 1 : 0;
+                    }
+            }
+            const double share = n ? static_cast<double>(k) / n : 0.0;
+            M["buildable_share_near"] = share;
+            if (!ok) {
+                std::ostringstream o;
+                o << "；村心一带能盖房的地（坡 ≤ " << std::lround(w.st.max_slope_deg) << "°、不是水 / 崖缘" << (w.st.allow_flood ? "" : " / 漫水") << "）只占 "
+                  << std::lround(100.0 * share) << "%";
+                // 算子自己要平地（地坑院、散居村、環濠集落、绿地村）而这里平处不够：多半是 --operator 硬点了不合这块地的算子
+                auto fd = w.st.op_flat_deg.find(P.op), fs = w.st.op_flat_share.find(P.op);
+                if (fd != w.st.op_flat_deg.end() && fs != w.st.op_flat_share.end()) {
+                    const double flat = 1.0 - total_slope_share(w, w.center, 1.2 * w.R + 40.0, fd->second);
+                    if (flat < fs->second)
+                        o << "；这个算子要坡 ≤ " << std::lround(fd->second) << "° 的平地占到 " << std::lround(100.0 * fs->second) << "%，这里只有 "
+                          << std::lround(100.0 * flat) << "%（不合这块地）";
+                }
+                why = o.str();
+            }
+        }
         check(w, "TP-hh", true, ok, "住下 " + std::to_string(placed) + " / " + std::to_string(want) + " 户（农 " + std::to_string(kinds_placed[0]) + "、市 " +
-                                       std::to_string(kinds_placed[1]) + "、专业 " + std::to_string(kinds_placed[2]) + "）");
+                                       std::to_string(kinds_placed[1]) + "、专业 " + std::to_string(kinds_placed[2]) + "）" + why);
         M["households"] = want;
         M["households_placed"] = placed;
     }
@@ -149,7 +180,16 @@ void verify(Work& w) {
             bad += x;
         }
         int terr = 0, deep = 0;
-        for (const Compound& c : P.compounds) cut += c.max_cut_m > st.max_terrace_m + 1e-6, terr += c.max_cut_m > st.max_cut_m + 1e-6;
+        int dug = 0;
+        for (const Compound& c : P.compounds) {
+            // 靠崖窑的院子挖进崖里、围龙屋依山分台：地块高差不按台地查（各栋自己的挖填照查）
+            if (st.templates[st.template_index(c.tmpl)].dug_in || st.templates[st.template_index(c.tmpl)].shape == "weilong") {
+                ++dug;
+                continue;
+            }
+            cut += c.max_cut_m > st.max_terrace_m + 1e-6, terr += c.max_cut_m > st.max_cut_m + 1e-6;
+        }
+        M["dug_in_compounds"] = dug;
         for (const Building& b : P.buildings) deep += b.max_cut_m > st.max_cut_m + 0.3;   // 半格的余量：台基按格心的中位
         check(w, "TP-ground", true, bad == 0 && cut == 0 && deep == 0,
               "房在虚空 / 崖缘 / 漫水上 " + std::to_string(bad) + " 栋、地块高差超 " + fmt(st.max_terrace_m, 1) + " m 的宅院 " + std::to_string(cut) +
@@ -257,7 +297,7 @@ void verify(Work& w) {
     if (w.req.scale != "compound") {
         std::string missing;
         for (const FuncSpec& f : st.funcs) {
-            if (!f.required) continue;
+            if (!f.required || !f.allows(P.op)) continue;
             if ((f.mode == "compound" || f.mode == "roadside") && f.count(N) <= 0) continue;
             if (f.mode == "landing" && !w.req.want_landing) continue;
             bool have = false;
@@ -387,10 +427,114 @@ void verify(Work& w) {
     M["cut_m3"] = cut;
     M["fill_m3"] = fill;
 
-    // ---- TP-style（软）：风格的目标区间
+    // ---- 第三步加的指标：面街、山墙朝街、贴线、面宽变异、朝向离散、顺等高线、每院栋数、院外单栋离院
+    {
+        std::vector<double> front, face, gable, along, dirs_x, dirs_y, contour, nb;
+        int n_face = 0, n_gable = 0, n_along = 0, n_cont = 0, n_cont_ok = 0;
+        for (const Compound& c : P.compounds) {
+            if (c.kind != "house") continue;
+            nb.push_back(static_cast<double>(c.buildings.size()));
+            front.push_back(c.access_side == SIDE_FRONT || c.access_side == SIDE_BACK ? 2.0 * c.plot.hw : 2.0 * c.plot.hd);
+            dirs_x.push_back(std::sin(c.plot.facing)), dirs_y.push_back(std::cos(c.plot.facing));
+            // 最近的路（巷及以上）
+            double bd = INF;
+            V2 q{}, t{};
+            double hw = 0.0;
+            for (const Road& rd : P.roads) {
+                if (rd.cls > RC_LANE) continue;
+                int seg;
+                double u;
+                const double d = dist_point_polyline(c.plot.c, rd.line, &seg, &u);
+                if (d < bd) {
+                    bd = d, q = lerp(rd.line[seg], rd.line[seg + 1], u), hw = 0.5 * rd.width_m;
+                    t = rd.line[seg + 1] - rd.line[seg];
+                    t = t * (1.0 / std::max(1e-9, len(t)));
+                }
+            }
+            if (std::isfinite(bd)) {
+                ++n_face;
+                if (angle_diff(c.plot.facing, bearing_of(q - c.plot.c)) <= PI / 6) face.push_back(1.0);
+                // 贴线：临路那条边的中点离路边 ≤ 1.5 m
+                const V2 edge = c.plot.c + [&] {
+                    const V2 f = bearing_vec(c.plot.facing), rr = bearing_right(c.plot.facing);
+                    return c.access_side == SIDE_FRONT ? f * c.plot.hd : c.access_side == SIDE_BACK ? f * -c.plot.hd : c.access_side == SIDE_LEFT ? rr * -c.plot.hw : rr * c.plot.hw;
+                }();
+                double de = INF;
+                for (const Road& rd : P.roads)
+                    if (rd.cls <= RC_LANE) de = std::min(de, dist_point_polyline(edge, rd.line) - 0.5 * rd.width_m);
+                ++n_along;
+                if (de <= 1.5) along.push_back(1.0);
+                // 山墙朝街：主屋的屋脊（面阔方向）垂直于街
+                for (int bi : c.buildings) {
+                    const Building& b = P.buildings[bi];
+                    if (b.role != "main" && b.func != "dwelling") continue;
+                    ++n_gable;
+                    if (std::fabs(dot(bearing_right(b.box.facing), t)) < 0.5) gable.push_back(1.0);
+                    break;
+                }
+            }
+            int i, j;
+            if (s.cell_of(c.plot.c, i, j) && w.f.slope_deg(i, j) > 3.0f && std::isfinite(w.f.downslope(i, j))) {
+                ++n_cont;
+                n_cont_ok += angle_diff(c.plot.facing, w.f.downslope(i, j)) <= 25.0 * PI / 180.0;
+            }
+        }
+        if (n_face) M["face_street_share"] = static_cast<double>(face.size()) / n_face;
+        if (n_along) M["along_street_share"] = static_cast<double>(along.size()) / n_along;
+        if (n_gable) M["gable_street_share"] = static_cast<double>(gable.size()) / n_gable;
+        if (front.size() >= 3) {
+            const double m = std::accumulate(front.begin(), front.end(), 0.0) / front.size();
+            double v = 0.0;
+            for (double x : front) v += (x - m) * (x - m);
+            M["frontage_cv"] = m > 0 ? std::sqrt(v / front.size()) / m : NaN;
+            M["frontage_median_m"] = median(front);
+        }
+        if (dirs_x.size() >= 2) {
+            const double mx = std::accumulate(dirs_x.begin(), dirs_x.end(), 0.0) / dirs_x.size(), my = std::accumulate(dirs_y.begin(), dirs_y.end(), 0.0) / dirs_y.size();
+            const double Rm = std::min(1.0, std::hypot(mx, my));
+            M["orient_dispersion_deg"] = Rm > 0 ? std::sqrt(std::max(0.0, -2.0 * std::log(Rm))) * 180.0 / PI : 180.0;
+        }
+        if (n_cont >= 5) M["contour_share"] = static_cast<double>(n_cont_ok) / n_cont;
+        // 临水：地块的角与边中点离水 ≤ 10 m 的宅院占比（有水时才算）
+        {
+            bool any_water = false;
+            for (uint8_t v : s.water.v) any_water = any_water || v != WATER_NONE;
+            int nh = 0, nw = 0;
+            if (any_water)
+                for (const Compound& c : P.compounds) {
+                    if (c.kind != "house") continue;
+                    ++nh;
+                    const auto cs = corners(c.plot);
+                    double d = INF;
+                    for (int k = 0; k < 4; ++k)
+                        for (V2 p : {cs[k], lerp(cs[k], cs[(k + 1) % 4], 0.5)}) d = std::min(d, static_cast<double>(field_at(s, s.water_dist_m, p, 1e9f)));
+                    nw += d <= 10.0;
+                }
+            if (nh) M["water_front_share"] = static_cast<double>(nw) / nh;
+        }
+        if (!nb.empty()) M["buildings_per_compound_median"] = median(nb);
+        // 院外单栋（role = detached）离自家院子多远：取最近的一栋
+        double dmin = INF;
+        for (const Building& b : P.buildings)
+            if (b.role == "detached" && b.compound >= 0) dmin = std::min(dmin, dist_obb(P.compounds[b.compound].plot, b.box.c) - std::hypot(b.box.hw, b.box.hd));
+        if (std::isfinite(dmin)) M["detached_min_m"] = dmin;
+        // 巷宽中位（徽州：≤ 2.4 m）
+        std::vector<double> lw;
+        for (const Road& rd : P.roads)
+            if (rd.cls == RC_LANE) lw.push_back(rd.width_m);
+        if (!lw.empty()) M["lane_width_median_m"] = median(lw);
+    }
+
+    // ---- TP-style（软）：风格的目标区间（算子自己的目标盖过通用的）
     std::string miss;
     int nt = 0;
-    for (auto& [k, rg] : st.targets) {
+    std::map<std::string, Range> targets = st.targets;
+    {
+        auto it = st.op_targets.find(P.op);
+        if (it != st.op_targets.end())
+            for (auto& [k, rg] : it->second) targets[k] = rg;
+    }
+    for (auto& [k, rg] : targets) {
         auto it = M.find(k);
         if (it == M.end() || !std::isfinite(it->second)) continue;
         ++nt;

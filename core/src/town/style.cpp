@@ -62,6 +62,22 @@ int side_of(const std::string& s) {
     throw std::invalid_argument("style: unknown side " + s);
 }
 
+// "a,b,c" → {a, b, c}（前端把字符串列表拼成逗号串）
+std::vector<std::string> split_list(const std::string& s) {
+    std::vector<std::string> out;
+    size_t a = 0;
+    while (a <= s.size()) {
+        size_t b = s.find(',', a);
+        if (b == std::string::npos) b = s.size();
+        std::string t = s.substr(a, b - a);
+        while (!t.empty() && t.front() == ' ') t.erase(t.begin());
+        while (!t.empty() && t.back() == ' ') t.pop_back();
+        if (!t.empty()) out.push_back(t);
+        a = b + 1;
+    }
+    return out;
+}
+
 int face_of(const std::string& s) {
     if (s == "front") return FACE_FRONT;
     if (s == "in") return FACE_IN;
@@ -79,6 +95,28 @@ int Range::sample_int(Rng& r, bool odd) const {
         if (k % 2 != 0) c.push_back(k);
     if (c.empty()) return lo_i % 2 != 0 ? lo_i : std::max(1, lo_i - 1);
     return c.size() == 1 ? c[0] : c[static_cast<size_t>(r.integers(0, static_cast<int64_t>(c.size())))];
+}
+
+bool TemplateSpec::allows(const std::string& op) const { return ops.empty() || std::find(ops.begin(), ops.end(), op) != ops.end(); }
+bool FuncSpec::allows(const std::string& op) const { return ops.empty() || std::find(ops.begin(), ops.end(), op) != ops.end(); }
+
+double Style::pn(const std::string& k) const {
+    auto it = op_num.find(k);
+    if (it == op_num.end()) throw std::invalid_argument("style: missing number " + k + " (base.toml should define it)");
+    return it->second;
+}
+
+Range Style::pr(const std::string& k) const {
+    auto it = op_range.find(k);
+    if (it != op_range.end()) return it->second;
+    auto jt = op_num.find(k);
+    if (jt != op_num.end()) return {jt->second, jt->second};
+    throw std::invalid_argument("style: missing range " + k + " (base.toml should define it)");
+}
+
+std::string Style::ps(const std::string& k, const std::string& fb) const {
+    auto it = op_str.find(k);
+    return it == op_str.end() ? fb : it->second;
 }
 
 double FuncSpec::getn(const std::string& k, double fb) const {
@@ -220,6 +258,14 @@ Style parse_style(const Config& c) {
         t.wall = flag(c, q + "wall", true);
         t.gate_house = flag(c, q + "gate_house", false);
         t.gate = c.gets(q + "gate", "");
+        t.ops = split_list(c.gets(q + "ops", ""));
+        t.shape = c.gets(q + "shape", "yard");
+        t.dug_in = flag(c, q + "dug_in", false);
+        t.sunken = flag(c, q + "sunken", false);
+        t.garden_frac = c.get(q + "garden_frac", 0.0);
+        t.ring_room_m = range_or(c, q + "ring_room_m", {2.5, 2.7});
+        t.ring_depth_m = range_or(c, q + "ring_depth_m", {6.0, 8.0});
+        t.ring_storeys = range_or(c, q + "ring_storeys", {3, 4});
         const int nb = static_cast<int>(c.get(q + "b.n", 0.0));
         for (int j = 0; j < nb; ++j) {
             const std::string u = q + "b." + std::to_string(j) + ".";
@@ -234,7 +280,8 @@ Style parse_style(const Config& c) {
             b.bays = range_or(c, u + "bays", {0, 0});
             b.odd = flag(c, u + "odd", false);
             b.len_frac = range_or(c, u + "len_frac", {1.0, 1.0});
-            b.depth_m = range_of(c, u + "depth_m");
+            // 围合单体（圆楼、方楼、围龙屋）的各栋按环的进深摆，可以不写 depth_m
+            b.depth_m = t.shape == "yard" ? range_of(c, u + "depth_m") : range_or(c, u + "depth_m", t.ring_depth_m);
             b.pos = c.get(u + "pos", 0.5);
             b.face = face_of(c.gets(u + "face", "in"));
             b.prob = c.get(u + "prob", 1.0);
@@ -242,6 +289,8 @@ Style parse_style(const Config& c) {
             b.eave_m = c.get(u + "eave_m", 3.0);
             b.pitch_deg = c.get(u + "pitch_deg", 30.0);
             b.plinth_m = c.get(u + "plinth_m", 0.3);
+            b.detached_m = range_or(c, u + "detached_m", {0, 0});
+            b.near = c.gets(u + "near", "");
             t.b.push_back(b);
         }
         s.templates.push_back(t);
@@ -261,6 +310,7 @@ Style parse_style(const Config& c) {
         f.count_max = static_cast<int>(c.get(q + "count.max", 1.0));
         f.required = flag(c, q + "required", false);
         f.site = weights(c, q + "site.");
+        f.ops = split_list(c.gets(q + "ops", ""));
         for (const std::string& ch : children(c, q)) {
             const std::string key = q + ch;
             if (c.num.count(key)) f.num[ch] = c.num.at(key);
@@ -271,9 +321,29 @@ Style parse_style(const Config& c) {
         s.funcs.push_back(f);
     }
 
+    // 各形态算子的参数：整段收进来，算子按键取
+    for (const char* sec : {"street_village", "hufen", "waterfront", "dispersed", "green", "comb", "contour", "enclosure", "organic"}) {
+        const std::string pre = P + sec + ".";
+        auto grab = [&](const auto& m, auto put) {
+            for (auto it = m.lower_bound(pre); it != m.end() && it->first.compare(0, pre.size(), pre) == 0; ++it) put(it->first.substr(P.size()), it->second);
+        };
+        grab(c.num, [&](const std::string& k, double v) { s.op_num[k] = v; });
+        grab(c.vec, [&](const std::string& k, const std::vector<double>& v) {
+            if (v.size() == 2) s.op_range[k] = {v[0], v[1]};
+        });
+        grab(c.str, [&](const std::string& k, const std::string& v) { s.op_str[k] = v; });
+    }
+    for (const auto& [k, v] : weights(c, P + "village.max_households.")) s.op_max_hh[k] = static_cast<int>(v);
+    for (const auto& [k, v] : weights(c, P + "village.flat_slope_deg.")) s.op_flat_deg[k] = v;
+    for (const auto& [k, v] : weights(c, P + "village.flat_share.")) s.op_flat_share[k] = v;
+
     for (const std::string& k : children(c, P + "targets.")) {
         const std::string key = P + "targets." + k;
         if (c.vec.count(key) && c.vec.at(key).size() == 2) s.targets[k] = {c.vec.at(key)[0], c.vec.at(key)[1]};
+        for (const std::string& m : children(c, key + ".")) {
+            const std::string k2 = key + "." + m;
+            if (c.vec.count(k2) && c.vec.at(k2).size() == 2) s.op_targets[k][m] = {c.vec.at(k2)[0], c.vec.at(k2)[1]};
+        }
     }
     if (s.house_templates().empty()) throw std::invalid_argument("style: no house template (weight > 0)");
     if (s.operators.empty()) throw std::invalid_argument("style: no village operator");
