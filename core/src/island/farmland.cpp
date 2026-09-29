@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <numeric>
+#include <queue>
 
 #include "skyisle/island/resources.hpp"
 
@@ -11,7 +13,90 @@ namespace skyisle::island {
 
 namespace {
 enum { LC_FOREST = 4, LC_SHRUB = 5, LC_GRASS = 6, LC_ARABLE = 7, LC_TERRACE = 8 };
+
+// 大岛保底（用户 09-29 定；farmland.floor_cells 同式）：主岛以外 ≥ island_floor_km2 的岛，在它合门槛的宜垦片里挑最好的那片，
+// 从片里最好的能开的格起按（适宜度降序、格号升序）往 8 邻域的能开的格长成连成一块的 need 格；长不到就从片里下一个没走到的最好的格重长，
+// 整片都不行换下一片。各岛按「最好的格排在好地先占的第几」先后分，额度不够就停
+void floor_cells(const Group& g, const Config& c, const GridI& lab, int n_lab, const std::vector<uint8_t>& ok_t, const std::vector<int32_t>& order,
+                 const std::vector<uint8_t>& pit, double land_per_hh, int64_t n_quota, std::vector<int32_t>& out, std::vector<int>& isl) {
+    const int H = g.H, W = g.W;
+    const size_t N = static_cast<size_t>(H) * W;
+    const double cell_km2 = g.res_km * g.res_km;
+    const int64_t need = static_cast<int64_t>(std::ceil(c.get("settle.island_floor_hh") * land_per_hh / cell_km2 - 1e-9));
+    const double floor_km2 = c.get("settle.island_floor_km2");
+    if (need <= 0 || n_lab == 0) return;
+    std::vector<int64_t> elig_cnt(static_cast<size_t>(n_lab) + 1, 0), first(static_cast<size_t>(n_lab) + 1, -1);
+    for (size_t f = 0; f < order.size(); ++f) {
+        const int t = lab.v[order[f]];
+        if (first[t] < 0) first[t] = static_cast<int64_t>(f);
+        elig_cnt[t]++;
+    }
+    std::map<int, std::vector<std::pair<int64_t, int>>> by_isl;
+    for (int t = 1; t <= n_lab; ++t) {
+        if (first[t] < 0 || !ok_t[t] || elig_cnt[t] < need) continue;
+        const int k = g.island_id.v[order[first[t]]];
+        if (k == 0 || g.islands[k].area_j < floor_km2) continue;
+        by_isl[k].push_back({first[t], t});
+    }
+    std::vector<std::pair<int64_t, int>> plan;
+    for (auto& kv : by_isl) {
+        std::sort(kv.second.begin(), kv.second.end());
+        plan.push_back({kv.second.front().first, kv.first});
+    }
+    std::sort(plan.begin(), plan.end());
+    std::map<int, std::vector<int32_t>> tcells;            // 候选片的格（按好地先占的次序）
+    for (const auto& kv : by_isl)
+        for (const auto& ft : kv.second) tcells[ft.second];
+    for (int32_t q : order) {
+        auto it = tcells.find(lab.v[q]);
+        if (it != tcells.end()) it->second.push_back(q);
+    }
+    std::vector<int> stamp(N, -1);
+    int attempt = 0;
+    int64_t total = 0;
+    for (const auto& pk : plan) {
+        const int k = pk.second;
+        if (total + need > n_quota) break;
+        bool done = false;
+        for (const auto& ft : by_isl[k]) {
+            const int t = ft.second;
+            ++attempt;                                          // 同一片里各次重长共用一张「走到过」
+            for (int32_t s0 : tcells[t]) {
+                if (stamp[s0] == attempt) continue;
+                std::vector<int32_t> got;
+                using E = std::pair<double, int32_t>;
+                std::priority_queue<E, std::vector<E>, std::greater<E>> heap;
+                stamp[s0] = attempt;
+                heap.push({-g.suit[s0], s0});
+                while (!heap.empty() && static_cast<int64_t>(got.size()) < need) {
+                    const int32_t q = heap.top().second;
+                    heap.pop();
+                    got.push_back(q);
+                    const int qi = q / W, qj = q % W;
+                    for (int di = -1; di <= 1; ++di)
+                        for (int dj = -1; dj <= 1; ++dj) {
+                            const int a = qi + di, b = qj + dj;
+                            if (!(di || dj) || a < 0 || a >= H || b < 0 || b >= W) continue;
+                            const int32_t p = a * W + b;
+                            if (stamp[p] != attempt && lab.v[p] == t && g.cultivable.v[p] > 0 && !pit[p]) {
+                                stamp[p] = attempt;
+                                heap.push({-g.suit[p], p});
+                            }
+                        }
+                }
+                if (static_cast<int64_t>(got.size()) == need) {
+                    out.insert(out.end(), got.begin(), got.end());
+                    isl.push_back(k);
+                    total += need;
+                    done = true;
+                    break;
+                }
+            }
+            if (done) break;
+        }
+    }
 }
+}  // namespace
 
 void cultivable_land(Group& g, const Config& c, const std::vector<double>& suit, const std::vector<double>& T,
                      const std::vector<double>& soil, const std::vector<double>& wet, const std::vector<double>& near_water) {
@@ -83,10 +168,17 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     for (size_t k = 0; k < N; ++k)
         if (g.cultivable.v[k] > 0 && !pit[k]) order.push_back(static_cast<int32_t>(k));
     std::stable_sort(order.begin(), order.end(), [&](int32_t a, int32_t b) { return g.suit[a] > g.suit[b]; });
-    std::vector<int32_t> pick1;
+    // ---- 大岛保底：先给 ≥ island_floor_km2 的非主岛各分一块连成片的 island_floor_hh 户的地
+    std::vector<int32_t> gcells;
+    std::vector<int> g_isl;
+    floor_cells(g, c, lab, n_lab, ok_t, order, pit, land_per_hh, n_quota, gcells, g_isl);
+    const int64_t n_g = static_cast<int64_t>(gcells.size());
+    std::vector<uint8_t> reserved(N, 0);
+    for (int32_t k : gcells) reserved[k] = 1;
+    std::vector<int32_t> pick1(gcells);
     for (int32_t k : order) {
         if (static_cast<int64_t>(pick1.size()) >= n_quota) break;
-        if (ok_t[lab.v[k]]) pick1.push_back(k);
+        if (ok_t[lab.v[k]] && !reserved[k]) pick1.push_back(k);
     }
     std::vector<int64_t> cnt1(static_cast<size_t>(n_lab) + 1, 0);
     for (int32_t k : pick1) cnt1[lab.v[k]]++;
@@ -96,14 +188,18 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
         hh1[t] = static_cast<double>(cnt1[t]) * cell_km2 / land_per_hh;
         kept[t] = (ok_t[t] && hh1[t] >= min_hh) ? 1 : 0;
     }
+    for (int32_t k : gcells) kept[lab.v[k]] = 1;
+    kept[0] = 0;
     std::vector<int32_t> in_kept, rest_ok, rest_bad;
     for (int32_t k : order) {
         const int t = lab.v[k];
-        if (kept[t]) in_kept.push_back(k);
-        else if (ok_t[t]) rest_ok.push_back(k);
+        if (kept[t]) {
+            if (!reserved[k]) in_kept.push_back(k);
+        } else if (ok_t[t]) rest_ok.push_back(k);
         else rest_bad.push_back(k);
     }
-    std::vector<int32_t> take(in_kept.begin(), in_kept.begin() + std::min<size_t>(in_kept.size(), static_cast<size_t>(std::max<int64_t>(0, n_quota))));
+    std::vector<int32_t> take(gcells);
+    take.insert(take.end(), in_kept.begin(), in_kept.begin() + std::min<size_t>(in_kept.size(), static_cast<size_t>(std::max<int64_t>(0, n_quota - n_g))));
     int64_t forced = 0;
     if (static_cast<int64_t>(take.size()) < n_quota) {    // 留下的片不够额度：按次序补让出来的片，再补不合门槛的片
         for (const auto* v : {&rest_ok, &rest_bad})
@@ -126,7 +222,7 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     for (size_t k = 0; k < N; ++k) cmask.v[k] = g.cultivated.v[k] > 0 ? 1 : 0;
     const Mask near_c = binary_dilate(cmask, static_cast<int>(sc("fallow_ring_cells")));
     std::vector<int32_t> ring;
-    for (size_t q = static_cast<size_t>(std::max<int64_t>(0, n_quota)); q < in_kept.size(); ++q) {
+    for (size_t q = static_cast<size_t>(std::max<int64_t>(0, n_quota - n_g)); q < in_kept.size(); ++q) {
         if (static_cast<int64_t>(ring.size()) >= ring_n) break;
         if (near_c.v[in_kept[q]]) ring.push_back(in_kept[q]);
     }
@@ -213,6 +309,8 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     s.set("n_ruins", static_cast<int64_t>(out.ruins.size()));
     s.set("settle_min_hh", static_cast<int64_t>(min_hh));
     s.set("rain_ok", rain_ok);
+    s.set("floor_islands", Json::arr_of(g_isl));
+    s.set("floor_km2", pyround(static_cast<double>(n_g) * cell_km2, 3));
     out.summary = std::move(s);
     return out;
 }
