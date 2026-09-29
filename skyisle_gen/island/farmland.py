@@ -12,6 +12,8 @@
   **定居门槛**：宜垦地的连通片（不跨岛）要有水（settle_water_km 内有河 / 湖 / 溪涧 / 泉，或年降水 ≥ settle_rain_mm 能蓄雨）、
   够一个像样的村（片的面积 ≥ settle_min_hh 户的地）、能落船（landing_reach_cells 内有坡 ≤ landing_slope_max_deg 的平地）；
   头一轮填完分到的地不够 settle_min_hh 户的片整片让出来（不再按比例连续撒户），额度按次序补给留下的片——一轮就定（留下的片只会变多）。
+  **大岛保底**（用户 09-29 定）：主岛以外 ≥ island_floor_km2（30 km²）的岛，有合门槛的宜垦片的，先在它最好的那片地上分一个村——
+  从那片里适宜度最高的格起、按适宜度往外长成连成一块的 island_floor_hh（20）户的地（一块田配一个村），户从额度里出（从主岛匀过去）；其余照好地先占填。
 - **撂荒**：留下的片里接着往外的一层（离在种的田 ≤ fallow_ring_cells 格）取已垦的 fallow_frac，每个连通块一个年头（1 … fallow_years_max）；
   **废村**：让出来的片里头一轮分得最多的几片（≥ ruin_min_hh 户，至多 ruin_max 个）——人撤走了，头一轮分到的那些地是撂荒的田，年头 = 撤空了几年。
   撂荒地的地表按年头：≤ fallow_grass_years 年草坡，≤ fallow_shrub_years 年灌丛（原本是林 / 灌丛的），再久回到原本的地表（小树林）。
@@ -126,17 +128,24 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
     elig = np.flatnonzero((cult.ravel() > 0) & ~pit.ravel())
     order = elig[np.argsort(-suit.ravel()[elig], kind="stable")]
     t_ord = labf[order]
-    ok1 = ok_t[t_ord]
-    pick1 = order[ok1][:n_quota]
+    # ---- 大岛保底：先给 ≥ island_floor_km2 的非主岛各分一块连成片的 island_floor_hh 户的地
+    gcells, g_isl = floor_cells(g, sc, lab, n_lab, ok_t, order, t_ord, pit, land_per_hh, n_quota)
+    n_g = int(gcells.size)
+    reserved = np.zeros(H * W, dtype=bool)
+    reserved[gcells] = True
+    ok1 = ok_t[t_ord] & ~reserved[order]
+    pick1 = np.concatenate([gcells, order[ok1][: n_quota - n_g]])
     cnt1 = np.bincount(labf[pick1], minlength=n_lab + 1)
     hh1 = cnt1.astype(np.float64) * cell_km2 / land_per_hh
     kept = ok_t & (hh1 >= min_hh)
-    ok2 = kept[t_ord]
+    kept[np.unique(labf[gcells])] = True
+    kept[0] = False
+    ok2 = kept[t_ord] & ~reserved[order]
     in_kept = order[ok2]
-    take = in_kept[:n_quota]
+    take = np.concatenate([gcells, in_kept[: n_quota - n_g]])
     forced = 0
     if take.size < n_quota:                       # 留下的片不够额度：按次序补让出来的片，再补不合门槛的片
-        rest = order[~ok2]
+        rest = order[~kept[t_ord]]
         rt = labf[rest]
         extra = np.concatenate([rest[ok_t[rt]], rest[~ok_t[rt]]])[: n_quota - take.size]
         forced = int(extra.size)
@@ -150,7 +159,7 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
     # ---- 撂荒：留下的片里接着往外的一层（离在种的田 ≤ fallow_ring_cells）
     ring_n = int(round(n_quota * float(sc["fallow_frac"])))
     near_c = binary_dilate(cultivated > 0, int(sc["fallow_ring_cells"])).ravel()
-    after = in_kept[n_quota:]
+    after = in_kept[n_quota - n_g:]
     ring = after[near_c[after]][:ring_n]
     # ---- 废村：让出来的片里头一轮分得最多的几片
     cand = [t for t in range(1, n_lab + 1) if ok_t[t] and not kept[t] and not has_cult[t] and hh1[t] >= float(sc["ruin_min_hh"])]
@@ -205,8 +214,76 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
                "forced_km2": round(float(forced) * cell_km2, 3),
                "n_tracts": int(n_lab), "n_tracts_ok": int(ok_t.sum()), "n_tracts_kept": int(kept.sum()),
                "n_tracts_dropped": int((ok_t & ~kept).sum()), "n_ruins": len(ruins),
-               "settle_min_hh": int(min_hh), "rain_ok": rain_ok}
+               "settle_min_hh": int(min_hh), "rain_ok": rain_ok,
+               "floor_islands": g_isl, "floor_km2": round(float(n_g) * cell_km2, 3)}
     return {"ruins": ruins, "summary": summary}
+
+
+def floor_cells(g: dict, sc: dict, lab: np.ndarray, n_lab: int, ok_t: np.ndarray, order: np.ndarray, t_ord: np.ndarray, pit: np.ndarray,
+                land_per_hh: float, n_quota: int) -> tuple[np.ndarray, list[int]]:
+    """大岛保底（用户 09-29 定）：主岛以外 ≥ island_floor_km2 的岛，在它合门槛的宜垦片里挑最好的那片（片里最好的格排得最前），
+    从片里最好的能开的格起按（适宜度降序、格号升序）往 8 邻域的能开的格长，长成连成一块的 need 格（= island_floor_hh 户的地）；
+    长不到（能开的格被岩类赋存、采场隔成小块）就从片里下一个没走到的最好的格重长，整片都不行换下一片。
+    各岛按「最好的格排在好地先占的第几」先后分，额度不够就停。返回（保底的格，按分的先后；分到的岛号）。"""
+    import heapq
+    I = g["json"]["islands"]
+    island_id = g["island_id"]
+    H, W = island_id.shape
+    res_km = float(g["res_km"])
+    cell_km2 = res_km * res_km
+    need = int(math.ceil(float(sc["island_floor_hh"]) * land_per_hh / cell_km2 - 1e-9))
+    floor_km2 = float(sc["island_floor_km2"])
+    if need <= 0 or n_lab == 0:
+        return np.zeros(0, dtype=np.int64), []
+    labf = lab.ravel()
+    ok_cell = (g["cultivable"].ravel() > 0) & ~pit.ravel()
+    elig_cnt = np.bincount(t_ord, minlength=n_lab + 1)
+    tracts, first = np.unique(t_ord, return_index=True)     # 每片在好地先占里最好的格的名次
+    by_isl: dict[int, list[tuple[int, int]]] = {}
+    iflat = island_id.ravel()
+    for t, f in zip(tracts.tolist(), first.tolist()):
+        if t == 0 or not ok_t[t] or elig_cnt[t] < need:
+            continue
+        k = int(iflat[int(order[f])])
+        if k == 0 or float(I[k]["area_km2"]) < floor_km2:
+            continue
+        by_isl.setdefault(k, []).append((int(f), int(t)))
+    plan = sorted((min(v)[0], k) for k, v in by_isl.items())
+    out, isl, total = [], [], 0
+    for _f, k in plan:
+        if total + need > n_quota:
+            break
+        suit = g["suit"].ravel()
+        done = False
+        for f, t in sorted(by_isl[k]):
+            seen = set()
+            for s0 in order[t_ord == t].tolist():
+                if s0 in seen:
+                    continue
+                got = []
+                seen.add(s0)
+                heap = [(-float(suit[s0]), s0)]
+                while heap and len(got) < need:
+                    _, q = heapq.heappop(heap)
+                    got.append(q)
+                    qi, qj = divmod(q, W)
+                    for di in (-1, 0, 1):
+                        for dj in (-1, 0, 1):
+                            a, b = qi + di, qj + dj
+                            if (di or dj) and 0 <= a < H and 0 <= b < W:
+                                p = a * W + b
+                                if p not in seen and labf[p] == t and ok_cell[p]:
+                                    seen.add(p)
+                                    heapq.heappush(heap, (-float(suit[p]), p))
+                if len(got) == need:
+                    out.extend(got)
+                    isl.append(k)
+                    total += need
+                    done = True
+                    break
+            if done:
+                break
+    return np.array(out, dtype=np.int64), isl
 
 
 def place_ruins(g: dict, sc: dict, ruins: list[dict], ok_site: np.ndarray, score_base: np.ndarray, taken: np.ndarray, km) -> None:

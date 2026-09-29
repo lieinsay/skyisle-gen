@@ -280,14 +280,17 @@ def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
     # 强填（留下的宜垦片不够额度：干群、冷群里宜垦几乎只剩额度那点地，额度只好补进过不了门槛的碎片）时不查门槛与「有田就有人」：
     # 分到一小块田的岛按面积分户可能分不到一户（邻岛的人来种）
     no_field = [k for k in range(n) if ct_isl[k] > 0 and k not in farm_isl] if not forced else []
+    vil_isl = {v["island"] for v in S["villages"]}
+    no_floor = [k for k in S["farmland"].get("floor_islands", []) if k not in vil_isl]     # 大岛保底（用户 09-29 定）：保底的岛都有村
     bad_ruin = [r["id"] for r in S.get("ruins", []) if r["abandoned_years"] < 1 or iid[r["cell"][0], r["cell"][1]] != r["island"]
                 or g["cliff"][r["cell"][0], r["cell"][1]] or g["lake"][r["cell"][0], r["cell"][1]] or g["river"][r["cell"][0], r["cell"][1]] > 0]
     out.append({"id": "SET-farm", "name": "已垦 ⊂ 宜垦（梯田标记一致）、撂荒 ⊂ 宜垦且不与已垦重叠；有农户的岛已垦都够 settle_min_hh 户（定居门槛）、"
-                "有已垦的岛都有村或散户（这两条强填时不查）；废村在自己的岛上、撤空了 ≥ 1 年",
+                "有已垦的岛都有村或散户（这两条强填时不查）；大岛保底的岛都有村；废村在自己的岛上、撤空了 ≥ 1 年",
                 "value": {"not_cultivable": bad_sub, "terrace_mismatch": bad_ter, "bad_fallow": bad_fal, "below_threshold": small[:10],
                           "fields_without_people": no_field[:10], "bad_ruins": bad_ruin[:10], "forced_km2": S["farmland"].get("forced_km2", 0.0),
+                          "floor_without_village": no_floor[:10], "floor_islands": len(S["farmland"].get("floor_islands", [])),
                           "cultivable_km2": S["farmland"]["cultivable_km2"], "cultivated_km2": S["farmland"]["cultivated_km2"]},
-                "threshold": "全 0", "pass": bool(not (bad_sub or bad_ter or bad_fal or small or no_field or bad_ruin)), "hard": True, "note": None})
+                "threshold": "全 0", "pass": bool(not (bad_sub or bad_ter or bad_fal or small or no_field or bad_ruin or no_floor)), "hard": True, "note": None})
     vids = {v["id"] for v in S["villages"]}
     bad_occ = [x["name"] for x in S["specials"] if x.get("occupancy") not in ("常住", "工棚", "季节住")
                or (x["occupancy"] != "常住" and S["villages"] and x.get("home_village") not in vids)
