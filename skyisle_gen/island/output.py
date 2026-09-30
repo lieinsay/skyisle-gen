@@ -96,11 +96,17 @@ def write_terrain(out: Path, g: dict) -> None:
     # P5：可耕地拆成 cultivable（宜垦 0 / 1 / 2 要修梯田）、cultivated（已垦、在种：0 / 1 田 / 2 梯田）、fallow_years（撂荒了几年，0 = 不是）；
     # 旧的 arable（按额度画死的可耕地）不再写（含义变了就改键名）；rain_mm = 局地年降水（P4）；runoff_mm = 年径流深（Budyko，A5）；polder_id = 圩号（P6，0 = 不是圩田；圩田也算已垦）；
     # P6b：landcover_natural = 没有人以前的地表（码同 landcover），landuse = 人工改造（waterworks.LANDUSE_CLASSES：0 没动过 … 7 采场）
+    # B2–B4（DESIGN-NOTES 四点四十六）：lith = 露出的岩性（landforms.LITH_NAMES），rockwall_m / rockwall_dir = 崖层（落差、朝向 16 向，255 = 无），
+    # coast_dist_m = 亚格岸距（陆地为正、虚空为负，岸线 = 岛形连续场的零等值线）
     for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "river_width_m",
-              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse"):
+              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse",
+              "lith", "rockwall_m", "rockwall_dir", "coast_dist_m"):
         if k in g:
             arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)
+    if "lith" in g:
+        from .landforms import LITH_PALETTE
+        write_png8(out / "lith.png", g["lith"], LITH_PALETTE)
     if "landcover" in g:
         write_png8(out / "landcover.png", g["landcover"], LANDCOVER_PALETTE)
         water = np.zeros_like(g["landcover"], dtype=np.uint8)

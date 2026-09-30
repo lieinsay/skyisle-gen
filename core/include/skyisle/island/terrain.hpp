@@ -1,4 +1,4 @@
-// 5.2 岛内地形（terrain.py）：岛形（椭圆 + 域扭曲 + 面积二分）→ 岛龄基形 → 测高曲线 → 隐式河流功率下切（粗网格）→ 仿射拟合。
+// 5.2 岛内地形（terrain.py）：岛形（椭圆 + 域扭曲 + 面积二分）→ 岛龄基形 → 测高曲线 → 岩层（B2）→ 隐式河流功率下切（原生分辨率，B1）→ 仿射拟合。
 #pragma once
 
 #include "skyisle/island/types.hpp"
@@ -22,20 +22,47 @@ struct CoreLayout {                     // base_form 摆出的核（局部栅格
     int n = 0, primary = 0;
     std::vector<double> sx, sy, strength;
     Grid<int8_t> member;                // 每格归哪个核（掩膜外 −1）
+    GridD seam;                         // 离缝多远（km，(到第二近的核 − 到最近的核) / 2，按扭曲后的坐标；掩膜外 NaN）：B3 的褶皱
 };
 GridD base_form(Rng& rng, const Shape& s, double age, double area_km2, double res_km, const Config& c, AgeKind& kind,
                 CoreSpec* cores = nullptr, CoreLayout* layout = nullptr);
+
+// 岩层（B2，strat.cpp）：局部栅格上的构造顶面、骨架顶面（拟合前的米，掩膜外 NaN）与穹（0 岸 → 1 冠）
+struct StratField {
+    GridD top, skel, dome;
+    StratRec rec;
+};
+StratField build_strat(Rng& rng, const Shape& s, const GridD& shape, AgeKind kind, double age, double rim, double R, double keel, double res_km,
+                       double area_km2, const Config& c);
+struct StratCtx {                       // 侵蚀每轮按露出的岩性取参数
+    const GridD* top = nullptr;
+    const GridD* skel = nullptr;
+    StratRec rec;
+    LithTable tab;
+};
 GridD erode(Rng* rng, GridD h, const Mask& mask, double res_m, int rounds, double base_level, const Config& c,
-            const GridD* uplift, const GridD* jitter);
+            const GridD* uplift, const GridD* jitter, const StratCtx* st = nullptr);
 void fit_rim(double surface, double relief, double median_frac, double rim_min, double& rim, double& R);
+
+// sculpt_island 的额外输入（B2 / B3）：岩层的随机流、岛底
+struct SculptEnv {
+    explicit SculptEnv(Rng r) : rng(std::move(r)) {}
+    Rng rng;                            // island:<节点>:strat:<岛号>
+    double keel = 0;
+    bool strat_on = false;
+};
 
 struct Sculpt {
     GridD h;   // 掩膜外 NaN
     AgeKind kind = MID;
     double rim = 0, peak = 0;
     std::vector<CoreRec> cores;         // 多核岛才有
+    // B2：拟合后的层面（最终高程口径，掩膜外 NaN）与层序；B3：地形阶段出的地貌（局部栅格行列）
+    GridD top, skel, dome;
+    StratRec strat;
+    std::vector<LandformRec> lf;
 };
 Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, double res_km, double surface, double relief,
-                     double rim_min, bool is_main, const Config& c, CoreSpec* cores = nullptr);
+                     double rim_min, bool is_main, const Config& c, CoreSpec* cores = nullptr, SculptEnv* env = nullptr);
 
 }  // namespace skyisle::island

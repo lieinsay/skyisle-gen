@@ -150,6 +150,12 @@ def _products(out):
     return res
 
 
+# B0 起河宽不夸张（× 1），漫滩 = 10 × 真实河宽不到一格；B1 起谷是真切出来的 V 形——C2 的谷底宽之前，小世界里没有平的谷底：
+# 湿地（周围最陡的坡 < 2.5°）、圩田、大堰（干渠从渠首第一格就被谷坡挡住）都出不来。水利那几条测的是算法的每条路径，
+# 照旧用夸张的河宽（漫滩跟着宽）把谷底铺出来（DESIGN-NOTES 四点四十六）
+OLD_FLOOD = ["island.hydro.width_scale=8.0", "island.hydro.depth_scale=3.0"]
+
+
 def _gen(ctx, node, root, threads=4, sets=(), **kw):
     from skyisle_gen import island as isl
     return isl.generate(ctx, node, res_m=300.0, sets=[f"engine.threads={threads}"] + list(sets), log=lambda *a: None,
@@ -215,17 +221,18 @@ def test_generate_p5_farmland(small_ctx, tmp_path):
 
 
 def test_generate_p6_waterworks(small_ctx, tmp_path):
-    """P6（水利：谷口的渠、村塘 / 山塘 / 堰塘、圩田的纵浦横塘与圩塘、闸）：默认门槛下小世界里已有圩田、季节性渠首；再强开一遍圩田
-    （压力门槛 0、片与圩的下限放小：整片湿地排干），check 的硬项过，圩田在额度之内（已垦 = 额度），各种渠、塘、闸与水田 / 泽田都走到。"""
+    """P6（水利：谷口的渠、村塘 / 山塘 / 堰塘、圩田的纵浦横塘与圩塘、闸）：默认门槛一遍（季节性渠首）；再强开两遍圩田
+    （压力门槛 0、片与圩的下限放小：整片湿地排干；一遍水田线照旧、一遍抬高出泽田），check 的硬项过，圩田在额度之内（已垦 = 额度），
+    各种渠、塘、闸与水田 / 泽田都走到。B 起默认门槛下小世界的湿地排不成圩（V 形谷、没有平的谷底，见 OLD_FLOOD），圩田靠强开那两遍。"""
     from skyisle_gen import island as isl
     vw = ["island.works.village_works=true", "island.works.big_max=0"]          # 四点四十起村级默认不出、大堰默认修：这里测留着的村级算法
-    # 强开那一遍把水田线抬到 5000 mm：A3 起毫米换算是线性的，小世界的圩区都过 800 mm、全是水田，泽田要这样才走得到
-    forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05",
-              "island.works.polder_paddy_mm=5000"]
-    base = ["island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1",
+    # 强开的第二遍把水田线抬到 5000 mm：A3 起毫米换算是线性的，小世界的圩区都过 800 mm、全是水田，泽田要这样才走得到
+    forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
+    zetian = ["island.works.polder_paddy_mm=5000"]
+    base = ["island.hydro.width_scale=1.0", "island.hydro.depth_scale=1.0", "island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1",
             "island.works.village_works=false", "island.works.big_max=2", "island.works.polder_paddy_mm=800"]
     seen = set()
-    for extra in (vw, vw + forced):
+    for extra in (OLD_FLOOD + vw, OLD_FLOOD + vw + forced, OLD_FLOOD + vw + forced + zetian):
         for node in _nodes(small_ctx, 2):
             out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
             assert not _hard_fails(small_ctx, node, gb, out), node
@@ -240,19 +247,22 @@ def test_generate_p6_waterworks(small_ctx, tmp_path):
 
 
 def test_generate_p6b_manage(small_ctx, tmp_path):
-    """P6b（有水利就有人维护、原始地貌与人工地貌分开记）：默认一遍（小世界里已有圩村、挂在村上的圩田、废村旁的废塘）；再强开一遍——
-    一圩一组、走得到放到 3 km、废村放宽、渠首的汇水门槛与灌区下限放低（废村旁出废渠首、废渠、废渠首闸），check 的硬项过；
+    """P6b（有水利就有人维护、原始地貌与人工地貌分开记）：默认一遍（废村旁的废塘）；再强开一遍——
+    一圩一组、走得到放到 3 km、废村放宽、渠首的汇水门槛与灌区下限放低（废村旁出废渠首、废渠、废渠首闸）、圩田强开（B 起默认门槛下
+    小世界的湿地排不成圩：圩村、挂在村上的圩田靠这一遍），check 的硬项过；
     每处水利都有管它的村、在它走得到的范围内（check 的 SET-works），原始地表与人工改造对得上（SET-nature）。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island.check import _nature_check, _works_manage
     vw = ["island.works.village_works=true", "island.works.big_max=0"]          # 四点四十起村级默认不出、大堰默认修：这里测留着的村级算法
     forced = ["island.works.polder_village_blocks=1", "island.works.manage_walk_km=3.0", "island.settle.ruin_min_hh=2",
-              "island.works.works_src_min_km2=1.0", "island.works.works_stream_min_km2=2.0", "island.works.canal_min_cmd_km2=0.05"]
-    base = ["island.works.polder_village_blocks=3", "island.works.manage_walk_km=2.0", "island.settle.ruin_min_hh=8",
+              "island.works.works_src_min_km2=1.0", "island.works.works_stream_min_km2=2.0", "island.works.canal_min_cmd_km2=0.05",
+              "island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
+    base = ["island.hydro.width_scale=1.0", "island.hydro.depth_scale=1.0", "island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3",
+            "island.works.polder_block_min_km2=0.1", "island.works.polder_village_blocks=3", "island.works.manage_walk_km=2.0", "island.settle.ruin_min_hh=8",
             "island.works.works_src_min_km2=10.0", "island.works.works_stream_min_km2=30.0", "island.works.canal_min_cmd_km2=0.5",
             "island.works.village_works=false", "island.works.big_max=2"]
     seen = set()
-    for extra in (vw, vw + forced):
+    for extra in (OLD_FLOOD + vw, OLD_FLOOD + vw + forced):
         for node in _nodes(small_ctx, 2)[:2]:
             out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
             assert not _hard_fails(small_ctx, node, gb, out), node
@@ -279,9 +289,9 @@ def test_generate_bigworks(small_ctx, tmp_path):
     from skyisle_gen import island as isl
     from skyisle_gen.island.check import _nature_check, _works_check
     forced = ["island.works.big_src_min_km2=1.0", "island.works.big_min_cmd_km2=0.2", "island.works.big_min_quota_frac=0.0", "island.works.big_try=4"]
-    base = ["island.works.big_src_min_km2=30.0", "island.works.big_min_cmd_km2=20.0", "island.works.big_min_quota_frac=0.1", "island.works.big_try=10"]
+    base = ["island.hydro.width_scale=1.0", "island.hydro.depth_scale=1.0", "island.works.big_src_min_km2=30.0", "island.works.big_min_cmd_km2=20.0", "island.works.big_min_quota_frac=0.1", "island.works.big_try=10"]
     seen = set()
-    for extra in ([], forced):
+    for extra in (OLD_FLOOD, OLD_FLOOD + forced):
         for node in _nodes(small_ctx, 3):
             out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
             assert not _hard_fails(small_ctx, node, gb, out), node

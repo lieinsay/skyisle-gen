@@ -92,10 +92,11 @@ def test_float_products_deterministic(world, tmp_path):
 
 
 def test_float_is_a_translation(world):
-    """地形那一步开关浮高：岛号栅格不变；每座非主岛整体平移 δ（高程、岸缘、峰、台面、岛底），崖高与起伏不变；主岛一格不动。"""
+    """地形那一步开关浮高：岛号栅格不变；每座非主岛整体平移 δ（高程、岸缘、峰、台面、岛底），崖高与起伏不变；主岛一格不动。
+    B3 的峰林、冰斗在平移之后按本岛的气温判（浮上去冷了、雪线以上的地多了），不是平移——两边都关掉地貌那一步再比。"""
     node = _nodes(world, 1)[0]
-    _, g_on = _terrain(world, node)
-    _, g_off = _terrain(world, node, ["island.float.enabled=false"])
+    _, g_on = _terrain(world, node, ["island.landform.enabled=false"])
+    _, g_off = _terrain(world, node, ["island.float.enabled=false", "island.landform.enabled=false"])
     assert np.array_equal(g_on["island_id"], g_off["island_id"])
     iid = g_on["island_id"]
     I_on, I_off = g_on["json"]["islands"], g_off["json"]["islands"]

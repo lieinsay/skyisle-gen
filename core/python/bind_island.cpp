@@ -11,6 +11,7 @@
 #include "skyisle/island/build.hpp"
 #include "skyisle/island/climate.hpp"
 #include "skyisle/island/generate.hpp"
+#include "skyisle/island/landforms.hpp"
 #include "skyisle/island/resources.hpp"
 #include "skyisle/island/settle.hpp"
 #include "skyisle/island/layout.hpp"
@@ -257,9 +258,30 @@ nb::dict terrain_dict(Group& g) {
         }
         e["cores"] = cl;
         e["gc"] = nb::make_tuple(r.gcx, r.gcy);
+        if (r.strat.on) {   // B2 岩层（拟合前的米；scale 换成最终高程）
+            nb::dict st;
+            st["t_cap"] = r.strat.t_cap;
+            st["t_sed"] = r.strat.t_sed;
+            st["t_gab"] = r.strat.t_gab;
+            st["bed_lime"] = r.strat.bed_lime;
+            st["bed_marl"] = r.strat.bed_marl;
+            st["bed_phase"] = r.strat.bed_phase;
+            st["exhume"] = r.strat.exhume;
+            st["scale"] = r.strat.scale;
+            e["strat"] = st;
+        }
         isl.append(e);
     }
     d["islands"] = isl;
+    if (!g.coast_dist.v.empty()) d["coast_dist_m"] = f32_np(g.coast_dist);
+    // B2 层面（地形与水系分两次调时，build_hydro 的 state 原样带回去：谷坡角、lith 都读它）
+    if (!g.strat_top.v.empty()) {
+        d["strat_top"] = grid_np(GridD(g.strat_top));
+        d["skel_top"] = grid_np(GridD(g.skel_top));
+    }
+    nb::list lfl;
+    for (size_t q = 0; q < g.landforms.size(); ++q) lfl.append(json_py(landform_json(g, g.landforms[q], static_cast<int>(q))));
+    d["landforms"] = lfl;
     nb::list lk;
     for (const Link& e : g.links) {
         nb::dict x;
@@ -312,6 +334,7 @@ nb::dict hydro_dict(Group& g) {
     d["rain_mm"] = f32_np(g.rain);
     d["runoff_mm"] = f32_np(g.runoff);
     d["runoff_ratio"] = g.runoff_ratio;
+    if (!g.lith.v.empty() && !g.strat_top.v.empty()) d["lith"] = grid_np(Grid<uint8_t>(g.lith));
     d["recv_i"] = grid_np(GridI(g.recv_i));
     d["recv_j"] = grid_np(GridI(g.recv_j));
     d["P_mm"] = g.P_mm;
@@ -380,6 +403,13 @@ nb::dict hydro_dict(Group& g) {
 nb::dict resources_dict(Group& g) {
     nb::dict d;
     const size_t H = g.H, W = g.W;
+    if (!g.rockwall_m.v.empty()) {   // B3 崖层
+        d["rockwall_m"] = f32_np(g.rockwall_m);
+        d["rockwall_dir"] = grid_np(Grid<uint8_t>(g.rockwall_dir));
+    }
+    nb::list lfl;
+    for (size_t q = 0; q < g.landforms.size(); ++q) lfl.append(json_py(landform_json(g, g.landforms[q], static_cast<int>(q))));
+    d["landforms"] = lfl;
     d["terrain_zone"] = grid_np(Grid<uint8_t>(g.zone));
     d["patch_id"] = grid_np(GridI(g.patch_id));
     d["resource"] = grid_np(Grid<uint8_t>(g.resource));
@@ -651,7 +681,23 @@ void bind_island(nb::module_& m) {
             // 谷收拢（P4）看岛龄档与是不是多核岛：新岛 × capture_young、多核岛不收（多核的核在这里只要「有没有」）
             if (e.contains("young") && nb::cast<bool>(e["young"])) r.kind = YOUNG;
             if (e.contains("multicore") && nb::cast<bool>(e["multicore"])) r.cores.resize(1);
+            if (e.contains("strat") && !e["strat"].is_none()) {   // B2 岩层（build_terrain 交出来的原数）
+                nb::dict st = nb::cast<nb::dict>(e["strat"]);
+                r.strat.on = true;
+                r.strat.t_cap = dget(st, "t_cap");
+                r.strat.t_sed = dget(st, "t_sed");
+                r.strat.t_gab = dget(st, "t_gab");
+                r.strat.bed_lime = dget(st, "bed_lime");
+                r.strat.bed_marl = dget(st, "bed_marl");
+                r.strat.bed_phase = dget(st, "bed_phase");
+                r.strat.exhume = dget(st, "exhume");
+                r.strat.scale = dget(st, "scale");
+            }
             g.islands.push_back(r);
+        }
+        if (state.contains("strat_top") && !state["strat_top"].is_none()) {
+            g.strat_top = grid_from(nb::cast<ArrD2>(state["strat_top"]));
+            g.skel_top = grid_from(nb::cast<ArrD2>(state["skel_top"]));
         }
         PlanetView pv_tmp;
         Config c_tmp;

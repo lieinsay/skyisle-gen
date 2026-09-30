@@ -15,7 +15,7 @@
 没有火山（P3，Zhouzhu docs/PLAN-LAND.md L16 / L17）：岩浆在海下，岛是从海底挣脱出来的拱，顶上带着海底的岩层一起升上来。
 于是矿是海底带上来的（热泉硫化物：铜、铅锌、金银、铁帽、少量锡；蛇纹岩：铬、镍；锰结核），硫磺是海底热泉沉积的，温泉只在刚出海的新岛（余热），
 熔岩管换成浮石骨架里的空洞（开在浮石露头旁），火山口删掉；海底的沉积层带来海相石灰岩（石料的一种岩性）、贝壳化石、岩盐与盐泉。
-岩层按剥蚀指数 e =（高出岸缘到峰高的比例）+ 岛龄偏移：e < layer_sediment_max 是沉积盖层，≥ layer_serpentinite_min 是蛇纹岩，中间是辉长岩。
+岩层（B2 起，DESIGN-NOTES 四点四十六）按地形的层面（terrain.npz 的 lith，[island.strat]）：沉积盖层（石灰岩 / 泥灰岩互层）、辉长岩、蛇纹岩、浮石骨架。
 
 产物：terrain_zone（uint8，见 ZONE_NAMES）、res_field（uint8 [7, H, W]，品位 × 255，层序 FIELD_KINDS）、patch_id（int32，−1 = 无）、
 resource（uint8，见 RES_NAMES：显示用的「主导」类，按 DOMINANT_ORDER 后画盖先画）进 terrain.npz；
@@ -120,10 +120,9 @@ def resource_record(node, zone, land, rc, r_cells, thr, btype, kern, layered, ge
                         "ore_multiplier": round(geo_ore, 3), "floatstone_expose_rate": round(fs_rate, 3),
                         "floatstone": "岛体本身就是浮石；可开采，采掉的量相对岛体微不足道，不影响浮空",
                         "origin": "岩浆只在海下、岛上不喷发：岛是从海底挣脱出来的拱，顶上带着海底的岩层一起升上来——矿、硫磺、盐、石灰岩与贝壳化石都是海底带上来的，温泉只在刚出海的新岛",
-                        "layers": {"names": list(LITH_LAYERS), "sediment_max": float(rc["layer_sediment_max"]), "serpentinite_min": float(rc["layer_serpentinite_min"]),
-                                   "age_shift": {"新岛": float(rc["exhume_shift_young"]), "中年": 0.0, "老岛": float(rc["exhume_shift_old"])},
-                                   "rule": f"剥蚀指数 e = 高出岸缘到峰高的比例 + 岛龄偏移：e < {rc['layer_sediment_max']} 是沉积盖层（海相石灰岩、岩盐、溶洞），"
-                                           f"≥ {rc['layer_serpentinite_min']} 是蛇纹岩（铬、镍），中间是辉长岩；石料赋存区按区内均值定岩性"}},
+                        "layers": {"names": list(LITH_LAYERS),
+                                   "rule": "按地形的层面（B2，terrain.npz 的 lith、[island.strat]）：露出哪层 = 该格在构造顶面下多深——沉积盖层（石灰岩 / 泥灰岩互层："
+                                           "海相石灰岩、岩盐、盐泉、溶洞）、辉长岩、蛇纹岩（铬、镍只在这里）、浮石骨架（岸崖、贴着岸缘的深谷）；石料赋存区取区内露出最多的一层"}},
             "deposits": deposits, "occurrences": occurrences, "workings": workings,
             "note": "第三层叙事 / 场景素材，不进管线；cell = 群栅格 [行, 列]，km = 相对群心（x 东 y 北）。deposits = 点与片，occurrences = 散的赋存区（cell = 品位峰值格，"
                     "axis_deg = 走向，自东逆时针），workings = 采场（villages / special = 用它的村 / 专业聚落）；grade 是本类里的相对品位"}

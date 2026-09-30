@@ -635,13 +635,119 @@ uplift_rel = 0.0               # 每轮按基形抬升（× 起伏）；> 0 时�
 carve_jitter_rel = 0.02       # 定流向用的路由面噪声幅度（× 起伏，特征尺度 = 3 个侵蚀格）：打散 D8 横平竖直的沟，只影响流向不改高程
 carve_route_p = 1.5           # 随机流向：每轮在下坡邻格里按 坡降^p 抽下游（期望方向 = 真实梯度）；0 = 纯 D8（沟谷横平竖直、拐直角）
 carve_smooth_coarse = 0       # 下切量回贴细网格：粗网格上 [1,2,1] 平滑遍数（每遍都明显削浅沟谷）
-carve_smooth_fine = 2         # 放大后细网格上的平滑遍数：去掉双线性放大一格宽沟谷留下的沿坐标轴方格纹；0 = 不平滑
-erosion_max_cells = 320       # 侵蚀在 ≤ 此边长的粗网格上做，差值回贴
-talus_deg = 38.0              # 热力坍塌休止角
-diffusion_k = 0.04            # 坡面扩散
-fill_iters = 40               # 每轮侵蚀前在粗网格上迭代填洼的轮数（Planchon–Darboux，填直径 ≤ 此格数的洼地，保持排水）
+carve_smooth_fine = 2         # 放大后细网格上的平滑遍数（只在岛的局部栅格超过 erosion_max_cells、要在粗网格上做时用）
+erosion_max_cells = 2048      # 侵蚀在 ≤ 此边长的网格上做（B1，DESIGN-NOTES 四点四十六：旧 320 让 #6329 在 400 m 一格上切，回贴时双线性放大再平滑，谷坡全是缓的；
+                              # 2048 时几乎所有岛都在原生分辨率上切，#6329 的地形 0.5 → 2.8 s）
+talus_deg = 38.0              # 热力坍塌休止角（没有岩层时；有岩层时按 [island.strat] talus_deg 的各岩性）
+diffusion_k = 0.04            # 坡面扩散（有岩层时 × [island.strat] diffuse 的各岩性）
+# 每轮侵蚀前全岛填洼（B1：旧键 fill_iters 40 作废——Planchon–Darboux 只从岸缘往里推 40 格，100 m 格上只到岸内 4 km，里面的小洼把沟截断，岛心切不开）
 pit_keep_m = 2.0              # 填洼后实际高程最多低于填平面此值（更深的洼地被抬起：湖应当少见）
 cliff_cells = 2               # 岸线向内几格标为崖缘
+
+[island.strat]                # 岩层（PLAN-NATURE B2，DESIGN-NOTES 四点四十六；spec 13 第二节第 6 条）：岛是两层——上面是从海底带上来的岩层（由浅到深：沉积盖层 =
+# 硬的海相石灰岩与软的泥灰岩互层、辉长岩、蛇纹岩），下面是浮石骨架。每座岛一套层面（随机流 island:<节点>:strat:<岛号>）：
+# 构造顶面 = 岸缘 + 起伏 × 抹开的基形（struct_smooth_rel × 等效半径）+ 冠顶已剥去的深度 × 穹^exhume_exp——穹 = 抹开的基形归一到 [0, 1]（岸 0 → 冠 1），
+# 冠顶剥去的深度（m）= 按本岛岛龄在 exhume_age → exhume_m 上插值（削了多久剥多深，不随现在的起伏：老岛起伏小却剥得最深）：
+# 新岛刚出海，顶上的沉积盖层还在；中年岛冠顶露辉长岩、深谷见蛇纹岩；老岛台地的芯剥到蛇纹岩、边上还留着硬的石灰岩盖（方山）。
+# 某格露出哪层 = 该格在构造顶面下多深（厚度按拟合的比例换算）；骨架顶面 = 岛底 + skel_edge_frac × (岸缘 − 岛底) + skel_rise × 起伏 × 穹（岸崖上居中、往山下拱起：
+# 崖壁上岩层与浮石的交界就是 C5 的泉线）。侵蚀每轮按露出的岩性取可蚀性（× carve_k）、坍塌角、坡面扩散（× diffusion_k）：硬层成崖、软层成坡。
+# 旧的「剥蚀指数分三层」（[island.resources] layer_sediment_max / layer_serpentinite_min / exhume_shift_*）作废，资源、地表、地貌都读同一套层面
+enabled = true                # false = 不分层（侵蚀一律 talus_deg；资源按旧的剥蚀指数）
+sed_thick_m = 400.0           # 沉积盖层厚（对数正态 σ sed_thick_sigma；不含老岛的硬盖）
+sed_thick_sigma = 0.35
+gabbro_thick_m = 900.0        # 辉长岩厚（对数正态 σ gabbro_thick_sigma）；再往下是蛇纹岩（地幔岩）
+gabbro_thick_sigma = 0.3
+bed_lime_m = [60.0, 160.0]    # 盖层里石灰岩单层厚 U(lo, hi)
+bed_marl_m = [40.0, 120.0]    # 泥灰岩单层厚
+cap_old_m = [80.0, 200.0]     # 老岛顶上的硬石灰岩盖厚（方山、桌山的盖）
+exhume_age = [0.0, 0.3, 0.65, 1.0]      # 冠顶已剥去的深度按岛龄分段线性（旧键 exhume_young / mid / old 是 × 起伏，作废）
+exhume_m = [0.0, 400.0, 1400.0, 2500.0]  # 层厚约 400（盖层）+ 900（辉长岩）：岛龄 0.3 冠顶剥到盖层底、0.65 剥到蛇纹岩
+exhume_exp = 2.0              # 往四周按穹^exp 减：岸边还留着盖层
+struct_smooth_rel = 0.25      # 构造面的平滑尺度（× 等效半径）：层面比地形平顺，地形的脊谷切过层面
+skel_edge_frac = 0.4          # 骨架顶面在岸崖上的位置（岛底 → 岸缘的比例）
+skel_rise = 0.1               # 骨架顶面随穹的抬升（× 起伏）
+rock_min_m = 300.0            # 骨架顶面之上至少压着的岩层（× 穹：岸边不管、岛心满）——岩层几百米到上千米厚
+skel_below_rim_m = 20.0       # 骨架顶面不高过岸缘以下此值：流到岸缘的谷切不到它，浮石只在岸崖（泉线）与河口豁口露
+# 各岩性：石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石（按合理取，不对地球的数：硬的石灰岩与辉长岩难蚀、坍塌角大、坡面蠕动慢；泥灰岩软、坡缓；
+# 蛇纹岩软、易滑，坡缓；浮石骨架整块、纹理顺，陡）
+erod = [1.0, 2.0, 0.6, 1.4, 0.7]
+talus_deg = [55.0, 26.0, 45.0, 30.0, 60.0]
+diffuse = [0.4, 1.6, 0.4, 1.3, 0.3]
+
+[island.landform]             # 特殊的山（PLAN-NATURE B3，DESIGN-NOTES 四点四十六；spec 13 第二节第 8、9 条）：按成因条件出，不设配额；公里级的形状进高程，
+# 100 m 以下的（峰林的石柱、天窗、岩壁）只记位置与尺寸，游戏建。island.json 的 landforms 一处一条（kind、岛、格、km 与各类的量）
+enabled = true
+# 平行岭谷、猪背岭：多核岛的接缝带里构造顶面沿缝起伏（fold_amp_m × cos(2π × 离缝 / fold_wave_km)，按离缝 / (fold_width_rel × 等效半径) 的高斯收），侵蚀后硬层成窄脊
+fold_amp_m = 250.0
+fold_topo_m = 150.0           # 地面也跟着起伏（年轻的褶皱背斜就是岭，川东的平行岭谷）
+fold_wave_km = 3.0
+fold_width_rel = 0.35
+# 掀斜断块山：多核岛里有一个核的强度 ≤ tilt_old_strength（明显老、浮力衰减），整岛歪向它——对侧的岸缘翘起 tilt_rel × 起伏（侵蚀之前加，层面一起歪），翘起的岸缘就是断崖
+tilt_old_strength = 0.32
+tilt_rel = 0.5
+# 峰林、孤峰：老岛、沉积盖层出露、该格年均 ≥ karst_temp_c、群的年雨 ≥ karst_rain_mm，成片 ≥ karst_min_km2——压低峰间平地（karst_window_km 方窗里的最低 + karst_keep × 高出的量）；
+# 石柱高 = 压掉的起伏中位（夹 karst_tower_m），密度 = karst_density_km2 × clip(年雨 / 1500, 0.5, 1.5)（桂林一平方公里几座到十几座）
+karst_temp_c = 16.0
+karst_low_frac = 0.35         # 峰间平地在低处：高出岸缘不到岸缘 → 峰起伏的此比例（山上的石灰岩不压）
+karst_merge_km = 1.0          # 隔此距离以内的碎片算同一片峰林
+karst_rain_mm = 1100.0
+karst_min_km2 = 3.0
+karst_window_km = 1.5
+karst_keep = 0.15
+karst_tower_m = [50.0, 250.0]
+karst_density_km2 = 8.0
+# 冰斗、角峰、冰川：雪线（平衡线）= 台面处最暖一季的气温按直减率降到 glacier_summer_c 的高度（年雨每翻一倍 t_ela 高 glacier_wet_c，夹 [−1, 1.5] 倍：湿的地方雪多）；
+# 峰高出雪线 cirque_min_above_m 才刨：雪线下 cirque_band_below_m 到上 cirque_band_above_m、汇流 cirque_acc_min…max km²、坡 ≥ cirque_slope_min_deg、不朝阳的沟头，
+# 隔 cirque_sep_km；碗半径 cirque_radius_km、碗底 = 沟头 − cirque_depth_m，只刨沟头上坡的那半边（围椅形、朝下坡开口）。horn_radius_km 内被 ≥ horn_min_cirques 个圈谷围住的最高峰是角峰
+glacier_summer_c = 1.0
+ice_cap_frac = 0.5            # 雪线以上的地超过此比例是冰盖（只记冰川，不刨冰斗、不标角峰）
+glacier_wet_c = 1.5
+cirque_min_above_m = 100.0
+cirque_band_below_m = 300.0
+cirque_band_above_m = 400.0
+cirque_acc_min_km2 = 0.3
+cirque_acc_max_km2 = 3.0
+cirque_slope_min_deg = 10.0
+cirque_sep_km = 1.5
+cirque_radius_km = 0.7
+cirque_depth_m = 120.0
+horn_radius_km = 1.5
+horn_min_cirques = 3           # 且冰斗至少分在三个方向（四个象限里占三个）、峰高出雪线 horn_above_ela_m
+horn_above_ela_m = 200.0
+# 临空断山：岛缘像伸出去的悬臂，太厚太重就崩。岸边格 collapse_radius 内的最高点高出它越多越容易崩：概率 = collapse_p × clip((高差 − collapse_relief_m[0]) / (… [1] − … [0]))，
+# 一岛至多一处（面积 ≥ collapse_min_km2）；崩掉以岸边格为心的半圆，半径 = min(collapse_radius_max_km, 让丢掉的面积 ≤ collapse_max_loss 的半径)，不到 collapse_radius_min_km 不崩
+collapse_p = 0.5
+collapse_relief_m = [600.0, 1500.0]
+collapse_min_km2 = 100.0
+collapse_radius_max_km = 3.0
+collapse_radius_min_km = 1.0
+collapse_max_loss = 0.01
+sky_float_m = 1000.0          # 天上的山：浮到主岛之上 ≥ 此值、峰高过主岛的峰的岛（只加标签）
+# 识别型（资源之后）：辉长岩锯齿峰 = 辉长岩露在山地 / 高山、高出岸缘到峰高的 crag_peak_frac 以上，成片 ≥ crag_min_km2、坡中位 ≥ crag_slope_deg；
+# 蛇纹岩秃山 = 蛇纹岩露出成片 ≥ serp_min_km2；方山 / 孤山 = 老岛顶上那层硬石灰岩盖（层面下不到 cap）的残块、平顶（坡 < mesa_top_slope_deg，面积 mesa_min…max km²），边上 ≥ mesa_steep_frac 的格
+# 一格内落差 ≥ mesa_drop_m、3 格内落差中位 ≥ mesa_rise_m、贴岛缘的边 ≤ 三成；≥ mesa_big_km2 叫方山；
+# 穿山天窗 = 骨架只在岸崖上露，天窗开在岸缘被削薄的岬角里：骨架空洞 arch_reach_km 内、沿某方向两侧 arch_spur_cells 格内都是虚空、至少两格长、
+# 高出岸缘 ≥ arch_fin_m 的岩鳍，取最高的一格
+# （洞口 = 0.3 × 高出骨架顶面，夹 arch_open_*；都看得见下面的云）；
+# 崖层 rockwall = 坡 ≥ rockwall_deg 的格
+crag_peak_frac = 0.5
+crag_min_km2 = 0.5
+crag_slope_deg = 28.0
+serp_min_km2 = 0.5
+mesa_top_slope_deg = 8.0
+mesa_min_km2 = 0.5
+mesa_max_km2 = 50.0
+mesa_big_km2 = 2.0
+mesa_drop_m = 25.0
+mesa_rise_m = 100.0
+mesa_steep_frac = 0.7
+arch_reach_km = 1.0
+arch_spur_cells = 1
+arch_fin_m = 100.0            # 岬角要高出岸缘此值（立起来的岩鳍，洞上面还有岩），且至少两格长
+arch_sep_km = 1.0             # 天窗彼此隔开
+arch_open_min_m = 10.0
+arch_open_max_m = 80.0
+rockwall_deg = 40.0
 
 [island.float]                # 浮高（DESIGN-NOTES 四点二十八；Zhouzhu 浮高计划 G 期）：同一群里的岛高低错落——主岛不动，其余岛整座上下平移 δ
 # （高程、岸缘、台面、峰、岛底、河湖一起平移，在水系 / 地表 / 资源 / 气温 / 聚落之前；叠在 layout.surface_lo / hi 的「主岛 × U(0.6, 1.0)」之上）。
@@ -699,8 +805,8 @@ width_a = 5.0                 # Leopold–Maddock：w ≈ 5·Q^0.5 m、d ≈ 0.3
 width_b = 0.5
 depth_c = 0.35
 depth_f = 0.4
-width_scale = 8.0             # 夸张倍数：1 = 真实比例（10 m³/s 的河 16 m 宽，100 m 格上看不出是河）；8 时 4000 km² 主岛的干流约 120 m、最大的群 300–400 m
-depth_scale = 3.0
+width_scale = 1.0             # 夸张倍数（B0，PLAN-NATURE：09-24 为在 100 m 格上看得见河设的 × 8 / × 3 去掉，回到真实比例；C1 删这两个键）
+depth_scale = 1.0
 stream_width_mult = 0.5       # 季节性溪涧按同式 × 此值（湿季的宽 / 深）
 incise_m = 25.0               # 河床下切：干流河口 incise_m，上游按 (汇流 / 主岛最大汇流)^0.5 递减
 stream_incise_m = 3.0         # 溪涧切沟深度
@@ -708,7 +814,8 @@ stream_grade_max = 0.12       # 溪涧河床从汇入处往上游的最大比降
 notch_m = 12.0                # 河口最多切进岸缘多少米（崖缘上的豁口；河从这里跌下成瀑布）
 floodplain_mult = 10.0        # 漫滩全宽 = 河宽 × 此值（上限 floodplain_max_m）；漫滩高程 = 河床 + 水深（涨水即漫）
 floodplain_max_m = 2500.0
-gorge_deg = 32.0              # 谷坡：小流量（≤ q_gorge m³/s）为峡谷坡，按 log Q 过渡到大流量（≥ q_wide）的宽谷坡
+# 谷坡：小流量（≤ q_gorge m³/s）为峡谷坡，按 log Q 过渡到大流量（≥ q_wide）的宽谷坡。峡谷坡按河床那格露出的岩性的坍塌角（B2，[island.strat] talus_deg；
+# 旧键 gorge_deg 32° 只在没有岩层时用）；C2 换成按限制度的谷坡
 wide_deg = 9.0
 q_gorge = 0.5
 q_wide = 40.0
@@ -744,6 +851,8 @@ forest_soil_min = 0.2         # 土层指数（老岛厚、平地厚、汇流处
 soil_slope_zero_deg = 60.0    # 土层随坡度线性变薄、到此坡度归零（旧 40：按几乎全平的岛定的，真实起伏下 20° 的坡就只剩一半土、一片灌丛）
 forest_temp_min_c = 5.0
 shrub_wet_min = 0.25          # 不成林但 ≥ 此湿度且土层 ≥ 一半 → 灌丛；其余草坡
+serp_soil_mult = 0.4          # 蛇纹岩（B3 秃山）：土贫有毒——土层 × 此值、不成林不成灌丛（稀草），坡 ≥ serp_bare_slope_deg 裸露
+serp_bare_slope_deg = 30.0
 # 湿地（P4，L14；DESIGN-NOTES 四点三十五）：坡缓、离崖缘远、汇来的水排不走（台面上的洼、平地），再乘局地雨——不拿年降水一刀切（旧键 wet_slope_deg / wet_acc_km2 / wet_precip_mm 作废）。
 # 指数 = 汇流（wet_spread_cells 格方窗内的最大：平地上的水摊开）× 1e6 / 格宽 m × (局地雨 / wet_ref_mm)^wet_rain_exp × 离崖缘 × (1 + wet_pit_gain × min(1, 洼深 / wet_pit_ref_m))
 #        / tan(max(周围最陡的坡, wet_slope_floor_deg))，周围 = wet_flat_cells 格方窗（成片的平地，不是一条条沟底）；
@@ -799,6 +908,7 @@ stone_slope_hi_deg = 30.0     #（旧键 stone_slope_full_deg：8° 林坡就算
 stone_exposed_grade = 0.6
 stone_forest_mult = 0.8
 stone_slope_max_deg = 40.0    # 再陡就是崖面，开不了
+stone_marl_mult = 0.5         # 泥灰岩（B2）软，不成好石料：品位 × 此值
 occ_thr = { ore = 0.15, sulfur = 0.15, placer = 0.15, clay = 0.3, gravel = 0.3, stone = 0.4, salt = 0.15 }
                               # 赋存区 = 品位 ≥ 此值的连通块（不跨岛）；矿化带 / 硫磺 / 盐丘按各自的核成区（可重叠）
 occ_min_cells = 3             # 赋存区至少这么多格，且（石料 / 黏土 / 砂砾 / 砂金）面积 ≥ occ_min_km2
@@ -813,6 +923,7 @@ ore_layered_gain = 1.5
 ore_elongation = 3.0          # 矿化带顺板块走向的长短轴比
 ore_pits_max = 5              # 每条矿化带里的矿坑数上限（1 + 泊松(面积 km²)）
 ore_slope_max_deg = 40.0      # 矿化带只在岩类可放区里、坡 ≤ 此值（崖面开不了露天矿）
+ore_serp_min = 0.2            # 铬、镍只在蛇纹岩里（B2）：矿化带里蛇纹岩的格不到此比例不出铬镍，过半的权重 × 3
 ore_km2 = 2.0                 # 矿化带（顺走向的椭圆核，裁到岩类可放区）面积中位数（对数正态 σ 0.6）：现实里一个矿区 1–5 km²，真正开挖的是带里几个坑
 ore_sep_km = 3.0
 floatstone_expose = 0.35      # 浮石露头率（崖面 / 峡谷壁里露出的比例）× (1 + 汇聚增益 × 边界核) × 叠层 × 岛龄（新 1.2 / 中 1 / 老 0.6），夹 [0.02, 0.95]
@@ -820,15 +931,13 @@ floatstone_convergent_gain = 1.0
 floatstone_layered_gain = 1.4
 floatstone_patch_km = 1.0     # 露头成段的噪声尺度
 floatstone_min_cells = 2      # 连通段 ≥ 此格数才算一处
+floatstone_skel_band_m = 80.0 # 峡谷壁的露头要切到骨架顶面上方此值以内（B2：岩层几百米厚，只有贴着岸缘的深谷切得到骨架）；岸崖一律露
 gorge_cut_m = 10.0            # 峡谷壁：河道 / 河谷下切 ≥ 此值且坡 ≥ gorge_slope_deg（浮石峡谷露头、峡谷岩洞）
 gorge_slope_deg = 15.0
 skeleton_void_per_km2 = 0.15  # 骨架空洞（P3，取代熔岩管）：浮石骨架里天然的空洞，开在浮石露头旁一格；每岛个数 = 泊松(此值 × 本岛露头面积 km²)
 waterfall_cave_p = 0.5        # 主岛每条常年河的河口有「瀑布后洞」的概率
-# 岩层（P3）：剥蚀指数 e = 高出岸缘到峰高的比例 + 岛龄偏移（新岛 exhume_shift_young / 中年 0 / 老岛 exhume_shift_old）——岛的高处、老岛剥蚀得深
-layer_sediment_max = 0.3      # e < 此值：还留着海底的沉积盖层（石料岩性 = 海相石灰岩；岩盐、盐泉、老岛的溶洞只在这一层）
-layer_serpentinite_min = 0.42 # e ≥ 此值：剥到最深的地幔岩（蛇纹岩）；中间是海底地壳（辉长岩）。石料赋存区按区内各格的均值定岩性
-exhume_shift_young = -0.1     # 新岛刚出海，顶上的沉积盖层还在
-exhume_shift_old = 0.1        # 老岛剥蚀得深
+# 岩层（P3 的剥蚀指数 layer_sediment_max / layer_serpentinite_min / exhume_shift_* 作废）：B2 起读地形的层面（[island.strat]、terrain.npz 的 lith）——
+# 石料岩性 = 赋存区里露出最多的一层（石灰岩与泥灰岩都算海相石灰岩）；岩盐、盐泉、老岛的溶洞只在沉积盖层
 fossil_per_km2 = 0.1          # 贝壳化石（点）：海相石灰岩的石料赋存区里，每区个数 = 泊松(此值 × 面积 km²)，彼此 ≥ fossil_sep_km
 fossil_sep_km = 1.0
 salt_km2 = 2.0                # 盐丘（岩盐赋存区，圆核 × 斑块噪声，裁到沉积盖层）面积中位数（对数正态 σ 0.6）；盐丘之间 ≥ salt_sep_km

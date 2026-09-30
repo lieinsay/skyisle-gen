@@ -9,6 +9,7 @@
 
 #include "skyisle/config.hpp"
 #include "skyisle/grid.hpp"
+#include "skyisle/island/strat.hpp"
 #include "skyisle/json.hpp"
 
 namespace skyisle::island {
@@ -87,6 +88,7 @@ struct Limit {
 struct Shape {
     Mask mask;
     GridD inside;
+    GridD phi;                           // 岸线的连续场 f − τ（B4：零等值线就是岸线；与 mask 同号——掩膜内 > 0、外 < 0）
     std::vector<double> xs;
     double X(int, int j) const { return xs[j]; }
     double Y(int i, int) const { return -xs[i]; }
@@ -107,6 +109,7 @@ struct IslandRec {
     // surface / rim / peak / keel 都已含浮高 fl（整座平移的 δ，m；主岛 0，DESIGN-NOTES 四点二十八）
     double area_target = 0, cx = 0, cy = 0, surface = 0, relief_target = 0, rim = 0, peak = 0, keel = 0, age = 0, fl = 0;
     AgeKind kind = MID;
+    StratRec strat;                      // 岩层（B2）：层厚与拟合的换算；层面在群栅格 strat_top / skel_top
     int r0 = 0, c0 = 0, m = 0;          // 局部栅格左上角在群栅格里的行列、边长（裁切后）
     // island.json 里的四舍五入值（Python 版 hydro 读的是它们）
     double rim_j = 0, keel_j = 0, age_j = 0;
@@ -157,6 +160,15 @@ struct LinePt {
 struct RiverLine {
     int island = 0;
     std::vector<LinePt> pts;   // 群栅格坐标（行 + 0.5、列 + 0.5）
+};
+
+// 地貌（B3，landforms.cpp）：一处特殊的山 / 地貌。kind 是 ASCII 代码（前端映射中文）；r、c 是群栅格的行列（格心 = 整数 + 0.5，同 LinePt），
+// 地形阶段先按局部栅格记、贴图时换成群栅格；attr 是各类的量（尺寸、成因条件）
+struct LandformRec {
+    std::string kind;
+    int island = 0;
+    double r = 0, c = 0;
+    Json attr = Json::obj();
 };
 
 // 主岛集水盆地（hydro._basins 的原始数）：河口 = 汇流 ≥ thr 的出口格，按扁平下标升序；排序、取前几个、四舍五入在前端
@@ -266,6 +278,15 @@ struct Group {
     GridD height;                            // 虚空 NaN
     Grid<int16_t> island_id;                 // −1 虚空
     Mask cliff;
+    // B2 岩层：构造顶面、骨架顶面（最终高程口径，虚空 NaN）；lith 在水系之后按最终高程出（strat.hpp 的 Lith）
+    GridD strat_top, skel_top;
+    Grid<uint8_t> lith;
+    // B3 地貌：记录；崖层 rockwall_m（该格所在岩壁的落差，0 = 不是岩壁）与朝向 rockwall_dir（0–15，×22.5°、0 = 朝北、顺时针；255 = 无）
+    std::vector<LandformRec> landforms;
+    GridD rockwall_m;
+    Grid<uint8_t> rockwall_dir;
+    // B4 亚格岸距（m，陆地为正、虚空为负，岸线 = 岛形连续场的零等值线）
+    GridD coast_dist;
     std::vector<double> rims;
     std::vector<IslandRec> islands;
     std::vector<Link> links;

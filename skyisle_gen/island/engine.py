@@ -145,6 +145,12 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print, c: dict | None 
             gcx, gcy = e["gc"]
             islands_json[-1]["cores"] = cores_json(e["cores"], (float(gcx), float(gcy)), float(e["float"]), res_km,
                                                    (c or {}).get("terrain", {}))
+        if e.get("strat"):          # B2 岩层：层厚按最终高程（拟合的比例换算过）
+            st = e["strat"]
+            sc_ = float(st["scale"])
+            islands_json[-1]["strat"] = {"cap_m": round(float(st["t_cap"]) * sc_, 1), "sediment_m": round(float(st["t_sed"]) * sc_, 1),
+                                         "gabbro_m": round(float(st["t_gab"]) * sc_, 1), "bed_lime_m": round(float(st["bed_lime"]) * sc_, 1),
+                                         "bed_marl_m": round(float(st["bed_marl"]) * sc_, 1), "crown_exhumed_m": round(float(st["exhume"]) * sc_, 1)}
     rims = np.asarray(R["rims"], dtype=np.float64)
     lk = []
     for e in R["links"]:
@@ -197,6 +203,15 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print, c: dict | None 
     masks_pos = [(mk, int(r0), int(c0)) for mk, r0, c0 in R["masks_pos"]]
     g = {"height": height, "island_id": island_id, "cliff": cliff, "json": J, "rims": rims, "res_km": res_km,
          "masks_pos": masks_pos, "inp": inp}
+    if "coast_dist_m" in R:          # B4 亚格岸距
+        g["coast_dist_m"] = R["coast_dist_m"]
+    if "strat_top" in R:             # B2 层面：地形与水系分两次调时原样交回 build_hydro（谷坡角、lith 读它）
+        g["strat_top"], g["skel_top"] = R["strat_top"], R["skel_top"]
+        g["strat_raw"] = [e.get("strat") for e in R["islands"]]
+    if "landforms" in R:             # B3 地形阶段的地貌（资源之后另有识别型的，generate_cpp 换成全的）
+        from .landforms import LANDFORM_NOTE, landforms_json
+        J["landforms"] = landforms_json(R["landforms"])
+        J["landforms_note"] = LANDFORM_NOTE
     return g
 
 
@@ -210,6 +225,11 @@ def build_hydro_cpp(ctx, node: int, c: dict, g: dict, log=print) -> None:
              "res_km": float(g["res_km"]), "origin_x": float(ox), "origin_y": float(oy),
              "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "age": float(i["age"]), "young": i["age_zh"] == "新岛",
                           "multicore": bool(i.get("cores"))} for i in J["islands"]]}
+    if "strat_top" in g:
+        state["strat_top"] = np.ascontiguousarray(g["strat_top"], dtype=np.float64)
+        state["skel_top"] = np.ascontiguousarray(g["skel_top"], dtype=np.float64)
+        for e, st in zip(state["islands"], g["strat_raw"]):
+            e["strat"] = st
     R = core().build_hydro(state, planet_obj(ctx), flat_config(c), threads(ctx))
     _hydro_from(c, g, R, log)
 
@@ -278,6 +298,10 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
               "runoff_mm": R["runoff_mm"]})
     if "cultivable" in R:                  # P5：宜垦（arable 是额度内的上等地）
         g["cultivable"] = R["cultivable"]
+    if "lith" in R:                        # B2：露出的岩性
+        from .landforms import lith_summary
+        g["lith"] = R["lith"]
+        J["lith"] = lith_summary(R["lith"], island_id)
     cover, arable = R["landcover"], R["arable"]
     n_land = int(land.sum())
     share = {LANDCOVER_CLASSES[i]: round(float(((cover == i) & land).sum()) / max(1, n_land), 4) for i in range(1, 12)}
@@ -336,6 +360,14 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         _hydro_from(c, g, R["hydro"], log)
         g["timing"]["hydro"] = float(secs[1])
         g["resources"] = decode.resources(g, node, c, R["resources"])
+        RR = R["resources"]
+        if "rockwall_m" in RR:            # B3 崖层与全部地貌
+            g["rockwall_m"] = RR["rockwall_m"]
+            g["rockwall_dir"] = RR["rockwall_dir"]
+        if "landforms" in RR:
+            from .landforms import LANDFORM_NOTE, landforms_json
+            J["landforms"] = landforms_json(RR["landforms"])
+            J["landforms_note"] = LANDFORM_NOTE
     if steps >= 3:
         set_climate(g, decode.climate(R["climate"], inp["planet"]), float(inp["season_range"]))
         g["daily"] = _daily_from(R["daily"])

@@ -8,6 +8,7 @@
 #include "skyisle/island/build.hpp"
 #include "skyisle/island/climate.hpp"
 #include "skyisle/island/farmland.hpp"
+#include "skyisle/island/landforms.hpp"
 #include "skyisle/island/river.hpp"
 
 namespace skyisle::island {
@@ -300,6 +301,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     const double eps = c.get("hydro.fill_eps_m"), lake_depth = c.get("hydro.lake_min_depth_m"), lake_km2 = c.get("hydro.lake_min_km2");
     const double pit_keep = c.get("hydro.pit_keep_m"), stream_min = c.get("hydro.stream_min_km2");
     std::vector<IslandHydro> res(n_isl);
+    const LithTable lt = lith_table(c);
     parallel_for(n_isl, threads, [&](int k) {
         if (rhi[k] < 0) return;
         IslandHydro& R = res[k];
@@ -457,10 +459,18 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             for (size_t q = 0; q < n; ++q)
                 if (mk.v[q] && R.Akm.v[q] >= stream_min) R.stream.v[q] = 1;
         }
-        // 河道成形
+        // 河道成形（B2：谷壁坡按河床那格露出的岩性的坍塌角）
         const IslandRec& J = g.islands[k];
+        GridD wall;
+        if (!g.strat_top.v.empty()) {
+            wall = GridD(h, w, 0.0);
+            for (int i = 0; i < h; ++i)
+                for (int j = 0; j < w; ++j)
+                    if (mk(i, j))
+                        wall(i, j) = lt.talus_deg[lith_at(hh(i, j), g.strat_top(i + R.r0, j + R.c0), g.skel_top(i + R.r0, j + R.c0), J.strat)];
+        }
         R.ch = carve_channels(hh, R.hr, mk, R.lake, R.recv, R.Akm, R.river, R.stream, P_mm, runoff, J.rim_j, J.keel_j, res_m, year_s, c, k == 0,
-                              local_rain ? &R.Q : nullptr);
+                              local_rain ? &R.Q : nullptr, wall.v.empty() ? nullptr : &wall);
         R.cut = GridD(h, w, 0.0);
         R.h_final = GridD(h, w, NaN);
         for (size_t q = 0; q < n; ++q) {
@@ -563,12 +573,20 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         for (size_t k = 0; k < N; ++k)
             if (g.island_id.v[k] == 0) hm.push_back(g.height.v[k]);
         g.dz = inp.height_m - np_median(hm);
+        const bool st = !g.strat_top.v.empty();
         for (size_t k = 0; k < N; ++k)
             if (g.island_id.v[k] == 0) {
                 g.height.v[k] += g.dz;
                 g.filled.v[k] += g.dz;
+                if (st) {
+                    g.strat_top.v[k] += g.dz;
+                    g.skel_top.v[k] += g.dz;
+                }
             }
     }
+    // B2：按最终高程出露出的岩性（下切后的河床也算）
+    compute_lith(g);
+    const bool has_lith = !g.strat_top.v.empty();
 
     // ---------- 地表分类 ----------
     GridD hl(H, W, NaN);
@@ -584,6 +602,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     for (size_t k = 0; k < N; ++k)
         if (g.island_id.v[k] >= 0) age_arr[k] = g.islands[g.island_id.v[k]].age_j;
     const double szero = c.get("landcover.soil_slope_zero_deg"), wgain = c.get("landcover.aspect_wet_gain");
+    const double serp_soil = c.get("landcover.serp_soil_mult", 1.0), serp_bare = c.get("landcover.serp_bare_slope_deg", 90.0);
     const int near_cells = c.geti("landcover.water_near_cells");
     Mask water(H, W, 0);
     for (size_t k = 0; k < N; ++k) water.v[k] = (g.river.v[k] > 0 || g.lake.v[k]) ? 1 : 0;
@@ -610,6 +629,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             }
             soil[k] = clip(0.35 + 0.5 * age_arr[k], 0, 1) * clip(1.0 - slope.v[k] / szero, 0.0, 1.0) *
                       (0.7 + 0.3 * clip(std::log1p(g.acc_km2.v[k]) / 4.0, 0, 1));
+            if (has_lith && g.lith.v[k] == LI_SERP) soil[k] *= serp_soil;   // 蛇纹岩土贫有毒（B3 秃山）
             wet[k] = clip(g.rain.v[k] / 1500.0, 0.2, 2.0) * (1.0 + wgain * expo[k]);   // 局地雨（关掉时 = P_mm）
             near_water[k] = std::sqrt(clip(1.0 - dw.v[k] / (near_cells + 1.0), 0.0, 1.0));
         }
@@ -652,6 +672,11 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         const bool shrub = T[k] >= alpine && slope.v[k] < rock_s && !forest && wet[k] >= s_wet && soil[k] >= 0.5 * f_soil;
         if (shrub) cv = LC_SHRUB;
         if (forest) cv = LC_FOREST;
+        // 蛇纹岩秃山（B3）：草木长不好——不成林、不成灌丛，陡处裸露
+        if (has_lith && g.lith.v[k] == LI_SERP) {
+            if (cv == LC_FOREST || cv == LC_SHRUB) cv = LC_GRASS;
+            if (slope.v[k] >= serp_bare) cv = LC_ROCK;
+        }
         wetland[k] = (snb.v[k] < w_smax && wet_idx[k] >= w_imin) ? 1 : 0;
         if (wetland[k]) cv = LC_WET;
         if (g.cliff.v[k]) cv = LC_CLIFF;

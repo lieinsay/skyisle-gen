@@ -8,7 +8,8 @@ namespace skyisle::island {
 
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
                         const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double runoff, double rim,
-                        double keel, double res_m, double year_s, const Config& c, bool /*is_main*/, const GridD* Qin) {
+                        double keel, double res_m, double year_s, const Config& c, bool /*is_main*/, const GridD* Qin,
+                        const GridD* wall_deg) {
     const int H = h.H, W = h.W;
     const size_t N = h.size();
     Channels out;
@@ -75,15 +76,16 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     }
     for (size_t k = 0; k < N; ++k) bed[k] = seed.v[k] ? bl[k] : NaN;
 
-    // 河谷剖面：最近河床格的 河床 / 水深 / 漫滩半宽 / 谷坡
+    // 河谷剖面：最近河床格的 河床 / 水深 / 漫滩半宽 / 谷坡。谷壁（小流量）的坡按河床那格露出的岩性的坍塌角（B2；旧的一律 gorge_deg 32°）
     const double qg = c.get("hydro.q_gorge"), qw = c.get("hydro.q_wide");
-    const double gorge = c.get("hydro.gorge_deg"), wide_deg = c.get("hydro.wide_deg");
+    const double gorge0 = c.get("hydro.gorge_deg", 32.0), wide_deg = c.get("hydro.wide_deg");
     const double fpm = c.get("hydro.floodplain_mult"), fpmax = c.get("hydro.floodplain_max_m");
     std::vector<double> tan_side(N), fp_half(N);
     const double lq = std::log10(qw / qg);
     for (size_t k = 0; k < N; ++k) {
         const double t = clip(std::log10(std::max(Q[k], 1e-6) / qg) / lq, 0.0, 1.0);
-        const double side = center_r.v[k] ? (1 - t) * gorge + t * wide_deg : gorge;
+        const double gorge = wall_deg ? wall_deg->v[k] : gorge0;
+        const double side = center_r.v[k] ? (1 - t) * gorge + t * std::min(wide_deg, gorge) : gorge;
         tan_side[k] = std::tan(side * (PI / 180.0));
         fp_half[k] = center_r.v[k] ? std::min(fpm * width[k] / 2.0, fpmax / 2.0) : 0.0;
     }

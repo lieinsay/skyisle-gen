@@ -177,7 +177,7 @@ void build_resources(Group& g, const Config& c) {
     auto kmx = [&](int j) { return pyround(x0 + (j + 0.5) * rkm, 3); };
     auto kmy = [&](int i) { return pyround(y0 - (i + 0.5) * rkm, 3); };
     const std::string P = "resources.";
-    auto cf = [&](const std::string& k) { return c.get(P + k); };
+    auto cf = [&](const std::string& k, double d = NaN) { return std::isnan(d) ? c.get(P + k) : c.get(P + k, d); };
 
     Mask land(H, W, 0);
     for (size_t k = 0; k < N; ++k) land.v[k] = g.island_id.v[k] >= 0 ? 1 : 0;
@@ -289,11 +289,14 @@ void build_resources(Group& g, const Config& c) {
         for (int i = 0; i < H; ++i)
             for (int j = 0; j < W; ++j) noise_fs[static_cast<size_t>(i) * W + j] = fn.sample(Xk[j], Yk[i]);
     }
-    // 岩层（P3，没有火山）：岛是从海底挣脱出来的拱，顶上带着海底的沉积层；越往岛的高处、岛越老，剥蚀得越深、露出的层越深。
-    // 剥蚀指数 e = 高出岸缘到峰高的比例 + 岛龄偏移：e < layer_sediment_max 是沉积盖层（海相石灰岩、岩盐、溶洞），≥ layer_serpentinite_min 是蛇纹岩，中间是辉长岩
-    const double sed_max = cf("layer_sediment_max"), serp_min = cf("layer_serpentinite_min");
-    const double shift_young = cf("exhume_shift_young"), shift_old = cf("exhume_shift_old");
+    // 岩层（P3 没有火山；B2 起读地形的层面）：岛是从海底挣脱出来的拱，顶上带着海底的沉积层——露出哪层按 g.lith（石灰岩 / 泥灰岩 = 沉积盖层：
+    // 海相石灰岩、岩盐、溶洞只在这里；辉长岩；蛇纹岩：铬、镍；浮石骨架）。没有层面的旧配置照旧按剥蚀指数
+    // （高出岸缘到峰高的比例 + 岛龄偏移：< layer_sediment_max 沉积盖层，≥ layer_serpentinite_min 蛇纹岩，中间辉长岩）
+    const bool has_lith = !g.lith.v.empty() && !g.strat_top.v.empty();
+    const double sed_max = cf("layer_sediment_max", 0.3), serp_min = cf("layer_serpentinite_min", 0.42);
+    const double shift_young = cf("exhume_shift_young", -0.1), shift_old = cf("exhume_shift_old", 0.1);
     auto age_shift = [&](AgeKind a) { return a == YOUNG ? shift_young : (a == OLD ? shift_old : 0.0); };
+    auto sediment = [&](size_t q, AgeKind a) { return has_lith ? lith_sediment(g.lith.v[q]) : peak_rel[q] + age_shift(a) < sed_max; };
 
     auto add_deposit = [&](int kind, const std::vector<int32_t>& cells, int i, int j, const std::string& sub, double q,
                            const std::string& note, double note_arg) -> Deposit& {
@@ -475,8 +478,10 @@ void build_resources(Group& g, const Config& c) {
         R.works.push_back(std::move(w));
     };
 
-    // 散的赋存区（石料 / 黏土 / 砂砾 / 砂金）：品位 ≥ 阈值的格，隔 occ_merge_cells 格以内的碎块算一处，不跨岛；小于 occ_min_km2 的不成区
-    auto field_occurrences = [&](int fk, const std::function<std::string(const std::vector<int32_t>&)>& sub_fn, const std::string& note) {
+    // 散的赋存区（石料 / 黏土 / 砂砾 / 砂金）：品位 ≥ 阈值的格，隔 occ_merge_cells 格以内的碎块算一处，不跨岛；小于 occ_min_km2 的不成区。
+    // cls 非空时同一处里按格的类再分开（石料按岩性类：沉积盖层 / 辉长岩 / 蛇纹岩各成各的区，B2）
+    auto field_occurrences = [&](int fk, const std::function<std::string(const std::vector<int32_t>&)>& sub_fn, const std::string& note,
+                                 const std::vector<uint8_t>* cls = nullptr, int n_cls = 1) {
         Mask m(H, W, 0);
         bool any = false;
         for (size_t k = 0; k < N; ++k) {
@@ -489,10 +494,10 @@ void build_resources(Group& g, const Config& c) {
         GridI lab;
         const int nl = label_by_island(md, g.island_id, 8, lab);
         const int n_min = std::max(min_cells, static_cast<int>(std::ceil(cf("occ_min_km2") / cell_km2 - 1e-9)));
-        std::vector<std::vector<int32_t>> groups(static_cast<size_t>(nl) + 1);
+        std::vector<std::vector<int32_t>> groups((static_cast<size_t>(nl) + 1) * n_cls);
         for (size_t k = 0; k < N; ++k)
-            if (m.v[k] && lab.v[k] > 0) groups[lab.v[k]].push_back(static_cast<int32_t>(k));
-        for (int L = 1; L <= nl; ++L) {
+            if (m.v[k] && lab.v[k] > 0) groups[static_cast<size_t>(lab.v[k]) * n_cls + (cls ? (*cls)[k] : 0)].push_back(static_cast<int32_t>(k));
+        for (size_t L = n_cls; L < groups.size(); ++L) {
             const auto& cells = groups[L];
             if (cells.empty() || static_cast<int>(cells.size()) < n_min) continue;
             std::vector<double> gv(cells.size());
@@ -506,11 +511,13 @@ void build_resources(Group& g, const Config& c) {
     {
         const double gcut = cf("gorge_cut_m"), gsl = cf("gorge_slope_deg");
         const double s_lo = cf("stone_slope_lo_deg"), s_hi = cf("stone_slope_hi_deg"), sexp = cf("stone_exposed_grade");
-        const double smax = cf("stone_slope_max_deg"), sfm = cf("stone_forest_mult");
+        const double smax = cf("stone_slope_max_deg"), sfm = cf("stone_forest_mult"), marl_st = cf("stone_marl_mult", 1.0);
         for (size_t k = 0; k < N; ++k) {
             exposed[k] = (cover.v[k] == LC_ROCK || cover.v[k] == LC_ALPINE || (cut[k] >= gcut && slope[k] >= gsl)) ? 1 : 0;
             const double g_st = std::max(clip((slope[k] - s_lo) / std::max(1e-6, s_hi - s_lo), 0.0, 1.0), exposed[k] ? sexp : 0.0);
             F[FK_STONE][k] = (rock_site.v[k] && slope[k] <= smax) ? g_st * (0.75 + 0.25 * patchy[k]) * (cover.v[k] == LC_FOREST ? sfm : 1.0) : 0.0;
+            if (has_lith && g.lith.v[k] == LI_MARL) F[FK_STONE][k] *= marl_st;   // 泥灰岩软，不成好石料（B2）
+            if (has_lith && g.lith.v[k] == LI_PUMICE) F[FK_STONE][k] = 0.0;       // 浮石骨架露头是「浮石露头」那一类，不是石料
         }
         Mask lake2 = binary_dilate(lake, 2);
         Mask wet(H, W, 0);
@@ -766,6 +773,14 @@ void build_resources(Group& g, const Config& c) {
                             ks.push_back(m);
                             p.push_back(w_ore[m]);
                         }
+                    // B2：铬、镍只在蛇纹岩里——带里蛇纹岩不到 ore_serp_min 的不出，过半的加倍
+                    if (has_lith) {
+                        int64_t ns = 0;
+                        for (int32_t q : belt) ns += g.lith.v[q] == LI_SERP ? 1 : 0;
+                        const double fs = static_cast<double>(ns) / static_cast<double>(belt.size());
+                        for (size_t t = 0; t < ks.size(); ++t)
+                            if (ks[t] == M_CHROMIUM || ks[t] == M_NICKEL) p[t] *= fs < cf("ore_serp_min", 0.2) ? 0.0 : (fs >= 0.5 ? 3.0 : 1.0);
+                    }
                     const double ps = np_sum(p.data(), p.size());
                     for (double& x : p) x /= ps;
                     const int sub = ks[static_cast<size_t>(rng.choice_p(p))];
@@ -808,10 +823,12 @@ void build_resources(Group& g, const Config& c) {
         int64_t fs_n = 0;
         {
             const double f_exp = clip(R.fs_rate * (age == YOUNG ? 1.2 : (age == MID ? 1.0 : 0.6)), 0.02, 0.95);
-            const double gcut = cf("gorge_cut_m"), gsl = cf("gorge_slope_deg");
+            const double gcut = cf("gorge_cut_m"), gsl = cf("gorge_slope_deg"), band = cf("floatstone_skel_band_m", 1e9);
+            // B2：峡谷壁的露头要切到骨架顶面附近（岩层几百米厚，只有贴着岸缘的深谷切得到）；崖面（岸崖）一律露
+            auto near_skel = [&](size_t q) { return !has_lith || g.height.v[q] - g.skel_top.v[q] <= band; };
             for (int pass = 0; pass < 2; ++pass) {
                 auto fs_cand = [&](size_t q) {
-                    return pass == 0 ? (in_m(q) && g.cliff.v[q] && !water.v[q]) : (in_mk(q) && cut[q] >= gcut && slope[q] >= gsl);
+                    return pass == 0 ? (in_m(q) && g.cliff.v[q] && !water.v[q]) : (in_mk(q) && cut[q] >= gcut && slope[q] >= gsl && near_skel(q));
                 };
                 std::vector<double> vals;
                 for (int i = bx.r0; i < bx.r1; ++i)
@@ -931,7 +948,7 @@ void build_resources(Group& g, const Config& c) {
             if (age == OLD) {
                 const int64_t n = lam("karst", 1.0);
                 place(RK_CAVE, bx, [&](size_t q) {
-                          return in_mk(q) && slope[q] <= 15 && (acc[q] >= 0.3 || zone.v[q] == 2 || zone.v[q] == 3) && peak_rel[q] + shift_old < sed_max;
+                          return in_mk(q) && slope[q] <= 15 && (acc[q] >= 0.3 || zone.v[q] == 2 || zone.v[q] == 3) && sediment(q, OLD);
                       },
                       patchy_score, n, 0, cave_sep, [&](int, int, Rng& r) {
                           static const char* K[3] = {"karst_cave", "sinkhole", "underground_river"};
@@ -993,8 +1010,7 @@ void build_resources(Group& g, const Config& c) {
         // 盐丘 = 圆核 × 斑块噪声，个数按本岛沉积盖层的面积；有溪涧 / 河流过的，挨着水的格里品位最高的一格冒盐泉；
         // 盐井开在盐泉上（盐泉不在田、林上时），否则开在品位最高的非田非林格（都没有就不开）
         if (big) {
-            const double shift = age_shift(age);
-            auto cand = [&](size_t q) { return in_mk(q) && peak_rel[q] + shift < sed_max; };
+            auto cand = [&](size_t q) { return in_mk(q) && sediment(q, age); };
             int64_t n_sed = 0;
             std::vector<double> score(static_cast<size_t>(bx.r1 - bx.r0) * bw, 0.0);
             for (int i = bx.r0; i < bx.r1; ++i)
@@ -1119,14 +1135,35 @@ void build_resources(Group& g, const Config& c) {
         const double gain = cf("placer_gain");
         for (size_t q = 0; q < N; ++q) F[FK_PLACER][q] = F[FK_GRAVEL][q] * clip(gain * mean_up[q], 0.0, 1.0);
     }
-    // 石料的岩性按剥蚀指数（区内各格「高出岸缘到峰高的比例」的均值 + 岛龄偏移）：沉积盖层 = 海相石灰岩，最深 = 蛇纹岩，中间 = 辉长岩
+    // 石料的岩性：B2 起按格的岩性类分区（石灰岩与泥灰岩都算沉积盖层 = 海相石灰岩；浮石格的石料品位是 0，不进任何区）。
+    // 区里各格同一类，下面的「最多的一层」就是它。
+    // 没有层面时按剥蚀指数（区内各格「高出岸缘到峰高的比例」的均值 + 岛龄偏移）
+    std::vector<uint8_t> stone_cls;
+    if (has_lith) {
+        stone_cls.resize(N);
+        for (size_t k = 0; k < N; ++k) {
+            const uint8_t li = g.lith.v[k];
+            stone_cls[k] = lith_sediment(li) ? 0 : (li == LI_SERP ? 2 : 1);
+        }
+    }
     field_occurrences(FK_STONE, [&](const std::vector<int32_t>& cells) {
+        if (has_lith) {
+            int64_t n_sed = 0, n_gab = 0, n_serp = 0;
+            for (int32_t q : cells) {
+                const uint8_t li = g.lith.v[q];
+                n_sed += lith_sediment(li) ? 1 : 0;
+                n_gab += li == LI_GABBRO ? 1 : 0;
+                n_serp += li == LI_SERP ? 1 : 0;
+            }
+            if (n_sed >= n_gab && n_sed >= n_serp) return std::string("marine_limestone");
+            return std::string(n_serp > n_gab ? "serpentinite" : "gabbro");
+        }
         const AgeKind a = g.islands[g.island_id.v[cells[0]]].kind;
         std::vector<double> pr(cells.size());
         for (size_t q = 0; q < cells.size(); ++q) pr[q] = peak_rel[cells[q]];
         const double e = np_mean(pr) + age_shift(a);
         return std::string(e < sed_max ? "marine_limestone" : (e >= serp_min ? "serpentinite" : "gabbro"));
-    }, "");
+    }, "", has_lith ? &stone_cls : nullptr, has_lith ? 3 : 1);
     field_occurrences(FK_CLAY, [&](const std::vector<int32_t>& cells) {
         int64_t s = 0;
         for (int32_t q : cells) s += strong[q];

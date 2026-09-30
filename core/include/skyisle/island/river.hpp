@@ -19,7 +19,8 @@ struct Channels {
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
                         const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double runoff, double rim,
                         double keel, double res_m, double year_s, const Config& c, bool is_main,
-                        const GridD* Qin = nullptr);   // Qin：局地雨算出的年均流量（m³/s，P4）；空 = 汇流 × P_mm 的旧式
+                        const GridD* Qin = nullptr,    // Qin：局地雨算出的年均流量（m³/s，P4）；空 = 汇流 × P_mm 的旧式
+                        const GridD* wall_deg = nullptr);   // 谷壁坡（°，B2：河床那格露出的岩性的坍塌角）；空 = [island.hydro] gorge_deg
 
 std::vector<std::vector<LinePt>> trace_lines(const Mask& seed, const Mask& mk, const std::vector<int64_t>& recv, const GridD& width,
                                              const Grid<uint8_t>& lvl, const GridD& acc);

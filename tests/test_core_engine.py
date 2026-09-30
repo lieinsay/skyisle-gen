@@ -318,7 +318,7 @@ def _build(ctx, node, res_m=300.0, threads=4, sets=()):
 
 
 GRIDS = ("island_id", "cliff", "height", "river", "stream", "lake", "landcover", "arable", "cultivable", "floodplain", "flowacc_km2",
-         "river_width_m", "river_depth_m", "cut_m", "slope_deg", "filled", "recv_i", "recv_j", "route_h")
+         "river_width_m", "river_depth_m", "cut_m", "slope_deg", "filled", "recv_i", "recv_j", "route_h", "lith", "coast_dist_m")
 
 
 def test_small_world_constraints(small_ctx):
@@ -372,6 +372,19 @@ def test_cpp_deterministic_and_thread_independent(small_ctx):
     for k in GRIDS:
         assert np.array_equal(g1[k], g4[k], equal_nan=True) and np.array_equal(g4[k], g4b[k], equal_nan=True), k
     assert g1["json"] == g4["json"] and g1["river_lines"] == g4["river_lines"]
+
+
+def test_two_calls_match_generate(small_ctx):
+    """地形与水系分两次调（粗版 lod、浮高统计走这条）与整群 generate 一次调：地形、水系、岩性逐位相同、主岛岸缘相同
+    （B2 的层面与每岛的层序要原样交回 build_hydro——漏了，谷坡角退回常数，下切、dz、粗版天气的岸缘都差一点）。"""
+    from skyisle_gen import island as isl
+    node = _nodes(small_ctx, 1)[0]
+    g2 = _build(small_ctx, node)
+    assert "strat_top" in g2
+    g1 = isl.generate(small_ctx, node, write=False, res_m=300.0, steps=2, log=lambda *a: None)
+    for k in ("height", "lith", "river", "stream", "flowacc_km2", "slope_deg", "river_width_m", "coast_dist_m"):
+        assert np.array_equal(g1[k], g2[k], equal_nan=True), k
+    assert g1["json"]["islands"][0]["rim_m"] == g2["json"]["islands"][0]["rim_m"]
 
 
 def test_cpp_generate_passes_checks(small_ctx):

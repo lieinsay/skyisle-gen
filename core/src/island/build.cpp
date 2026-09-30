@@ -6,6 +6,8 @@
 #include <cmath>
 #include <string>
 
+#include "skyisle/island/coast.hpp"
+#include "skyisle/island/landforms.hpp"
 #include "skyisle/island/layout.hpp"
 #include "skyisle/island/terrain.hpp"
 #include "skyisle/island/territory.hpp"
@@ -228,21 +230,23 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         Rng rc = part_rng(inp, "cores:" + std::to_string(k));
         specs[k] = multicore_spec(rc, sizes[k], ages[k], kernel, btype, c);
     }
+    // B2 岩层：每座岛一条随机流 island:<节点>:strat:<岛号>（层厚、互层）；配置里没有 strat 段 = 不分层（旧式）
+    const bool strat_on = c.get("strat.enabled", 0.0) != 0.0;
     parallel_for(n, threads, [&](int k) {
         Rng rt = part_rng(inp, "terrain:" + std::to_string(k));
+        SculptEnv env(part_rng(inp, "strat:" + std::to_string(k)));
+        env.keel = keels[k];
+        env.strat_on = strat_on;
         sc[k] = sculpt_island(rt, ss.shapes[k], ages[k], sizes[k], res_km, surfs[k], reliefs[k], keels[k] + cmin, k == 0, c,
-                              specs[k].on ? &specs[k] : nullptr);
+                              specs[k].on ? &specs[k] : nullptr, &env);
     });
     g.rims.assign(n, 0.0);
     g.islands.resize(n);
     g.masks_pos.resize(n);
     const double rim_floor = float_on ? c.get("float.rim_floor_m") : 0.0, down_max = float_on ? c.get("float.down_max_m") : 1.0;
+    // 浮高：整座平移（高程、岸缘、峰、台面、岛底、层面一起），在地貌、水系、地表、资源、气温、聚落之前
+    std::vector<double> fls(n, 0.0);
     for (int k = 0; k < n; ++k) {
-        const Shape& s = ss.shapes[k];
-        const int m = s.mask.H;
-        const int c0 = static_cast<int>(std::nearbyint((gcx[k] - (m - 1) / 2.0 * res_km - x0) / res_km));
-        const int r0 = static_cast<int>(std::nearbyint((y0 - (gcy[k] + (m - 1) / 2.0 * res_km)) / res_km));
-        // 浮高：整座平移（高程、岸缘、峰、台面、岛底一起），在水系、地表、资源、气温、聚落之前
         double fl = 0.0;
         if (float_on && k > 0) {
             fl = floats[k];
@@ -250,9 +254,28 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
             if (fl < 0.0) fl *= std::min(1.0, std::max(0.0, (sc[k].rim - rim_floor) / down_max));
             fl = std::max(fl, rim_floor - sc[k].rim);              // 岸缘 + δ ≥ rim_floor_m（兜底）
             for (double& v : sc[k].h.v) v += fl;                    // 掩膜外是 NaN，加了还是 NaN
+            for (double& v : sc[k].top.v) v += fl;
+            for (double& v : sc[k].skel.v) v += fl;
             sc[k].rim += fl;
             sc[k].peak += fl;
         }
+        fls[k] = fl;
+    }
+    // B3 贴图之前的地貌（按最终高程：峰林、冰斗、临空断山）：每座岛一条随机流 island:<节点>:landform:<岛号>
+    {
+        const LandformEnv le = landform_env(inp, pv, c);
+        parallel_for(n, threads, [&](int k) {
+            Rng rl = part_rng(inp, "landform:" + std::to_string(k));
+            landform_pass(rl, le, c, sizes[k], res_km, ss.shapes[k], sc[k]);
+        });
+    }
+    GridD top_g(H, W, NaN), skel_g(H, W, NaN), phi_g(H, W, NaN);
+    for (int k = 0; k < n; ++k) {
+        const Shape& s = ss.shapes[k];
+        const int m = s.mask.H;
+        const int c0 = static_cast<int>(std::nearbyint((gcx[k] - (m - 1) / 2.0 * res_km - x0) / res_km));
+        const int r0 = static_cast<int>(std::nearbyint((y0 - (gcy[k] + (m - 1) / 2.0 * res_km)) / res_km));
+        const double fl = fls[k];
         g.rims[k] = sc[k].rim;
         MaskPos mp;
         mp.mask = Mask(m, m, 0);
@@ -268,6 +291,11 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
                 if (!std::isnan(height(gi, gj))) continue;
                 height(gi, gj) = sc[k].h(i, j);
                 island_id(gi, gj) = static_cast<int16_t>(k);
+                phi_g(gi, gj) = s.phi(i, j);
+                if (!sc[k].top.v.empty()) {
+                    top_g(gi, gj) = sc[k].top(i, j);
+                    skel_g(gi, gj) = sc[k].skel(i, j);
+                }
                 mp.mask(i, j) = 1;
                 ++put_n;
             }
@@ -287,7 +315,14 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         rec.fl = fl;
         rec.age = ages[k];
         rec.kind = sc[k].kind;
+        rec.strat = sc[k].strat;
         rec.cores = sc[k].cores;
+        for (LandformRec& L : sc[k].lf) {
+            L.island = k;
+            L.r += r0;
+            L.c += c0;
+            g.landforms.push_back(std::move(L));
+        }
         rec.gcx = gcx[k];
         rec.gcy = gcy[k];
         rec.r0 = r0;
@@ -297,6 +332,48 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         rec.keel_j = pyround(rec.keel, 1);
         rec.age_j = pyround(rec.age, 3);
     }
+    // 岸线场的虚空格：各岛局部场的最大（都是负的；只有一格宽的缝两边都是陆地时也分得开）
+    for (int k = 0; k < n; ++k) {
+        const Shape& s = ss.shapes[k];
+        const int m = s.mask.H;
+        const int r0 = g.masks_pos[k].r0, c0 = g.masks_pos[k].c0;
+        for (int i = 0; i < m; ++i) {
+            const int gi = r0 + i;
+            if (gi < 0 || gi >= H) continue;
+            for (int j = 0; j < m; ++j) {
+                const int gj = c0 + j;
+                if (gj < 0 || gj >= W || island_id(gi, gj) >= 0) continue;
+                const double v = std::min(s.phi(i, j), -1e-6);
+                if (std::isnan(phi_g(gi, gj)) || v > phi_g(gi, gj)) phi_g(gi, gj) = v;
+            }
+        }
+    }
+    // B3 天上的山（第二节第 8 条）：浮到主岛之上 sky_float_m 以上、峰高过主岛的峰的岛——只加标签
+    if (c.get("landform.enabled", 0.0) != 0.0 && float_on)
+        for (int k = 1; k < n; ++k) {
+            if (fls[k] < c.get("landform.sky_float_m")) continue;
+            const Shape& s = ss.shapes[k];
+            const int m = s.mask.H;
+            double best = -INF;
+            int bi = -1, bj = -1;
+            for (int i = 0; i < m; ++i)
+                for (int j = 0; j < m; ++j)
+                    if (g.masks_pos[k].mask(i, j) && sc[k].h(i, j) > best) {
+                        best = sc[k].h(i, j);
+                        bi = i;
+                        bj = j;
+                    }
+            if (bi < 0 || best <= sc[0].peak) continue;   // 峰要高过主岛的峰：在主岛上抬头看得见的山
+            LandformRec L;
+            L.kind = "sky_mountain";
+            L.island = k;
+            L.r = g.masks_pos[k].r0 + bi + 0.5;
+            L.c = g.masks_pos[k].c0 + bj + 0.5;
+            L.attr.set("float_m", pyround(fls[k], 0));
+            L.attr.set("peak_m", pyround(best, 0));
+            L.attr.set("above_main_peak_m", pyround(best - sc[0].peak, 0));
+            g.landforms.push_back(std::move(L));
+        }
     // 裁到陆地外框 + 边距
     int rlo_l = H, rhi_l = -1, clo_l = W, chi_l = -1;
     for (int i = 0; i < H; ++i)
@@ -314,11 +391,27 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
     g.W = c_hi - c_lo;
     g.height = GridD(g.H, g.W);
     g.island_id = Grid<int16_t>(g.H, g.W);
+    g.strat_top = GridD(g.H, g.W, NaN);
+    g.skel_top = GridD(g.H, g.W, NaN);
+    GridD phi_c(g.H, g.W, -1.0);
     for (int i = 0; i < g.H; ++i)
         for (int j = 0; j < g.W; ++j) {
             g.height(i, j) = height(i + r_lo, j + c_lo);
             g.island_id(i, j) = island_id(i + r_lo, j + c_lo);
+            g.strat_top(i, j) = top_g(i + r_lo, j + c_lo);
+            g.skel_top(i, j) = skel_g(i + r_lo, j + c_lo);
+            const double p = phi_g(i + r_lo, j + c_lo);
+            if (!std::isnan(p)) phi_c(i, j) = p;
         }
+    if (!strat_on) {
+        g.strat_top = GridD();
+        g.skel_top = GridD();
+    }
+    for (LandformRec& L : g.landforms) {
+        L.r -= r_lo;
+        L.c -= c_lo;
+    }
+    g.coast_dist = coast_distance(phi_c, res_km * 1000.0);
     x0 += c_lo * res_km;
     y0 -= r_lo * res_km;
     g.x0 = x0;

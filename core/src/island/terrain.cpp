@@ -87,6 +87,12 @@ Shape island_shape(Rng& rng, double area_km2, double res_km, double elong, doubl
     const double den = std::max(1e-9, tmax - tmin);
     for (size_t k = 0; k < f.size(); ++k)
         if (mask.v[k]) s.inside.v[k] = clip((f.v[k] - tmin) / den, 0.0, 1.0);
+    // B4：岸线的连续场（零等值线 = 岸线）。与掩膜同号：没进最大连通块的小块、只留一格的礁都按掩膜改号
+    s.phi = GridD(n, n);
+    for (size_t k = 0; k < f.size(); ++k) {
+        const double v = f.v[k] - best_tau;
+        s.phi.v[k] = mask.v[k] ? std::max(v, 1e-6) : std::min(v, -1e-6);
+    }
     s.mask = std::move(mask);
     return s;
 }
@@ -204,6 +210,7 @@ void multicore_form(CoreSpec& sp, const Shape& s, const std::vector<int32_t>& ce
     L.sy = sy;
     L.strength = sp.strength;
     L.member = Grid<int8_t>(n, n, -1);
+    L.seam = GridD(n, n, NaN);
     std::vector<double> D(nc);
     for (int32_t q : cells) {
         const double X = s.X(0, q % n), Y = s.Y(q / n, 0);
@@ -225,6 +232,7 @@ void multicore_form(CoreSpec& sp, const Shape& s, const std::vector<int32_t>& ce
                 d2 = D[k];
             }
         L.member.v[q] = static_cast<int8_t>(k1);
+        L.seam.v[q] = 0.5 * (d2 - d1);
         const double delta = (d2 - d1) / R;
         const double ridged = 1.0 - std::fabs(fn_ridge.sample(X, Y));
         const double t = clip(delta / blend, 0.0, 1.0);
@@ -324,8 +332,10 @@ GridD base_form(Rng& rng, const Shape& s, double age, double area_km2, double re
 }
 
 // ---------------------------------------------------------------- 侵蚀
+// B1：原生分辨率上做（erosion_max_cells 2048），每轮全岛填洼（旧的 fill_iters 40 格在 100 m 格上只推到岸内 4 km，沟切不进岛心）；
+// B2：给了岩层时每轮按露出的岩性取可蚀性（乘 carve_k）、坍塌角（替 talus_deg）、坡面扩散（乘 diffusion_k）
 GridD erode(Rng* rng, GridD h, const Mask& mask, double res_m, int rounds, double base_level, const Config& c,
-            const GridD* uplift, const GridD* jitter) {
+            const GridD* uplift, const GridD* jitter, const StratCtx* st) {
     const int H = h.H, W = h.W;
     const size_t N = h.size();
     {
@@ -338,16 +348,20 @@ GridD erode(Rng* rng, GridD h, const Mask& mask, double res_m, int rounds, doubl
     const double kd = c.get("terrain.diffusion_k");
     const double cell_km2 = c_pow(res_m / 1000.0, 2);
     const double a0 = c.get("terrain.carve_a0_km2"), pit_keep = c.get("terrain.pit_keep_m"), route_p = c.get("terrain.carve_route_p");
-    const int fill_iters = c.geti("terrain.fill_iters");
+    const int fill_iters = 4 * (H + W);   // 填到不再变（fill_iter 没有更新就停）
     GridD zero(H, W, 0.0);
     const GridD& jit = jitter ? *jitter : zero;
     GridD hj(H, W);
     std::vector<int64_t> recv(N);
     std::vector<double> F(N);
+    std::vector<uint8_t> li(N, LI_GABBRO);
     for (int rd = 0; rd < rounds; ++rd) {
         if (uplift)
             for (size_t k = 0; k < N; ++k)
                 if (mask.v[k]) h.v[k] = h.v[k] + uplift->v[k];
+        if (st)
+            for (size_t k = 0; k < N; ++k)
+                if (mask.v[k]) li[k] = lith_at(h.v[k], st->top->v[k], st->skel->v[k], st->rec);
         for (size_t k = 0; k < N; ++k) hj.v[k] = h.v[k] + jit.v[k];
         const GridD hf = fill_iter(hj, mask, fill_iters);
         for (size_t k = 0; k < N; ++k)
@@ -361,7 +375,8 @@ GridD erode(Rng* rng, GridD h, const Mask& mask, double res_m, int rounds, doubl
                 const int ri = fd.ri[k], rj = fd.rj[k];
                 const bool diag = ri >= 0 && ri != i && rj != j;
                 const double dist_km = (diag ? SQRT2 : 1.0) * res_m / 1000.0;
-                F[k] = Ak >= a0 ? K * np_pow(std::max(Ak, cell_km2), m_exp) / dist_km : 0.0;
+                const double kk = st ? K * st->tab.k[li[k]] : K;
+                F[k] = Ak >= a0 ? kk * np_pow(std::max(Ak, cell_km2), m_exp) / dist_km : 0.0;
                 recv[k] = ri >= 0 ? static_cast<int64_t>(ri) * W + rj : ((mask.v[k] && fd.to_void[k]) ? -2 : -1);
             }
         // 隐式下切：先下游后上游（每格只依赖其下游的终值，与按路由面升序同）
@@ -375,7 +390,7 @@ GridD erode(Rng* rng, GridD h, const Mask& mask, double res_m, int rounds, doubl
             const double hk = h.v[k];
             if (hk > hr) h.v[k] = (hk + F[k] * hr) / (1.0 + F[k]);
         }
-        // 热力坍塌：坡度超过休止角，把超出的部分推给邻居（hh 取坍塌前）
+        // 热力坍塌：坡度超过休止角（有岩层时按高的那格露出的岩性），把超出的部分推给邻居（hh 取坍塌前）
         const GridD hh = h;
         GridD mv(H, W, 0.0);
         for (int n8 = 0; n8 < 8; ++n8) {
@@ -387,7 +402,8 @@ GridD erode(Rng* rng, GridD h, const Mask& mask, double res_m, int rounds, doubl
                     const int a = i - di, b = j - dj;
                     double m = 0.0;
                     if (mask.v[k] && a >= 0 && b >= 0 && a < H && b < W && mask(a, b)) {
-                        const double ex = (hh.v[k] - hh(a, b)) - talus * dist;
+                        const double tt = st ? st->tab.talus_tan[li[k]] : talus;
+                        const double ex = (hh.v[k] - hh(a, b)) - tt * dist;
                         m = (ex > 0.0 ? ex : 0.0) * 0.25;
                     }
                     mv.v[k] = m;
@@ -402,7 +418,7 @@ GridD erode(Rng* rng, GridD h, const Mask& mask, double res_m, int rounds, doubl
         }
         // 坡面扩散
         const GridD lap = laplacian(h, mask);
-        for (size_t k = 0; k < N; ++k) h.v[k] = h.v[k] + kd * lap.v[k];
+        for (size_t k = 0; k < N; ++k) h.v[k] = h.v[k] + kd * (st ? st->tab.diff[li[k]] : 1.0) * lap.v[k];
         for (size_t k = 0; k < N; ++k)
             if (mask.v[k]) h.v[k] = std::max(h.v[k], base_level);
     }
@@ -423,8 +439,26 @@ void fit_rim(double surface, double relief, double median_frac, double rim_min, 
     }
 }
 
+namespace {
+
+// 罗盘方位（0 = 北、顺时针，度）：局部栅格 x 向东、y 向北
+double bearing_deg(double dx, double dy) {
+    double b = std::atan2(dx, dy) * 180.0 / PI;
+    return b < 0 ? b + 360.0 : b;
+}
+
+bool edge_cell(const Mask& m, int i, int j) {
+    for (int d = 0; d < 4; ++d) {
+        const int a = i + N4[d][0], b = j + N4[d][1];
+        if (a < 0 || b < 0 || a >= m.H || b >= m.W || !m(a, b)) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
 Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, double res_km, double surface, double relief,
-                     double rim_min, bool is_main, const Config& c, CoreSpec* cores) {
+                     double rim_min, bool is_main, const Config& c, CoreSpec* cores, SculptEnv* env) {
     Sculpt out;
     const int n = s.mask.H;
     const size_t N = s.mask.size();
@@ -455,6 +489,102 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
     fit_rim(surface, relief, m_t, rim_min, rim, R);
     GridD h(n, n);
     for (size_t k = 0; k < N; ++k) h.v[k] = rim + R * shape.v[k];
+    const double Reff = std::sqrt(area_km2 / PI);
+
+    // B2 岩层：层面按基形的平滑穹 + 冠顶已剥去的一截（strat.cpp）
+    const bool strat = env && env->strat_on;
+    StratField sf;
+    if (strat) sf = build_strat(env->rng, s, shape, out.kind, age, rim, R, env->keel, res_km, area_km2, c);
+    // B3 平行岭谷（spec 13 第二节第 8 条）：多核岛的接缝带里层面沿缝的走向起伏（褶皱，轴与缝平行），侵蚀后硬层成一道道窄脊；
+    // 年轻的褶皱背斜本身就是岭（川东），地面也跟着抬 fold_topo_m
+    LandformRec fold_rec;
+    bool has_fold = false;
+    if (strat && lay.n >= 2 && c.get("landform.fold_amp_m", 0.0) > 0.0) {
+        const double famp = c.get("landform.fold_amp_m"), fwave = c.get("landform.fold_wave_km"), ftopo = c.get("landform.fold_topo_m", 0.0);
+        const double fwid = c.get("landform.fold_width_rel") * Reff;
+        const int P = lay.primary, j0 = P == 0 ? 1 : 0;
+        const double ax = lay.sx[j0] - lay.sx[P], ay = lay.sy[j0] - lay.sy[P];
+        const double al = std::max(1e-9, np_hypot(ax, ay));
+        const double tx = -ay / al, ty = ax / al;   // 缝的走向（垂直于两核的连线）
+        double si = 0, sj = 0, pmin = INF, pmax = -INF;
+        int64_t cnt = 0;
+        for (size_t q = 0; q < N; ++q) {
+            if (!s.mask.v[q] || std::isnan(lay.seam.v[q])) continue;
+            const double d = lay.seam.v[q];
+            const double e = std::exp(-(d / fwid) * (d / fwid));
+            const double cw = std::cos(2.0 * PI * d / fwave) * e;
+            sf.top.v[q] += famp * cw;
+            h.v[q] += ftopo * cw;
+            if (e >= 0.5) {
+                const int i = static_cast<int>(q / n), j = static_cast<int>(q % n);
+                si += i;
+                sj += j;
+                ++cnt;
+                const double p = s.X(i, j) * tx + s.Y(i, j) * ty;
+                pmin = std::min(pmin, p);
+                pmax = std::max(pmax, p);
+            }
+        }
+        if (cnt > 0) {
+            has_fold = true;
+            fold_rec.kind = "fold_ridges";
+            fold_rec.r = si / cnt + 0.5;
+            fold_rec.c = sj / cnt + 0.5;
+            Json& a = fold_rec.attr;
+            a.set("area_km2", pyround(static_cast<double>(cnt) * res_km * res_km, 2));
+            a.set("strike_deg", pyround(std::fmod(bearing_deg(tx, ty), 180.0), 1));
+            a.set("length_km", pyround(pmax - pmin, 2));
+            a.set("wave_km", pyround(fwave, 2));
+            a.set("n_ridges", static_cast<int64_t>(std::nearbyint(2.0 * std::sqrt(std::log(2.0)) * fwid / fwave)));
+            a.set("fold_amp_m", pyround(famp, 0));
+        }
+    }
+    // B3 掀斜断块山（第二节第 9 条）：多核岛里有一个核明显比别的老（强度 ≤ tilt_old_strength）、浮力衰减，整岛歪向它——
+    // 老核那边低、对侧翘起，翘起的岸缘就是断崖（岛缘的崖一路落到岛底）。层面跟着整块歪
+    GridD ramp;
+    double tilt_dh = 0, tilt_span = 0, tilt_bx = 0, tilt_by = 0;
+    if (lay.n >= 2) {
+        const double told = c.get("landform.tilt_old_strength", 0.0);
+        int ko = -1;
+        double smin = INF;
+        for (int k = 0; k < lay.n; ++k)
+            if (k != lay.primary && lay.strength[k] <= told && lay.strength[k] < smin) {
+                smin = lay.strength[k];
+                ko = k;
+            }
+        if (ko >= 0) {
+            const int P = lay.primary;
+            double ex = lay.sx[P] - lay.sx[ko], ey = lay.sy[P] - lay.sy[ko];
+            const double el = std::max(1e-9, np_hypot(ex, ey));
+            ex /= el;
+            ey /= el;
+            double pmin = INF, pmax = -INF;
+            ramp = GridD(n, n, 0.0);
+            for (size_t q = 0; q < N; ++q)
+                if (s.mask.v[q]) {
+                    const int i = static_cast<int>(q / n), j = static_cast<int>(q % n);
+                    ramp.v[q] = (s.X(i, j) - lay.sx[ko]) * ex + (s.Y(i, j) - lay.sy[ko]) * ey;
+                    pmin = std::min(pmin, ramp.v[q]);
+                    pmax = std::max(pmax, ramp.v[q]);
+                }
+            tilt_dh = c.get("landform.tilt_rel") * R;
+            tilt_span = pmax - pmin;
+            tilt_bx = ex;
+            tilt_by = ey;
+            const double pd = std::max(1e-9, pmax - pmin);
+            for (size_t q = 0; q < N; ++q)
+                if (s.mask.v[q]) {
+                    ramp.v[q] = (ramp.v[q] - pmin) / pd;
+                    const double dz = tilt_dh * ramp.v[q];
+                    h.v[q] += dz;
+                    if (strat) {
+                        sf.top.v[q] += dz;
+                        sf.skel.v[q] += dz;
+                    }
+                }
+        }
+    }
+
     int rounds = c.geti(is_main ? "terrain.carve_rounds_main" : "terrain.carve_rounds_small");
     const double fac = out.kind == YOUNG ? 0.7 : (out.kind == MID ? 1.0 : 1.3);
     rounds = static_cast<int>(std::nearbyint(rounds * fac));
@@ -462,6 +592,11 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
     const double up = c.get("terrain.uplift_rel") * R;
     int64_t msum = 0;
     for (uint8_t x : s.mask.v) msum += x;
+    StratCtx stc;
+    if (strat) {
+        stc.rec = sf.rec;
+        stc.tab = lith_table(c);
+    }
     if (rounds > 0 && msum >= 30) {
         const int f = std::max(1, static_cast<int>(std::ceil(static_cast<double>(n) / c.get("terrain.erosion_max_cells"))));
         double half = 0;
@@ -479,7 +614,19 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
             GridD upc = block_mean(shape, f);
             for (double& v : upc.v) v = up * v;
             const GridD jc = block_mean(jit, f);
-            const GridD ec = erode(&rng, hc, mc, res_m * f, rounds, rim, c, &upc, &jc);
+            GridD tc, kc;
+            if (strat) {
+                GridD tin(n, n), kin(n, n);
+                for (size_t k = 0; k < N; ++k) {
+                    tin.v[k] = s.mask.v[k] ? sf.top.v[k] : rim;
+                    kin.v[k] = s.mask.v[k] ? sf.skel.v[k] : rim - 1e4;
+                }
+                tc = block_mean(tin, f);
+                kc = block_mean(kin, f);
+                stc.top = &tc;
+                stc.skel = &kc;
+            }
+            const GridD ec = erode(&rng, hc, mc, res_m * f, rounds, rim, c, &upc, &jc, strat ? &stc : nullptr);
             GridD d(hc.H, hc.W, 0.0);
             for (size_t k = 0; k < d.size(); ++k) d.v[k] = mc.v[k] ? ec.v[k] - hc.v[k] : 0.0;
             const GridD delta = smooth121(d, mc, c.geti("terrain.carve_smooth_coarse"));
@@ -489,7 +636,11 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
         } else {
             GridD upf(n, n);
             for (size_t k = 0; k < N; ++k) upf.v[k] = up * shape.v[k];
-            h = erode(&rng, h, s.mask, res_m, rounds, rim, c, &upf, &jit);
+            if (strat) {
+                stc.top = &sf.top;
+                stc.skel = &sf.skel;
+            }
+            h = erode(&rng, h, s.mask, res_m, rounds, rim, c, &upf, &jit, strat ? &stc : nullptr);
         }
     }
     double hmax = -INF;
@@ -513,24 +664,69 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
         if (s.mask.v[k]) out.h.v[k] = rim2 + R2 * u.v[k];
     out.rim = rim2;
     out.peak = rim2 + R2;
+    // 层面跟着同一个仿射变：露出哪层不因拟合而变
+    const double a = R2 / den2;
+    if (strat) {
+        out.top = GridD(n, n, NaN);
+        out.skel = GridD(n, n, NaN);
+        for (size_t k = 0; k < N; ++k)
+            if (s.mask.v[k]) {
+                out.top.v[k] = rim2 + (sf.top.v[k] - rim) * a;
+                out.skel.v[k] = rim2 + (sf.skel.v[k] - rim) * a;
+            }
+        out.dome = std::move(sf.dome);
+        out.strat = sf.rec;
+        out.strat.scale = a;
+    }
+    if (has_fold) out.lf.push_back(std::move(fold_rec));
+    if (tilt_dh > 0.0) {
+        // 翘起的岸缘：ramp ≥ 0.85 的岸边格；断崖高 = 这些格高出岸缘的平均，位置取其中最高的一格
+        double sh = 0, best = -INF;
+        int64_t cnt = 0;
+        int bi = 0, bj = 0;
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j) {
+                const size_t q = static_cast<size_t>(i) * n + j;
+                if (!s.mask.v[q] || ramp.v[q] < 0.85 || !edge_cell(s.mask, i, j)) continue;
+                sh += out.h.v[q] - rim2;
+                ++cnt;
+                if (out.h.v[q] > best) {
+                    best = out.h.v[q];
+                    bi = i;
+                    bj = j;
+                }
+            }
+        if (cnt > 0) {
+            LandformRec L;
+            L.kind = "tilted_block";
+            L.r = bi + 0.5;
+            L.c = bj + 0.5;
+            L.attr.set("dip_to_deg", pyround(bearing_deg(-tilt_bx, -tilt_by), 1));
+            L.attr.set("tilt_deg", pyround(std::atan(tilt_dh * a / std::max(1.0, tilt_span * 1000.0)) * 180.0 / PI, 2));
+            L.attr.set("scarp_m", pyround(sh / static_cast<double>(cnt), 0));
+            L.attr.set("scarp_max_m", pyround(best - rim2, 0));
+            L.attr.set("span_km", pyround(tilt_span, 2));
+            out.lf.push_back(std::move(L));
+        }
+    }
     // 多核：每个核的载荷（高出岸缘的量）与载荷中心——根就在它正下方
     for (int k = 0; k < lay.n; ++k) {
         CoreRec r;
         r.seed_x = lay.sx[k];
         r.seed_y = lay.sy[k];
         r.strength = lay.strength[k];
-        std::vector<double> a, ax, ay;
+        std::vector<double> ab, ax, ay;
         double pk = -INF;
         for (size_t q = 0; q < N; ++q)
             if (s.mask.v[q] && lay.member.v[q] == k) {
                 const double v = out.h.v[q] - rim2;
-                a.push_back(v);
+                ab.push_back(v);
                 ax.push_back(v * s.X(0, static_cast<int>(q % n)));
                 ay.push_back(v * s.Y(static_cast<int>(q / n), 0));
                 pk = std::max(pk, out.h.v[q]);
             }
-        r.cells = static_cast<int64_t>(a.size());
-        r.load = np_sum(a.data(), a.size());
+        r.cells = static_cast<int64_t>(ab.size());
+        r.load = np_sum(ab.data(), ab.size());
         r.peak = r.cells ? pk : rim2;
         const bool ok = r.load > 0.0;
         r.load_x = ok ? np_sum(ax.data(), ax.size()) / r.load : r.seed_x;

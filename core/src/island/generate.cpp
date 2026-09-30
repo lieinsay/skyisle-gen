@@ -7,6 +7,7 @@
 
 #include "skyisle/island/build.hpp"
 #include "skyisle/island/climate.hpp"
+#include "skyisle/island/landforms.hpp"
 #include "skyisle/island/resources.hpp"
 #include "skyisle/island/settle.hpp"
 
@@ -26,6 +27,7 @@ Group generate(const NodeInputs& inp, const PlanetView& pv, const Config& c, int
         build_hydro(g, pv, c, threads);
         finalize_islands(g);
         build_resources(g, c);
+        detect_landforms(g, c);
     }
     if (steps >= 3) {
         const double t0 = now_s();
