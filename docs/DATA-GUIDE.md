@@ -70,3 +70,44 @@
 - **游戏能自由发挥**：一季里雨落在哪几天、雷雨还是连阴、云海漫顶的样子；群内哪片湿一点——只要季的总量照这里。
 - **不能做的事**：别把相对值当毫米用（旧的换算与线性的差到三四成）；别拿 `arable_frac` 当已垦额度（那是「地」那一项，降水线之前的，④ 的 `catch` 与 ⑥ 仍读它）；
   别在行星层用岛上口径的温度推可耕率（高度会经可耕率漏进 ⑨，犯原则乙）。
+
+---
+
+## 三、岛群地形：高程、岩性、岸距、崖层、地貌点（岛群层写，PLAN-NATURE B，2026-10-01）
+
+设定：spec 13 第二节第 6、8、9 条（岛是两层：从海底带上来的岩层 + 浮石骨架；特殊的山按成因条件出）。DESIGN-NOTES 四点四十六。B 之前的岛群产物没有下面带 † 的键。
+
+| 产物 · 键 | 含义、单位 |
+|---|---|
+| `terrain.npz` 的 `height`（与 `height.png`） | 高程，m，相对零点（第一节）。B1 起下切在原生分辨率（100 m）上做、每轮全岛填洼，谷是真切出来的（B 之前在 ≤ 320 格的粗网格上切再放大，谷宽几百米） |
+| `terrain.npz` 的 `lith` † | 出露岩性（uint8）：0 虚空、1 石灰岩、2 泥灰岩（1、2 合称沉积盖层 = 海相石灰岩）、3 辉长岩、4 蛇纹岩、5 浮石（骨架）。`lith.png` 是它的图 |
+| `island.json` 的 `islands[].strat` † | 这座岛的层序：`cap_m` 老岛顶上的硬石灰岩盖、`sediment_m` 沉积盖层总厚（含盖）、`gabbro_m` 辉长岩厚（再往下是蛇纹岩）、`bed_lime_m` / `bed_marl_m` 互层的单层厚、`crown_exhumed_m` 冠顶已剥去的深度——都已换算到最终高程（× 拟合的比例） |
+| `island.json` 的 `lith` † | 各岩性占陆地的比例：`share` 全群、`share_main` 主岛；`classes` / `palette` 是类名与 lith.png 的颜色 |
+| `terrain.npz` 的 `coast_dist_m` † | **带符号的亚格岸距**，m（float32）：陆地为正、虚空为负，岸线上为 0。岸线是岛形连续场 f = τ 的等值线（marching squares 求线段、再算到线段的精确距离），不是格子的边 |
+| `terrain.npz` 的 `rockwall_m` † / `rockwall_dir` † | 崖层：坡 ≥ `[island.landform] rockwall_deg`（40°）的陆地格，`rockwall_m` = 本格 − 8 邻里最低的高差（m），`rockwall_dir` = 朝那一格的方位（16 向，0 = 北、顺时针每 22.5°；不是崖的格 255）。岸崖（陆地到虚空）另见 `cliff` |
+| `island.json` 的 `landforms` † | 特殊的山，一处一条：`id`、`kind`（英文码）与 `name`（中文名）、`island`、`cell`（行、列）、`km`（群坐标）、各类的量（见下）；`landforms_note` 是各类的说明 |
+
+`landforms` 的类（按成因条件出，不设配额；公里级的形状已经在高程里，100 m 以下的只记位置与尺寸、游戏建）：
+
+| kind | 中文 | 条件 | 进了高程的 | 只记的量（键） |
+|---|---|---|---|---|
+| `fold_ridges` | 平行岭谷 | 多核岛的接缝带 | 层面与地面沿缝起伏，硬层成窄脊 | `area_km2`、`strike_deg`（走向）、`length_km`、`wave_km`、`n_ridges`、`fold_amp_m` |
+| `tilted_block` | 掀斜断块山 | 多核岛里有一个核的强度 ≤ 0.32（明显老） | 整岛歪向老核、对侧岸缘翘起 | `dip_to_deg`（歪向）、`tilt_deg`、`scarp_m` / `scarp_max_m`（断崖高）、`span_km` |
+| `tower_karst` | 峰林 | 老岛、沉积盖层、暖（≥ 16 °C）湿（≥ 1100 mm）的低处 | 峰间平地压低 | `area_km2`、`tower_h_m`（石柱高）、`density_per_km2`、`rain_mm`（石柱游戏建） |
+| `glacier` | 冰川 | 峰高过雪线（最暖一季的气温与年雨定） | — | `area_km2`（雪线以上）、`ela_m`、`peak_m`、`n_cirques`、`ice_cap`（一半以上的地在雪线以上） |
+| `cirque` / `horn` | 冰斗 / 角峰 | 雪线附近的谷头 / 三个方向以上都有冰斗的峰 | 冰斗刨成半碗 | 冰斗 `radius_km`、`floor_m`、`headwall_m`、`aspect_deg`、`ela_m`；角峰 `peak_m`、`n_cirques` |
+| `collapse_scarp` | 临空断山 | 峰离岸缘近、岸缘高差大，按条件概率 | 岸边挖掉一个半圆（面积 ≤ 1%） | `radius_km`、`headwall_m`、`lost_km2`、`edge_relief_m`、`p` |
+| `sky_mountain` | 天上的山 | 往上浮 ≥ 1 km、峰高过主岛的峰 | —（只是标签） | `float_m`、`peak_m`、`above_main_peak_m` |
+| `gabbro_crags` | 辉长岩锯齿峰 | 辉长岩露在山地 / 高山的高处、成片、坡陡 | 硬岩大坍塌角自然出 | `area_km2`、`peak_m`、`slope_med_deg` |
+| `serpentine_barren` | 蛇纹岩秃山 | 蛇纹岩出露成片 | 地表改稀草、陡处裸岩 | `area_km2`、`bare_frac`、`elev_lo_m` / `elev_hi_m` |
+| `mesa` / `butte` | 方山 / 孤山 | 硬石灰岩盖的平顶、四周成崖（≥ 2 km² 叫方山） | 硬盖成崖自然出 | `area_km2`、`top_m`、`rise_m`（崖高）、`steep_frac` |
+| `natural_arch` | 穿山天窗 | 岸缘被削薄的岬角碰上骨架空洞 | — | `spur_strike_deg`、`opening_m`、`spur_top_m`、`sees_clouds`、`void_id` |
+
+- **口径**：层面在拟合（台面 = 行星层的 `height_m`、峰 − 岸缘 = 目标起伏）之前定、跟着同一个仿射变，所以哪一格露哪一层不因拟合而变；`strat` 里的厚度已经乘了拟合的比例。
+  浮高把整座岛（高程、层面）一起平移；峰林、冰川在平移之后按本岛的气温判（浮上去冷了，雪线以上的地多了）。
+- **可信尺度**：岩性按格（100 m），但层面是按岛的等效半径 × 0.25 抹开的平顺面——几百米以下的岩性斑块是侵蚀切过层面出来的，不是单独生成的；层厚是设定的量级（盖层约 400 m、辉长岩约 900 m），
+  不对着哪块地球上的地层标定。岸距在岸线附近一两格内是亚格精度，离岸远了就是到最近岸线段的精确距离。
+- **还原方法**：游戏要连续的岸线就取 `coast_dist_m = 0` 的等值线；要崖面就按 `rockwall_m` / `rockwall_dir` 摆崖（朝向是崖往下的方向）；岩性决定石头的颜色、质感与剥落物。
+- **游戏能自由发挥**：100 m 以下的崖面、石柱、天窗的样子，岩层的纹理与互层的厚薄（只要按格的岩性对得上），岸线在一格以内的曲折（只要 0 等值线平均回来）。
+- **不能做的事**：别拿 `lith` 推地质年代或矿（矿、石料、盐看资源层，它们已经读了同一套层面）；别把 `sky_mountain` 当成地形里有什么特别——它就是一座往上浮了很多的普通岛；
+  别用格子的岸（`island_id ≥ 0` 的边）代替 `coast_dist_m` 做岸线（差半格到一格，D1 的 `gen_export.cpp` 改读它）。
