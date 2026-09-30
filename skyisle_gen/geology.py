@@ -66,7 +66,7 @@ class Geology:
         if near.mean() >= 0.3:
             bt = int(np.bincount(self.btype[m][near], minlength=3).argmax())
             if bt == 0:
-                parts.append("处在板块汇聚带：浮石随流汇聚嵌合，岛群密集" + ("、上下堆叠" if self.layered[m].mean() > 0.15 else ""))
+                parts.append("处在板块汇聚带：浮石随流汇聚嵌合，岛群密集" + ("、高低错落" if self.layered[m].mean() > 0.15 else ""))
             elif bt == 1:
                 parts.append("处在板块离散带：岛群被拉开，新岛多从这一带的海底挣脱出海，空域宽")
             else:

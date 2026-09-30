@@ -9,6 +9,7 @@ Python 参考后端 2026-09-30 删了（git tag python-reference-final），两�
 """
 import copy
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -57,6 +58,26 @@ def test_planet_fractal_noise():
         assert np.array_equal(a, core.planet_fractal_noise(42, 3, 180, 360, base, oct_, pers, 2.0))
         assert np.abs(a - core.planet_fractal_noise(42, 4, 180, 360, base, oct_, pers, 2.0)).max() > 0.1
         assert np.abs(a[:, 0] - a[:, -1]).mean() < 2.0 * np.abs(np.diff(a, axis=1)).mean(), base
+
+
+def test_vertical_structure():
+    """零点与垂直结构（PLAN-NATURE A1）：派生量按 p(z) = p0·exp(−z/H)，planet_json ↔ planet_from_json 读得回，没有这段是空的，不合理的配置报错。"""
+    cfg = load_config()
+    P = core.planet_stage1(core.make_config(E.planet_config(cfg)))
+    V = core.planet_json(P)["vertical"]
+    a = cfg["s01"]["atmosphere"]
+    assert V["keel_floor_m"] == a["cloud_top_m"] + a["keel_gap_m"]
+    assert V["sea_pressure_atm"] == pytest.approx(a["datum_pressure_atm"] * math.exp(-a["sea_level_m"] / (1000.0 * a["scale_height_km"])), rel=1e-12)
+    assert V["sea_o2_atm"] == pytest.approx(a["o2_fraction"] * V["sea_pressure_atm"], rel=1e-12)
+    assert 2.2 < V["sea_pressure_atm"] < 2.5            # spec 13 第九节第 3 条：海面约 2.3 atm
+    assert core.planet_json(core.planet_from_json(core.planet_json(P)))["vertical"] == V
+    cfg2 = copy.deepcopy(cfg)
+    del cfg2["s01"]["atmosphere"]
+    assert core.planet_json(core.planet_stage1(core.make_config(E.planet_config(cfg2))))["vertical"] == {}
+    bad = copy.deepcopy(cfg)
+    bad["s01"]["atmosphere"]["cloud_top_m"] = 100.0      # 云带顶跑到零点上面
+    with pytest.raises(ValueError):
+        core.planet_stage1(core.make_config(E.planet_config(bad)))
 
 
 @pytest.mark.parametrize("n", [600, 1000, 5000])

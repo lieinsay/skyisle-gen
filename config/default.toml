@@ -55,6 +55,17 @@ insolation_rel = 1.0
 radius_km = 6371.0
 held_hou_scaling = false      # true：带界随自转率缩放（快转→窄哈德莱圈）
 
+[s01.atmosphere]              # 零点与垂直结构（PLAN-NATURE A1，spec 13 第九节第 2–4 条）：① 纯换算写进 planet.json 的 vertical，不改任何场
+# 高度一律相对「零点」= 浮层基准（气压约一个大气压的高度），往上为正、m；不是地面、不是云带顶（旧设定「云带顶面 = 高度零点」作废）。
+# 零点以上的气温按 [s04.climate] lapse_c_per_km 递减，零点以下取零点处的气温（云带是逆温层）。游戏从行星包读这些数（Zhouzhu PLAN-NATURE D4）。
+datum_pressure_atm = 1.0      # 零点的气压
+scale_height_km = 8.0         # 大气标高：p(z) = p0 · exp(−z / H)；岛面 +0.3…+2.2 km 在 0.96…0.76 atm，海面约 2.3 atm（大气比地球厚一倍多）
+o2_fraction = 0.2095          # 氧的体积分数（海面氧分压约半个大气压：能到、不能住）
+sea_level_m = -6800.0         # 海面
+cloud_base_m = -6200.0        # 云带底（几乎全球的一层厚云：遮阳、逆温）
+cloud_top_m = -5000.0         # 云带顶
+keel_gap_m = 1000.0           # 云带顶到最低的岛底的间隙（风暴脚下永远是海洋）：岛底不低于 cloud_top_m + keel_gap_m
+
 [s01.calendar]                # 历法 ↔ 行星尺度双向自洽（BACKLOG R1；C++ 的 stage12.cpp derive_calendar；只写 planet.json，不改任何场）
 mode = "calendar_to_orbit"    # calendar_to_orbit：由 季数 × 季长 推公转周期 → 恒星质量 / 光度 / 轨道半径（日照取 insolation_rel）
                               # orbit_to_calendar：由 stellar_mass_msun + semi_major_axis_au 推一年的太阳日数与每季天数（报残差；④ 仍用 insolation_rel）
@@ -111,15 +122,17 @@ arable_frac_range = [0.03, 0.30]  # 夹断：多山、土薄的岛群 ~0.03，�
 height_scale_m = 1500.0       # height_m 的口径：主岛「台面」= 陆地高程中位数（④ 的岛上气温在这个高度），不是峰高；峰由第三层按岛龄 × 面积长出（DESIGN-NOTES 四点十九）
 height_noise_cells = 5
 height_jitter_m = 150.0
-stack_zone_threshold = 0.9    # 叠层岛区：汇聚边界核（[s03.plates]）超过此值的碰撞带，高度呈双层分布（第三批 2 起不再用独立噪声）
+stack_zone_threshold = 0.9    # 叠层岛区：汇聚边界核（[s03.plates]）超过此值的碰撞带，高度呈双层分布（第三批 2 起不再用独立噪声）；
+                              # 「叠层」= 高低错落，岛不叠在别的岛正上方（spec 13 第九节第 1 条）
 stack_range_m = 1200.0
 layered_height_std_m = 320.0  # 邻域高度标准差超过此值 → 叠层
 # 主岛与岛体（第三批第 1 步，docs/PLAN-BATCH3.md 5.1）。群内最大的一座岛 = 主岛；河与挡风都看它。
 main_frac_mean = 0.5          # 主岛占群陆地的比例（对数正态均值）；main_area = area × main_frac
 main_frac_sigma = 0.4         # 对数正态抖动
 main_frac_range = [0.2, 0.9]  # 夹断：碎成几十座差不多的小岛 ~0.2，一座大岛带几粒卫星岛 ~0.9
-# 岛体：云带顶面 = 高度零点，岛底离云带顶一个固定间隙，岛体从底到顶是实心浮石（决定 3）。
-# 墙高 wall_m = max(0, height_m − keel_clearance_m)：②b 挡风用的迎风截面高度；低于间隙的岛当薄片
+# 墙高 wall_m = max(0, height_m − keel_clearance_m)：②b 挡风用的迎风截面高度；低于它的岛当薄片。keel_clearance_m 也是 ④ 高原陆地性从哪算起、
+# 岛群地形的崖脚——生成器内部的量，**不是游戏里的岛底**（旧注释「云带顶面 = 高度零点、岛体从底到顶是实心浮石（决定 3）」作废：零点见 [s01.atmosphere]，
+# 岛体是岩层 + 浮石骨架、倒锥，岛底在零点下三四公里，spec 13 第二节第 6 条、第六节第 36 条；改不改名放到 PLAN-NATURE A 验收之后，DATA-GUIDE 第一节）
 keel_clearance_m = 300.0
 expedition_pairs = 6          # 跨赤道远征边数
 expedition_min_lon_sep_deg = 30.0
@@ -194,7 +207,7 @@ season_tau_ocean_days = 110.0 # 海洋混合层
 season_alt_continentality = 0.5  # 岛在云带之上、隔着云海与洋面脱耦（类比高原）：陆地性 +k × (峰高 − 岛底间隙)/2000 m（只进岛群产物与 C5，不进 ⑦）
 storm_g_amp = 1.0
 
-[s04.localwind]               # ②b 岛对风的扰动（第三批第 3 步，C++ 的 stage4.cpp；决定 3：岛是从云带顶立到山顶的浮山）
+[s04.localwind]               # ②b 岛对风的扰动（第三批第 3 步，C++ 的 stage4.cpp；挡风的是岛露出崖脚以上的那一截 wall_m）
 boundary_layer_m = 3000.0     # 障碍场 O = gain × 墙高/此厚度 × 陆地占比 × 势力范围覆盖，夹 [0,1]
 obstacle_gain = 4.0           # 增益：截面份额本身只有百分之几，乘 4 后密集群岛上空 O ≈ 0.5–0.9（一排悬空的山）
 smooth_deg = 1.5              # 障碍场与陆地覆盖场的高斯抹开 σ
@@ -302,7 +315,7 @@ smooth_hops = 2
 # γ=1 会让「面积」这个随机量与「岛密度」这个地理量等权且互相抵消，稀释中心涌现的地理结构
 # （实测 seed 2026 的 P7 从 238 个拒绝点掉到 31 个、地区覆盖不达标）。见 docs/DESIGN-NOTES §四点五。
 area_exponent = 0.5
-# 谷物农业的季节门槛（骨架第二版 §4.2）：看冬季均温（海面口径 = 年均 − 全年温差/2，不含岛高，原则乙）
+# 谷物农业的季节门槛（骨架第二版 §4.2）：看冬季均温（零点口径——原叫海面口径，temp_sea 等键名沿用——= 年均 − 全年温差/2，不含岛高，原则乙）
 # 冬天不冷的地方选不出一年生、耐储的谷物（常夏之地是块根与园艺）；冬天太冷则生长季不够。
 # 适宜度 × (1 − smoothstep(冬温; warm_lo, warm_hi)) × smoothstep(冬温; cold_lo, cold_hi)
 # seed 7 海面冬温：20° 16.5 / 29° 8.9 / 32° 6.3 / 35° 3.5 / 38° 0.6 / 41° −1.8 / 44° −3.8 / 47° −6.2
@@ -463,7 +476,7 @@ c_river_min = 0.4             # C4 有河的群比例（只报告）
 c_river_max = 0.85
 # SK-cal 历法（R1）：旧版 4 季 × 28 日的潮汐锁定张力（0.92 Gyr）已随骨架第二版的 336 日消失；开关保留，默认关
 cal_accept_tidal_tension = false
-# C5 四季分明（骨架第二版决定 1：中原、河北式）。海面口径（不含岛高）；郑州 26 °C / 冬 0 / 夏 27，石家庄 29 / −2 / 27
+# C5 四季分明（骨架第二版决定 1：中原、河北式）。零点口径（原叫海面口径；不含岛高）；郑州 26 °C / 冬 0 / 夏 27，石家庄 29 / −2 / 27
 c5_radius_km = 400.0          # 取中心周边此半径内岛群的中位数
 c5_range_min_c = 20.0          # 岛上口径（含岛高的温度与陆地性），中心周边中位数。下限按「上海—郑州」区间放在种子尾部：
 c5_winter_max_c = 5.0          #   上海 24 / 冬 5，郑州 26 / 冬 0，延安（1,000 m）28 / 冬 −5；三 seed 的中心实测 21–28 / −6…4

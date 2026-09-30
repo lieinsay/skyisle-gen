@@ -168,7 +168,7 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print, c: dict | None 
     raster = {"res_m": res_m_eff, "rows": H, "cols": W, "origin_km": [round(x0, 3), round(y0, 3)],
               "origin_note": "origin_km = 栅格左上角相对群心（节点经纬度）的平面坐标（km，x 东 y 北）；行 r 列 c 的格心 = origin + ((c+0.5)·res, −(r+0.5)·res)",
               "km_per_deg_lat": round(km_per_deg, 3), "km_per_deg_lon": round(km_per_deg * math.cos(math.radians(inp["lat"])), 3),
-              "height_note": "height.png 16 位灰度 = 云带顶以上高度 / height_png_scale_m_per_unit；0 = 虚空",
+              "height_note": "height.png 16 位灰度 = 零点（浮层基准，planet.json 的 vertical）以上的高度 / height_png_scale_m_per_unit；0 = 虚空",
               "void_value": 0}
     T = R["territory"]
     terr = {"neighbours": int(T["neighbours"]), "gap_km": float(T["gap_km"]), "constrained": bool(T["constrained"])}
@@ -178,7 +178,7 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print, c: dict | None 
                      "before_km": round(float(T["before"]), 3), "after_km": round(float(T["after"]), 3)})
     if T["has_violation"]:
         terr["violation_km"] = round(float(T["violation"]), 3)
-        terr["note"] = "势力范围（territory.py）：与每个邻群按等效半径分界、各退 gap/2；violation_km ≤ 0 = 没越界（负值是最小余量）"
+        terr["note"] = "势力范围（C++ 的 territory.cpp）：与每个邻群按等效半径分界、各退 gap/2；violation_km ≤ 0 = 没越界（负值是最小余量）"
     constraints = {
         "area_km2": {"target": round(inp["area_km2"], 2), "actual": round(float(land.sum()) * res_km * res_km, 2)},
         "main_area_km2": {"target": round(inp["main_area_km2"], 2), "actual": islands_json[0]["area_km2"]},

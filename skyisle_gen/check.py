@@ -766,7 +766,7 @@ def check_skeleton(w: World, cfg, rep: Report):
 # ---------------------------------------------------------------- C5 四季分明（骨架第二版）
 def check_season(w: World, cfg, rep: Report):
     """三个文明中心岛上（含岛高的温度与陆地性）全年温差、冬夏均温达到北方式四季分明（PLAN-SKELETON2 决定 1）。
-    验收读岛上口径没有问题：⑦ 选中心只用海面口径（原则乙），这里只是检验结果。"""
+    验收读岛上口径没有问题：⑦ 选中心只用零点口径（原叫海面口径，键名 *_sea 沿用；原则乙），这里只是检验结果。"""
     c = cfg["check"]
     ctx = w.ctx
     clim = ctx.load_npz(4, "climate_islands")

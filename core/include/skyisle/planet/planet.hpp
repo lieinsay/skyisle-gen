@@ -80,11 +80,25 @@ struct Almanac {                  // planet.json 的 calendar（almanac.derive�
     bool has_moon = false;
     Moon moon;
 };
+// 零点与垂直结构（PLAN-NATURE A1，spec 13 第九节第 2–4 条）：planet.json 的 vertical；没有 [s01.atmosphere] 时 present = false。
+// 高度一律相对零点（浮层基准：气压约一个大气压的高度），往上为正、m。纯换算，不改任何场。
+struct Vertical {
+    bool present = false;
+    double datum_pressure_atm = 1, scale_height_km = 8, o2_fraction = 0.2095;
+    double sea_level_m = -6800, cloud_base_m = -6200, cloud_top_m = -5000, keel_gap_m = 1000;
+    // 派生
+    double keel_floor_m = 0;       // 岛底最低 = 云带顶 + 间隙
+    double sea_pressure_atm = 0, sea_o2_atm = 0;
+    double pressure_atm(double z_m) const;   // p(z) = p0 · exp(−z / H)
+};
+Vertical derive_vertical(const Config& cfg);
+
 struct Planet {                   // planet.json
     double rotation_period_hr = 24, axial_tilt_deg = 0, insolation_rel = 1, radius_km = 6371, band_scale = 1;
     double eq_storm_top = 0, trades_top = 0, calm_top = 0, westerlies_top = 0;   // bands（*_deg）
     double day_range_km = 500, circumference_days = 0;
     Almanac cal;
+    Vertical vert;
     double band(const std::string& key) const;                     // "eq_storm_top_deg" / "trades_top_deg" / "calm_top_deg" / "westerlies_top_deg"
     double year_days(double fallback = 336.0) const { return cal.present ? cal.year_days_solar : fallback; }
 };

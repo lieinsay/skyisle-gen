@@ -140,6 +140,29 @@ double Planet::band(const std::string& key) const {
     throw std::out_of_range("planet: unknown band edge " + key);
 }
 
+double Vertical::pressure_atm(double z_m) const { return datum_pressure_atm * std::exp(-z_m / (1000.0 * scale_height_km)); }
+
+Vertical derive_vertical(const Config& cfg) {
+    Vertical v;
+    if (!cfg.has_prefix("s01.atmosphere.")) return v;
+    v.present = true;
+    v.datum_pressure_atm = cfg.get("s01.atmosphere.datum_pressure_atm");
+    v.scale_height_km = cfg.get("s01.atmosphere.scale_height_km");
+    v.o2_fraction = cfg.get("s01.atmosphere.o2_fraction");
+    v.sea_level_m = cfg.get("s01.atmosphere.sea_level_m");
+    v.cloud_base_m = cfg.get("s01.atmosphere.cloud_base_m");
+    v.cloud_top_m = cfg.get("s01.atmosphere.cloud_top_m");
+    v.keel_gap_m = cfg.get("s01.atmosphere.keel_gap_m");
+    if (!(v.datum_pressure_atm > 0 && v.scale_height_km > 0 && v.o2_fraction > 0 && v.o2_fraction < 1))
+        throw std::invalid_argument("s01.atmosphere: datum_pressure_atm, scale_height_km > 0 and 0 < o2_fraction < 1");
+    if (!(v.sea_level_m < v.cloud_base_m && v.cloud_base_m < v.cloud_top_m && v.cloud_top_m < 0 && v.keel_gap_m >= 0))
+        throw std::invalid_argument("s01.atmosphere: need sea_level_m < cloud_base_m < cloud_top_m < 0 and keel_gap_m >= 0");
+    v.keel_floor_m = v.cloud_top_m + v.keel_gap_m;
+    v.sea_pressure_atm = v.pressure_atm(v.sea_level_m);
+    v.sea_o2_atm = v.o2_fraction * v.sea_pressure_atm;
+    return v;
+}
+
 Planet stage1(const Config& cfg) {
     Planet p;
     p.rotation_period_hr = cfg.get("s01.planet.rotation_period_hr");
@@ -158,6 +181,7 @@ Planet stage1(const Config& cfg) {
     p.day_range_km = cfg.get("shared.day_range_km");
     p.circumference_days = 2 * PI * p.radius_km / p.day_range_km;
     p.cal = derive_calendar(cfg);
+    p.vert = derive_vertical(cfg);
     return p;
 }
 

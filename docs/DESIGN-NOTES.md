@@ -2438,6 +2438,39 @@ C++ 里 numpy 同式的函数照旧用：前端与 check 还是 numpy，同式�
   p6b 的 P3 / P5 / P6 / P6b / 大堰 / P7 各条路径走到并且 island check 硬项全过；p6c / p6d 的 key 恒带 "+cpp"、变体只从该变的那步起变、内存对象与读回的对象生成的群逐字节相同。
   与 numpy 本身逐位比的（rng、数学函数、求和 / 舍入、rfft、分位、中位数）与 C++ 对 graph.py 的逐位比（graph.py 还给 check / probe 用）留着。
 
+## 四点四十三、零点与垂直结构写进 planet.json（2026-09-30，PLAN-NATURE A1）
+
+设定是 spec 13 第九节第 2–4 条（用户 09-30 定，大气取乙）。A1 只把口径写清，**不改任何场的数**。
+
+**新段 `[s01.atmosphere]`**：零点气压 1 atm、大气标高 8 km、氧 0.2095、海面 −6800 m、云带 −6200 … −5000 m、云带顶到最低岛底的间隙 1000 m。
+① 在 C++ 里换算（`planet.hpp` 的 `Vertical`、`stage12.cpp` 的 `derive_vertical`，有 `[s01.atmosphere]` 才有，同历法的写法），planet.json 多一块 `vertical`：
+上面几个数，外加派生的岛底最低 `keel_floor_m` = 云带顶 + 间隙 = −4000 m、海面气压 `sea_pressure_atm` = exp(6.8 / 8) = 2.34、海面氧分压 0.49 atm；
+中文的公式与说明（C++ 只用 ASCII）由 `s01._write` 加。`planet_from_json` 读得回（A1 之前的 planet.json 没有这块，读成空的）。
+配置不合理（标高 ≤ 0、海面不在云带下面、云带顶不在零点下面……）在 C++ 里直接报错。气温照旧：零点以上按 `[s04.climate] lapse_c_per_km`，零点以下取零点处——
+这条原来就是生成器与游戏的约定（`[island.float] rim_floor_m` 的注释），现在写进 planet.json 与 DATA-GUIDE。
+
+**岛面气压进 ④ 的摘要**（方案原写 ③ 的摘要）：④ 本来就按台面高度算岛上气温，③ 不用为一行摘要改版本。`surface_pressure_atm` = 全行星台面的 [最低, 中位, 最高]：seed 42 [0.682, 0.911, 0.994]、seed 7 [0.668, 0.907, 0.994]、seed 2026 [0.647, 0.910, 0.994] atm；
+台面的 5–95% 在 +0.27…+2.2 km（0.96…0.76 atm），正是 spec 写的「岛面约 +0.3 … +2.2 km、0.96–0.76 个大气压」；最高的台面 3.1–3.5 km。
+
+**字样**：
+- `[s03.islands] keel_clearance_m` 的注释改掉「云带顶面 = 高度零点、岛体从底到顶是实心浮石（决定 3）」：它是 ②b 墙高、④ 高原陆地性从哪算起、岛群地形的崖脚，
+  **不是游戏里的岛底**；改不改名放到 A 验收之后（方案第十节第 7 条）。`[s04.localwind]` 的「岛是从云带顶立到山顶的浮山」同改。
+- 「海面口径」改叫「零点口径」（`temp_sea`、`season_range_sea` 等键名不动）：default.toml、s07、check、岛群 climate.cpp 的注释。
+- 「叠层」= 高低错落：九格表 ①「约 N 成岛群呈叠层堆叠」→「高低错落（叠层）」、地质叙事「上下堆叠」→「高低错落」、`stack_zone_threshold` 的注释。
+- 岛群产物 island.json 的 `raster.height_note`、粗版的说明、岛群调试台的图例：「云带顶以上」→「零点以上」；势力范围的说明指 C++ 的 territory.cpp。
+
+**版本**：`STAGE_VERSIONS` ① 2 → 3、④ 7 → 8（摘要）、⑩ 6 → 7（九格表的字）。①–⑨ 的 key 本来就链着 ① 的配置，加了一段 ①–⑩ 全部重算。
+
+**验证**：编过、ctest 过；三 seed 重跑（①–⑩ 全部重算）`check` 0 硬 0 软 0 报警；与 A1 之前的产物比（`diff_runs.py`）：①–⑨ 25 个文件只有 planet.json 不同、且只差 `vertical` 这一个键，
+九格表按「叠层堆叠 → 高低错落」换字之后相同；#2051 重生成只有 island.json 的两句说明变了、island check 全过。
+顺手修了 ⑩ 不删旧表：地区数比上一个 run 少时，编号超出的 `region_NNN.md`（09-11 的旧 run 留下的，seed 42 有 78 个文件）会一直留在 ninegrid 里，
+整份重出时现在先删掉。pytest 245 个全过（加了 `test_vertical_structure`：派生量、读回、没有这段是空的、云带顶在零点上面报错）。
+
+**数据使用说明** `docs/DATA-GUIDE.md` 开篇（PLAN-NATURE 第九节）：第一节写垂直结构的每个键与六件事（含义、口径、可信尺度、还原方法、游戏能发挥的、不能做的），
+外加生成器里别的「高度」——③ 的 `height_m` 是台面、`keel_clearance_m` / `wall_m` 是生成器内部的量、岛群 `island.json` 的台面 / 岸缘 / 峰 / 崖脚 / 崖高都相对零点。
+量的时候发现崖脚可以在零点以下：seed 42 的 2,924 座岛里 302 座（往下浮的小岛），最低 −199 m；岸缘与台面都在零点以上（最低 21 m）。
+Zhouzhu 那边 `VerticalDatum` 改成从行星包读是 D4，另做。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。

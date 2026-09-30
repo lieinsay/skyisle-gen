@@ -111,7 +111,7 @@ Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config&
     const double tilt = pv.tilt_deg;
     const double lat = inp.lat, lon = inp.lon;
     const bool south = lat < 0;
-    // 陆地性：海面口径 / 岛上口径（④ 同式）
+    // 陆地性：零点口径（原叫海面口径，_sea）/ 岛上口径（④ 同式）
     const double cont = pv.cg_cont.empty() ? 0.1 : grid_interp(pv.cg_cont, pv.cg_grid, lat, lon);
     const double alt = clip(cont + pv.alt_cont * clip((inp.height_m - inp.keel_clearance_m) / 2000.0, 0.0, 1.0), 0.0, 1.0);
     const double cont_sea = clip(cont, 0.0, 1.0), cont_isl = alt;

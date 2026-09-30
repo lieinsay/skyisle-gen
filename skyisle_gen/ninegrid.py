@@ -262,7 +262,7 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
           f"按口径折合约 {pop_wan:.0f} 万口（群外即虚空，无垦荒无拓边）。")
     if lay > 0.15:
         tenths = "一二三四五六七八九"[min(8, max(0, int(lay * 10) - 1))]
-        l1 += f" 约{tenths}成岛群呈叠层堆叠。"
+        l1 += f" 约{tenths}成岛群高低错落（叠层）。"
     rs = rd.river_share[r]
     l1 += f" 每群以一座主岛为主（主岛中位约 {rd.main_med[r]:.0f} km²）；"
     if rs >= 0.85:
@@ -570,6 +570,11 @@ def render_ninegrids(ctx, region: int | None = None) -> int:
     out_dir = ctx.stage_dir(10) / "ninegrid"
     out_dir.mkdir(parents=True, exist_ok=True)
     targets = [region] if region is not None else range(rd.n_regions)
+    if region is None:                   # 整份重出：删掉旧 run 留下的、编号超出本次地区数的表（不删会被当成本次的）
+        for f in list(out_dir.glob("region_*.md")) + list(out_dir.glob("region_*.sources.json")):
+            num = f.name[len("region_"):].split(".")[0]
+            if num.isdigit() and int(num) >= rd.n_regions:
+                f.unlink()
     index = ["# 九格表索引", ""]
     n_problems = 0
     for r in targets:

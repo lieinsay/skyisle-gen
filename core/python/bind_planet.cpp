@@ -78,6 +78,39 @@ nb::dict calendar_py(const Almanac& c) {
     return d;
 }
 
+nb::dict vertical_py(const Vertical& v) {   // 只有数；说明文字由前端 s01._write 加（C++ 只用 ASCII）
+    nb::dict d;
+    if (!v.present) return d;
+    d["datum_pressure_atm"] = v.datum_pressure_atm;
+    d["scale_height_km"] = v.scale_height_km;
+    d["o2_fraction"] = v.o2_fraction;
+    d["sea_level_m"] = v.sea_level_m;
+    d["cloud_base_m"] = v.cloud_base_m;
+    d["cloud_top_m"] = v.cloud_top_m;
+    d["keel_gap_m"] = v.keel_gap_m;
+    d["keel_floor_m"] = v.keel_floor_m;
+    d["sea_pressure_atm"] = v.sea_pressure_atm;
+    d["sea_o2_atm"] = v.sea_o2_atm;
+    return d;
+}
+
+Vertical vertical_from_py(const nb::dict& d) {
+    Vertical v;
+    if (nb::len(d) == 0) return v;
+    v.present = true;
+    v.datum_pressure_atm = num(d, "datum_pressure_atm");
+    v.scale_height_km = num(d, "scale_height_km");
+    v.o2_fraction = num(d, "o2_fraction");
+    v.sea_level_m = num(d, "sea_level_m");
+    v.cloud_base_m = num(d, "cloud_base_m");
+    v.cloud_top_m = num(d, "cloud_top_m");
+    v.keel_gap_m = num(d, "keel_gap_m");
+    v.keel_floor_m = num(d, "keel_floor_m");
+    v.sea_pressure_atm = num(d, "sea_pressure_atm");
+    v.sea_o2_atm = num(d, "sea_o2_atm");
+    return v;
+}
+
 nb::dict planet_py(const Planet& p) {
     nb::dict d;
     d["rotation_period_hr"] = p.rotation_period_hr;
@@ -94,6 +127,7 @@ nb::dict planet_py(const Planet& p) {
     d["day_range_km"] = p.day_range_km;
     d["circumference_days"] = p.circumference_days;
     d["calendar"] = calendar_py(p.cal);
+    d["vertical"] = vertical_py(p.vert);
     return d;
 }
 
@@ -151,6 +185,7 @@ Planet planet_from_py(const nb::dict& d) {
             }
         }
     }
+    if (d.contains("vertical")) p.vert = vertical_from_py(nb::cast<nb::dict>(d["vertical"]));   // A1 之前的 planet.json 没有这块
     return p;
 }
 

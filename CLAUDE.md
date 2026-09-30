@@ -44,7 +44,7 @@
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165；营建调试台 /town.html?run=seed42&node=2051&site=村037
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 244 个测试，约 5 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
+  $py -m pytest tests -q                          # 245 个测试，约 5 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
                                                   # 扩展没编时只剩 test_core 里不靠 C++ 的 23 个（静态断言、配置校验），其余整个文件跳过；四点四十二起逐位对照改成只测 C++ 的性质）
   $py docs/probes/transect.py out/seed42/islands 6615,6610,6329,6073,6072,5766,5498,2051 --run out/seed42
   $py docs/probes/works_view.py out/seed42/islands/6329 --auto big|head|patch|ruin [--out 图.png]   # 水利俯视图（P6）：灌田最多的大堰 / 渠首的渠网 / 最大的一片圩田 / 废村旁的废渠塘（也可 --big N / --head N / --patch N / --ruin N / --rows --cols）；
@@ -184,7 +184,7 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 ```
 
 **节点 = 岛群（R10）**：`islands`/`n_islands`/`area_km2` 等字段名沿用，语义都是「群」——一个节点 = 一个岛群 = 一个邑 = 一个水共同体；群内数十小岛属第三层，不进管线。
-关键产物：`s03 islands.npz`（含 `area_km2`：群的总陆地 = 集雨面 = 政治体量；`territory_km2` 势力范围、`land_frac` 陆地占比、`arable_frac` 可用地率；`main_area_km2` 主岛陆地、`wall_m` 岛体墙高 = max(0, height − 300)，第三批 1；`age`/`plate` 岛龄与板块）`/plates.npz`（板块网格）`/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s04 wind_local.npz`（**⑤⑥⑦、check、操作台都从这里读风**：扰动后的 u/v、v_local、obstacle、wake、局部带号）`/band_local.npz`（八条局部带界 edges[8, nlon]，⑤ 的 Φ 与 ⑦ 的窗都按它）`/climate_grid.npz`（precip 由水汽模型算出、q、uplift、conv）`/climate_islands.npz`（含 `catch` = 可用地率×陆地×降水，集雨容量；`has_river`/`river_size` 主岛河流，默认只进九格表文本）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`
+关键产物：`s01 planet.json`（calendar 历法、vertical 零点与垂直结构，DATA-GUIDE 第一节）→ `s03 islands.npz`（含 `area_km2`：群的总陆地 = 集雨面 = 政治体量；`territory_km2` 势力范围、`land_frac` 陆地占比、`arable_frac` 可用地率；`main_area_km2` 主岛陆地、`wall_m` 岛体墙高 = max(0, height − 300)，第三批 1；`age`/`plate` 岛龄与板块）`/plates.npz`（板块网格）`/cand_edges.npz`（无向候选边，kind 0 kNN/1 远程/2 远征/3 回退）→ `s04 wind_local.npz`（**⑤⑥⑦、check、操作台都从这里读风**：扰动后的 u/v、v_local、obstacle、wake、局部带号）`/band_local.npz`（八条局部带界 edges[8, nlon]，⑤ 的 Φ 与 ⑦ 的窗都按它）`/climate_grid.npz`（precip 由水汽模型算出、q、uplift、conv）`/climate_islands.npz`（含 `catch` = 可用地率×陆地×降水，集雨容量；`has_river`/`river_size` 主岛河流，默认只进九格表文本）→ `s05 perm.npz`（perm[E,4]、perm_no_g、f_regional、g_blocked）→ `s06 routes.npz`（有向 cost[2E]、cost_no_g、cost_m[2E,4]、flow、node_flow、betweenness_sources；前 E 条 a→b 后 E 条 b→a）→ `s07 centers.json/prehist.npz/regions.npz` → `s08 fields.npz`（reach/adopt/strength/share[T,N]、conflict_by、C、L）、`iso.npz`（iso[4,N]、local_share[S,N]）、`traits.resolved.json`
 → `s09 polity.npz`（pop、state[N]（邦 id，稀疏/孤悬为 −1）、polity[N]（含船团/部落，处处 ≥0）、kind、control、dist_cap、fief（−1 直辖 / 采邑之主节点）、realm（兼并后的本朝）、circle、capital[S]）`/polities.json`（诸邦属性、suzerain、reformer、history、fronts、openings）`/history.md` → `s10_output/`（world.json、fig、ninegrid、check）。
 **地区 ≠ 邦**：⑦b 的地区只是展示分区（九格表的单位）；邦是 ⑨ 的离散政治单位。九格表 ①③④ 写邑级，⑤⑥⑧ 写邦级，⑨ 文化位置仍是连续场（铁律五不动）。
 
@@ -226,9 +226,13 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 - 半衰日程：daily 5–10、trade 15–30、migrate 30–60、envoy 40–80 天。阻力：低 .05–.2 / 中 .3–.6 / 高 .7–.95。
 - ε0 0.02 → ε_max 0.3（隔离度尺度 3）；k_sub = 3（第三批由 2 改，见下）；每高隔离分量 3 条本地起源特征。
 - 行星：半径 6371 km（地球）、自转 24 h、**倾角 34°**（骨架第二版，旧 20°）、1 日航程 500 km → 绕行 80 日。半径只经 `days_per_rad` 影响所有边的天数。
-- 历法（R1，`[s01.calendar]`，almanac.py）：**一年 4 季 × 3 月 × 28 太阳日 = 336 日**（骨架第二版，旧 4 × 28 = 112）→ G 型星 0.96 M☉、0.94 AU、潮汐锁定 73 Gyr；
+- 历法（R1，`[s01.calendar]`，C++ 的 stage12.cpp derive_calendar）：**一年 4 季 × 3 月 × 28 太阳日 = 336 日**（骨架第二版，旧 4 × 28 = 112）→ G 型星 0.96 M☉、0.94 AU、潮汐锁定 73 Gyr；
   卫星朔望月 = 一月（28 日）。历法**不反推带界**。旧版的潮汐锁定张力随之消失（`cal_accept_tidal_tension` 改回 false）。
   `mode = orbit_to_calendar` 反向：给恒星质量 + 轨道半径推每季天数。只写 planet.json，不改任何场。
+- **零点与垂直结构**（PLAN-NATURE A1，`[s01.atmosphere]`，DESIGN-NOTES 四点四十三，spec 13 第九节）：高度一律相对**零点 = 浮层基准**（气压 1 atm 的高度），不是地面、不是云带顶；
+  大气标高 8 km（三 seed 的台面 5–95% 在 +0.3…+2.2 km、0.96…0.76 atm，全部 50 m…3.5 km、0.99…0.65 atm；海面 −6800 m 2.34 atm、氧分压 0.49）、云带 −6200…−5000 m、岛底不低于 −4000 m（云带顶 + 间隙 1000 m）；
+  零点以上按直减率 6 °C/km，零点以下取零点处的气温（④ 的 `temp_sea` 等「海面口径」说的就是零点处，改叫零点口径、键名不动）。只写 planet.json 的 `vertical` 与 ④ 摘要的岛面气压，
+  不改任何场；各字段怎么用见 `docs/DATA-GUIDE.md` 第一节。`keel_clearance_m`（300 m）是生成器内部的崖脚，不是游戏里的岛底。
 - 尺度口径 `[shared.scale]`（BACKLOG 第一批拍板）：全世界陆地 25,000,000 km² / 可用地率 0.10 / 100 人/km² 可耕地 → 2.5 亿人。
 - 陆地（R8）：`area = 势力范围 × f`，势力范围 = 0.866 × (mean_nn × 500 km)²（与分类共用间距），
   `f = min(0.35, f0 · (ρ/ρ_med)^α · lognormal(σ=0.5))`，α=1，f0 由 Σarea = 25M 二分反解（三 seed 均 ≈0.167）。
@@ -318,7 +322,7 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 
 ## 未做 / 可改进（按价值排序）
 
-- **自然层第二版（`docs/PLAN-NATURE.md`，2026-09-30 用户逐条定，A 未开工）**：设定在 `docs/spec/13-浮石与陆地的生灭.md` 第二版（第二个超自然要素**集水核**、浮力随高度减弱得快、垂直结构与厚大气、闭孔两层、特殊的山）；阶段 A 行星层 ④ 按季节算（副高下沉、逆温层之上默认干、弱的岛群季风）+ 降水线 + ⑦ 驼峰 + 零点写进 planet.json，B 侵蚀细化 + 岩层进侵蚀 + 特殊的山 + 亚格岸线，C 河去夸张 + 漫滩照地球 + 河的数据 + 集水核 + 地下水，D 游戏；开工前的 numpy 环境与 ME Pro 验证（四点四十一）、删 Python 的算法（四点四十二）09-30 都办了，接着开工 A。用户的总原则：原理定了以合理为主，要硬凑才对得上就改原理；地球的数只当参照。
+- **自然层第二版（`docs/PLAN-NATURE.md`，2026-09-30 用户逐条定；A 开工，A1 零点与垂直结构已做，四点四十三）**：设定在 `docs/spec/13-浮石与陆地的生灭.md` 第二版（第二个超自然要素**集水核**、浮力随高度减弱得快、垂直结构与厚大气、闭孔两层、特殊的山）；阶段 A 行星层 ④ 按季节算（副高下沉、逆温层之上默认干、弱的岛群季风）+ 降水线 + ⑦ 驼峰 + 零点写进 planet.json，B 侵蚀细化 + 岩层进侵蚀 + 特殊的山 + 亚格岸线，C 河去夸张 + 漫滩照地球 + 河的数据 + 集水核 + 地下水，D 游戏；开工前的 numpy 环境与 ME Pro 验证（四点四十一）、删 Python 的算法（四点四十二）09-30 都办了，接着开工 A。用户的总原则：原理定了以合理为主，要硬凑才对得上就改原理；地球的数只当参照。
 
 - C++ 核心库（PLAN-CORE 第九节）：①–⑨ 与第三层都已移完，Linux（ME Pro）09-30 编过并验过（四点四十一），Python 的算法 09-30 删了（四点四十二）；
   **⑨ 附庸判定的怪处**（`cap_dist[t].get(capitals[s])` 拿都城节点号查以邦号为键的表，三 seed 的附庸只有 0 / 1 / 0 个，修正后 147 / 158 / 164 个，兼并史不变；四点二十六）C++ 里照旧，修不修待定；

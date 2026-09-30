@@ -58,7 +58,13 @@ def _write(ctx, R: dict) -> dict:
     e0 = edge_lats(planet["bands"])
     precip, precip_i, catch, has_river = R["precip"], I["precip"], I["catch"], I["has_river"]
     shift_amp = float(np.max(np.abs(R["edges"] - np.array([e0[k] for k in EDGE_KEYS])[:, None])))
-    return {"precip_range": [round(float(precip.min()), 2), round(float(precip.max()), 2)],
+    extra = {}
+    V = planet.get("vertical") or {}
+    if V:                                            # 岛面（台面 height_m）的气压：p = p0 · exp(−z / H)（PLAN-NATURE A1，只进摘要）
+        h = ctx.load_npz(3, "islands")["height_m"].astype(np.float64)
+        p = float(V["datum_pressure_atm"]) * np.exp(-h / (1000.0 * float(V["scale_height_km"])))
+        extra["surface_pressure_atm"] = [round(float(p.min()), 3), round(float(np.median(p)), 3), round(float(p.max()), 3)]
+    return extra | {"precip_range": [round(float(precip.min()), 2), round(float(precip.max()), 2)],
             "arid_island_share": round(float((precip_i < float(ctx.cfg.get("check", {}).get("arid_precip", 0.3))).mean()), 3),
             "storm_max": round(float(R["storm"].max()), 2),
             "band_shift_max_deg": round(shift_amp, 2),

@@ -514,7 +514,7 @@ function buildBase(){
 function tempColor(T){ const t = Math.max(0, Math.min(1, (T + 20) / 55)); const s = [[40,60,180],[80,160,220],[200,220,200],[240,170,60],[200,40,40]]; const u = t * 4, i = Math.min(3, u | 0), f = u - i; return [0,1,2].map(c => s[i][c] + (s[i+1][c] - s[i][c]) * f); }
 function renderLegend(mode, hmin, hmax){
   let html = '';
-  if (mode === 'terrain') html = `高程 ${fmt(hmin,0)}–${fmt(hmax,0)} m（云带顶以上）`;
+  if (mode === 'terrain') html = `高程 ${fmt(hmin,0)}–${fmt(hmax,0)} m（零点以上）`;
   else if (mode === 'landcover') html = LC_NAMES.slice(1).map((n, k) => `<span><span class="sw" style="background:rgb(${LC_PAL[k+1].join(',')})"></span>${n}</span>`).join('');
   else if (mode === 'natural') html = `<span><b>原始地貌（没有人以前）${R.nat ? '' : '：这份产物没有 landcover_natural，照现状画（重新生成 / 重启服务）'}</b></span>` + LC_NAMES.slice(1).map((n, k) => (k + 1 === 7 || k + 1 === 8) ? '' : `<span><span class="sw" style="background:rgb(${LC_PAL[k+1].join(',')})"></span>${n}</span>`).join('');   // 没有人以前没有田
   else if (mode === 'landuse') html = `<span><b>人工改造${R.lu ? '' : '：这份产物没有 landuse（重新生成 / 重启服务）'}</b>（灰 = 没动过）</span>` + LU_NAMES.slice(1).map((n, k) => `<span><span class="sw" style="background:rgb(${LU_PAL[k+1].join(',')})"></span>${n}</span>`).join('');
