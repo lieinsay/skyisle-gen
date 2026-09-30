@@ -17,7 +17,7 @@ struct Channels {
 
 // 一座岛（局部切片）的河道下切。h：掩膜外 NaN；hf：路由面；recv：D8 下游（扁平下标，−1 无）。
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
-                        const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double rim,
+                        const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double runoff, double rim,
                         double keel, double res_m, double year_s, const Config& c, bool is_main,
                         const GridD* Qin = nullptr);   // Qin：局地雨算出的年均流量（m³/s，P4）；空 = 汇流 × P_mm 的旧式
 

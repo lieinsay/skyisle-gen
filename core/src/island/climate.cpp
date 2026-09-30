@@ -38,8 +38,9 @@ std::vector<double> match_mean(const std::vector<double>& raw, double target, do
     return x;
 }
 
-// 相对降水 → 毫米：与行星层同一条（④ 的 precip_mm_ref × p，PLAN-NATURE A3；旧的 150 + 3850 × p^1.3 作废）
-double precip_mm_of(double p_rel, const NodeInputs& inp) { return inp.precip_mm_ref * clip(p_rel, 0.0, 1.0); }
+// 相对降水 → 毫米：与行星层同一条（④ 的 precip_mm_ref × p，PLAN-NATURE A3；旧的 150 + 3850 × p^1.3 作废）。
+// 不夹上限：按份额分的雨季折成年当量可以过 1
+double precip_mm_of(double p_rel, const NodeInputs& inp) { return inp.precip_mm_ref * std::max(p_rel, 0.0); }
 
 size_t argmax_first(const std::vector<double>& v) {
     size_t b = 0;
@@ -99,6 +100,37 @@ std::vector<std::string> season_names(const std::string& stype, const std::vecto
 
 }  // namespace
 
+namespace {
+
+// 岛上口径的陆地性（④ 同式）→ 热惯性的滞后（弧度）
+double island_lag(const NodeInputs& inp, const PlanetView& pv) {
+    const double cont = pv.cg_cont.empty() ? 0.1 : grid_interp(pv.cg_cont, pv.cg_grid, inp.lat, inp.lon);
+    const double ct = clip(cont + pv.alt_cont * clip((inp.height_m - inp.keel_clearance_m) / 2000.0, 0.0, 1.0), 0.0, 1.0);
+    const double tau = ct * pv.tau_land + (1.0 - ct) * pv.tau_ocean;
+    return std::atan(2.0 * PI / pv.cal.year_days * tau);
+}
+
+}  // namespace
+
+SeasonThermal season_thermal(const NodeInputs& inp, const PlanetView& pv) {
+    const Calendar& cal = pv.cal;
+    const int n_s = cal.seasons;
+    SeasonThermal th;
+    th.days_per_season = cal.days_per_season;
+    th.months_per_season = cal.months_per_season;
+    th.t_ref.resize(n_s);
+    th.day_hr.resize(n_s);
+    const double lag = island_lag(inp, pv), sgn = inp.lat < 0 ? -1.0 : 1.0, amp = 0.5 * inp.season_range;
+    const double tl = std::tan(inp.lat * (PI / 180.0));
+    for (int s = 0; s < n_s; ++s) {
+        const double ph = 2.0 * PI * ((s + 0.5) * cal.days_per_season - cal.offset) / cal.year_days;
+        th.t_ref[s] = inp.temp + sgn * amp * std::cos(ph - lag);
+        const double dec = pv.tilt_deg * std::cos(ph) * (PI / 180.0);
+        th.day_hr[s] = 24.0 / PI * std::acos(clip(-tl * std::tan(dec), -1.0, 1.0));
+    }
+    return th;
+}
+
 Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config& c) {
     Climate C;
     C.cal = pv.cal;
@@ -123,12 +155,14 @@ Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config&
     double tau_sea, A_sea, lag_sea, tau_isl, A_isl, lag_isl;
     thermal(cont_sea, tau_sea, A_sea, lag_sea);
     thermal(cont_isl, tau_isl, A_isl, lag_isl);
+    // 每季的带界位移读 ④ 的（全球一个数，PLAN-NATURE A5；旧的 [island.climate] k_shift × 本地 A_sea 作废）；旧产物没有时按同式现算
     std::vector<double> mids(n_s), ph(n_s), dphi(n_s);
-    const double k_shift = c.get("climate.k_shift");
+    const bool have_shift = static_cast<int>(pv.season_shift.size()) == n_s;
+    const double wt_o = w * pv.tau_ocean, A_o = 1.0 / std::sqrt(1.0 + wt_o * wt_o), lag_o = std::atan(wt_o);
     for (int s = 0; s < n_s; ++s) {
         mids[s] = (s + 0.5) * dps;
         ph[s] = 2.0 * PI * (mids[s] - cal.offset) / ydays;
-        dphi[s] = k_shift * tilt * A_sea * std::cos(ph[s] - lag_sea);
+        dphi[s] = have_shift ? pv.season_shift[s] : pv.band_shift_k * tilt * A_o * std::cos(ph[s] - lag_o);
     }
     // 局部带界（local_edges）：按经度线性插值 eq_n / eq_s 两行
     double eqn, eqs;
@@ -164,7 +198,12 @@ Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config&
         ru[s] = grid_interp(pv.wind_u, pv.wind_grid, v, lon);
         rv[s] = grid_interp(pv.wind_v, pv.wind_grid, v, lon);
     }
-    const std::vector<double> precip = match_mean(rp, inp.precip, 0.0, 1.0);
+    // 四季降水：④ 的份额（四季各解一遍水汽，A2）× 季数 × 年均；旧产物没有份额时照旧取样再缩放到年均
+    std::vector<double> precip(n_s);
+    if (static_cast<int>(inp.precip_share.size()) == n_s)
+        for (int s = 0; s < n_s; ++s) precip[s] = inp.precip * n_s * inp.precip_share[s];
+    else
+        precip = match_mean(rp, inp.precip, 0.0, 1.0);
     const std::vector<double> storm = mean4(rs) > 1e-9 ? match_mean(rs, inp.storm, 0.0, 1.0) : std::vector<double>(n_s, inp.storm);
     const std::vector<double> window = match_mean(rw, inp.window, 0.03, 1.0);
     const double sgn = south ? -1.0 : 1.0;
@@ -249,8 +288,10 @@ Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config&
     C.A_isl = pyround(A_isl, 3);
     C.lag_sea_days = pyround(lag_sea / (2 * PI) * ydays, 1);
     C.lag_isl_days = pyround(lag_isl / (2 * PI) * ydays, 1);
-    C.k_shift = k_shift;
-    C.band_amp = pyround(k_shift * tilt * A_sea, 2);
+    C.k_shift = pv.band_shift_k;
+    double amp = 0.0;
+    for (int s = 0; s < n_s; ++s) amp = std::max(amp, std::fabs(dphi[s]));
+    C.band_amp = pyround(amp, 2);
     C.m_precip = pyround(mean4(precip), 5);
     C.m_storm = pyround(mean4(storm), 5);
     C.m_window = pyround(mean4(window), 5);

@@ -37,7 +37,7 @@ def static_isolation() -> tuple[bool, list[str]]:
 
 
 def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | None = None,
-             det_hashes: tuple[dict, dict] | None = None, daily_years: int = 60) -> list[dict]:
+             det_hashes: tuple[dict, dict] | None = None, daily_years: int = 600) -> list[dict]:
     J = g["json"]
     C = g.get("climate")
     cons = J["constraints"]
@@ -263,11 +263,15 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             "全满足", not S["villages"] or (len(T_) >= 1 and seat_town and len(vt) == len(S["villages"]) and not bad_mode and not no_line))
         if "harbors" in S:
             items.append(_market_check(g, S, c))
-        add("SET-water", "村 1 km 内有水源的占比", S["water_ok_share"], "≥ 0.8", S["water_ok_share"] >= 0.8, hard=False)
+        # 没有村的群（荒漠里只有散户与蓄水池，A3 起有真沙漠）不算：占比按村算，0 个村时没有意义
+        add("SET-water", "村 1 km 内有水源的占比（没有村的群不查）", S["water_ok_share"] if S["villages"] else None, "≥ 0.8",
+            not S["villages"] or S["water_ok_share"] >= 0.8, hard=False)
         if "farmland" in S:
             items.extend(_farm_checks(g, S, c))
         kinds = [h["kind"] for h in S["home_candidates"]]
-        add("SET-home", "主家候选 2–3 个、类型各异", kinds, "2–3 个", 2 <= len(kinds) <= 3 and len(kinds) == len(set(kinds)))
+        # 没有村的群没有邑治，「邑治旁」一类出不来（荒漠群只有散户，A3 起有真沙漠）：只要求 ≤ 3 个、类型各异
+        add("SET-home", "主家候选 2–3 个、类型各异（没有村的群 0–3 个）", kinds, "2–3 个",
+            (2 <= len(kinds) if S["villages"] else True) and len(kinds) <= 3 and len(kinds) == len(set(kinds)))
     if det_hashes is not None:
         h1, h2 = det_hashes
         diff = sorted(k for k in set(h1) | set(h2) if h1.get(k) != h2.get(k))

@@ -274,7 +274,8 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
     g.update({"river_width_m": R["river_width_m"], "river_depth_m": R["river_depth_m"], "floodplain": R["floodplain"], "cut_m": R["cut_m"]})
     g.update({"flowacc_km2": R["flowacc_km2"], "river": river, "stream": R["stream"], "lake": lake,
               "landcover": R["landcover"], "arable": R["arable"], "slope_deg": R["slope_deg"], "filled": R["filled"],
-              "recv_i": R["recv_i"], "recv_j": R["recv_j"], "route_h": R["route_h"], "rain_mm": R["rain_mm"]})
+              "recv_i": R["recv_i"], "recv_j": R["recv_j"], "route_h": R["route_h"], "rain_mm": R["rain_mm"],
+              "runoff_mm": R["runoff_mm"]})
     if "cultivable" in R:                  # P5：宜垦（arable 是额度内的上等地）
         g["cultivable"] = R["cultivable"]
     cover, arable = R["landcover"], R["arable"]
@@ -288,7 +289,8 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
     u, v = (float(x) for x in R["wind"])
     J["hydro"] = {"precip_mm": round(P_mm, 0), "river_threshold_km2": None if river_thr_km2 is None else round(river_thr_km2, 2),
                   "perennial_q_m3s": float(hc["river_min_q_m3s"]), "stream_min_km2": float(hc["stream_min_km2"]),
-                  "runoff_coef": float(hc["runoff_coef"]),
+                  "runoff_ratio": round(float(R["runoff_ratio"]), 3), "runoff_mm": round(P_mm * float(R["runoff_ratio"]), 0),
+                  "budyko_w": float(hc["budyko_w"]),
                   "main_max_flowacc_km2": J["islands"][0]["max_flowacc_km2"],
                   "n_lakes": int(sum(i["n_lakes"] for i in J["islands"])),
                   "lake_km2": round(float(lake.sum()) * cell_km2, 3),
@@ -427,4 +429,6 @@ def climate_only_cpp(ctx, node_inp: dict, c: dict, cfg_obj=None) -> dict:
     for k in ("lat", "lon", "height_m", "keel_clearance_m", "precip", "temp", "temp_sea", "storm", "window", "season_range", "season_range_sea",
               "temp_winter", "temp_summer"):
         d[k] = float(node_inp[k])
+    if node_inp.get("precip_share") is not None:
+        d["precip_share"] = [float(v) for v in node_inp["precip_share"]]
     return decode.climate(core().climate_only(d, planet_obj(ctx), cfg_obj if cfg_obj is not None else flat_config(c)), node_inp["planet"])

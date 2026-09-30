@@ -70,6 +70,8 @@ def main() -> None:
         inp = {k: float(isl[k][j]) for k in ("lat", "lon", "height_m")}
         for k in ("precip", "temp", "storm", "window", "temp_sea", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
             inp[k] = float(cli[k][j])
+        if "precip_share" in cli:                  # A5：四季降水按 ④ 的份额
+            inp["precip_share"] = cli["precip_share"][:, j]
         inp["planet"] = planet
         inp["keel_clearance_m"] = keel
         ss = climate_only_cpp(ctx, inp, c, cfg_obj)["seasons"]

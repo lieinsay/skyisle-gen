@@ -72,6 +72,8 @@ island::PlanetView planet_view(const Planet& p, const Islands& isl, const Climat
     v.tau_land = cfg.get("s04.climate.season_tau_land_days");
     v.tau_ocean = cfg.get("s04.climate.season_tau_ocean_days");
     v.alt_cont = cfg.get("s04.climate.season_alt_continentality", 0.0);
+    v.season_shift = f32v(c.season_shift);
+    v.band_shift_k = cfg.get("s04.climate.season_band_shift_k", 0.35);
     v.cal = island_calendar(p);
     return v;
 }
@@ -96,6 +98,8 @@ island::NodeInputs node_inputs(const Islands& isl, const Climate& c, int64_t nod
     x.lapse_c_per_km = cfg.get("s04.climate.lapse_c_per_km");
     x.arable_frac = c.i_arable_frac_eff.empty() ? f32(isl.arable_frac[q]) : f32(c.i_arable_frac_eff[q]);   // A3 起是降水线之后的
     x.precip_mm_ref = cfg.get("s04.climate.precip_mm_ref", 4000.0);
+    if (!c.i_precip_share.empty())
+        for (int k = 0; k < c.n_seasons; ++k) x.precip_share.push_back(f32(c.i_precip_share[static_cast<size_t>(k) * isl.n() + q]));
     x.river_size = f32(c.i_river_size[q]);
     x.has_river = c.i_has_river[q] != 0;
     x.temp = f32(c.i_temp[q]);

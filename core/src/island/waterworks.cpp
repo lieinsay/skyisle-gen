@@ -185,7 +185,7 @@ BigPlan big_plan(const Group& g, const Config& c, const std::vector<uint8_t>& pi
     const double weir = wc("big_weir_m"), grad_c = wc("big_grad_m_per_km") * res_km, cut = wc("canal_cut_m"), a_cost = wc("canal_slope_cost");
     const double Rc = wc("big_reach_km") / res_km;
     const int Rw = static_cast<int>(std::ceil(Rc - 1e-9));
-    const double P = pyround(g.P_mm, 0) / 1000.0, runoff = c.get("hydro.runoff_coef"), duty = wc("big_duty_mm") / 1000.0;
+    const double duty = wc("big_duty_mm") / 1000.0;
     const int n_try = static_cast<int>(wc("big_try"));
     const double ts = wc("big_try_sep_km") / res_km, sep2 = ts * ts;
     const int64_t need = std::max(cells_min(wc("big_min_cmd_km2"), cell_km2),
@@ -300,7 +300,7 @@ BigPlan big_plan(const Group& g, const Config& c, const std::vector<uint8_t>& pi
             const int32_t cc = kept[i];
             const int ci = cc / W, cj = cc % W, k = g.island_id.v[cc];
             const double z0 = g.height.v[cc] + static_cast<double>(f32(g.depth_m.v[cc])) + weir;
-            const double water = static_cast<double>(f32(g.acc_km2.v[cc])) * P * runoff / duty;
+            const double water = g.runoff_acc.v[cc] / 1000.0 / duty;   // 上游一年的径流（mm·km² → m·km²）/ 一年灌一遍的水（A5：Budyko）
             const int64_t cap_n = static_cast<int64_t>(std::floor(water / cell_km2));
             int64_t m = 0;
             for (int a = std::max(0, ci - Rw); a < std::min(H, ci + Rw + 1); ++a)

@@ -468,6 +468,8 @@ void bind_planet(nb::module_& m) {
         d["season_range_sea"] = x.season_range_sea;
         d["temp_winter"] = x.temp_winter;
         d["temp_summer"] = x.temp_summer;
+        d["precip_mm_ref"] = x.precip_mm_ref;
+        d["precip_share"] = x.precip_share.empty() ? nb::none() : nb::cast(x.precip_share);
         return d;
     });
 

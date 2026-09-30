@@ -56,6 +56,8 @@ def _node_inputs(ctx, node: int) -> dict:
     d["has_river"] = bool(cli["has_river"][node])
     if "arable_frac_eff" in cli:          # A3 起：已垦额度 = 降水线之后的可耕率
         d["arable_frac"] = float(cli["arable_frac_eff"][node])
+    if "precip_share" in cli:             # A2 起：四季降水按 ④ 的份额分（A5）
+        d["precip_share"] = [float(v) for v in cli["precip_share"][:, node]]
     d["area_median_km2"] = float(np.median(isl["area_km2"]))
     d["planet"] = planet
     d["keel_clearance_m"] = float(ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))

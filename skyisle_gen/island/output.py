@@ -94,10 +94,10 @@ def write_terrain(out: Path, g: dict) -> None:
     g["json"]["raster"]["height_png_scale_m_per_unit"] = round(1.0 / scale, 6)
     arrays = {"height": h.astype(np.float32), "island_id": g["island_id"].astype(np.int16), "cliff": g["cliff"]}
     # P5：可耕地拆成 cultivable（宜垦 0 / 1 / 2 要修梯田）、cultivated（已垦、在种：0 / 1 田 / 2 梯田）、fallow_years（撂荒了几年，0 = 不是）；
-    # 旧的 arable（按额度画死的可耕地）不再写（含义变了就改键名）；rain_mm = 局地年降水（P4）；polder_id = 圩号（P6，0 = 不是圩田；圩田也算已垦）；
+    # 旧的 arable（按额度画死的可耕地）不再写（含义变了就改键名）；rain_mm = 局地年降水（P4）；runoff_mm = 年径流深（Budyko，A5）；polder_id = 圩号（P6，0 = 不是圩田；圩田也算已垦）；
     # P6b：landcover_natural = 没有人以前的地表（码同 landcover），landuse = 人工改造（waterworks.LANDUSE_CLASSES：0 没动过 … 7 采场）
     for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "river_width_m",
-              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "polder_id", "landcover_natural", "landuse"):
+              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse"):
         if k in g:
             arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)

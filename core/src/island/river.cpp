@@ -7,7 +7,7 @@
 namespace skyisle::island {
 
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
-                        const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double rim,
+                        const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double runoff, double rim,
                         double keel, double res_m, double year_s, const Config& c, bool /*is_main*/, const GridD* Qin) {
     const int H = h.H, W = h.W;
     const size_t N = h.size();
@@ -30,7 +30,6 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
         out.floodplain = Grid<uint8_t>(H, W, 0);
         return out;
     }
-    const double runoff = c.get("hydro.runoff_coef");
     const double wa = c.get("hydro.width_a"), wb = c.get("hydro.width_b"), wsc = c.get("hydro.width_scale");
     const double dc = c.get("hydro.depth_c"), df = c.get("hydro.depth_f"), dsc = c.get("hydro.depth_scale");
     const double sm = c.get("hydro.stream_width_mult");

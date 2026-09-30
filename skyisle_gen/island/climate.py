@@ -4,8 +4,9 @@ tag python-reference-final）。这里只剩历法换算、island.json 的气候
 
 季节的算法（C++ 同式）：行星层只有年均值，季节由「风带随太阳南北摆动」+ 热惯性得到；季节强度读 ④ 的 season_range / season_range_sea，
 相位滞后与带界摆动的振幅按 skeleton 的 τ / A 公式。历法：一年 = seasons × months_per_season × 28 日（默认 4 × 3 × 28 = 336）；
-季中 = 二分二至（季 1 的季中 = 北半球夏至）。每季取季中那一天：带界向夏半球偏移 Δφ = k_shift × 倾角 × A_sea × cos(相位 − 滞后)，
-在 1° 网格上取「本岛纬度 − Δφ」处的降水 / 风暴 / 航行窗口 / 风，再整体缩放使四季平均 = 年均值。
+季中 = 二分二至（季 1 的季中 = 北半球夏至）。四季降水 = 年均 × 季数 × ④ 的份额 precip_share（④ 四季各解一遍水汽，PLAN-NATURE A2 / A5）；
+风暴 / 航行窗口 / 风：每季取季中那一天，带界按 ④ 的每季位移 season_shift 南北挪，在 1° 网格上取「本岛纬度 − Δφ」处的值，再整体缩放使四季平均 = 年均值
+（旧产物没有份额与位移时，降水照旧取样，位移按 [s04.climate] season_band_shift_k × 倾角 × A_海 × cos(相位 − 滞后_海) 现算）。
 季型（决定 5）：四季分明 / 冷暖两季 / 雨旱季 / 风暴季 / 常夏（常寒），按四季各量的年内差异比较判定，名字是软的。
 """
 from __future__ import annotations
@@ -117,6 +118,8 @@ def classify_all(ctx, c: dict, log=print) -> dict:
         inp = {k: float(isl[k][j]) for k in ("lat", "lon", "height_m")}
         for k in ("precip", "temp", "storm", "window", "temp_sea", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
             inp[k] = float(cli[k][j])
+        if "precip_share" in cli:
+            inp["precip_share"] = cli["precip_share"][:, j]
         inp["planet"] = planet
         inp["keel_clearance_m"] = keel
         C = climate_only_cpp(ctx, inp, c, cfg_obj)   # 四季在 C++ 里算（行星计划 P6b）

@@ -202,7 +202,8 @@ def test_generate_p5_farmland(small_ctx, tmp_path):
             "island.settle.graze_max=4", "island.market.beacon_max=2", "island.settle.shrine_p=0.5", "island.settle.tomb_p=0.35", "island.settle.tomb_max_km2=5.0"]
     seen = set()
     for extra in passes:
-        for node in _nodes(small_ctx, 3)[1:3]:
+        # 第 3、4 个有河的群（A5 起 river_min_mm 400，#1 也有河了，排在前面；要的是有没人住的小岛可放庙、墓岛的那两群）
+        for node in _nodes(small_ctx, 4)[2:4]:
             out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
             assert not _hard_fails(small_ctx, node, gb, out), node
             S = gb["settle"]
@@ -392,6 +393,7 @@ def test_is_daily_and_climate_only(small_ctx, tmp_path):
     inp = {k: float(isl_npz[k][node]) for k in ("lat", "lon", "height_m")}
     for k in ("precip", "temp", "storm", "window", "temp_sea", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
         inp[k] = float(cli[k][node])
+    inp["precip_share"] = cli["precip_share"][:, node]          # A5：四季降水按 ④ 的份额（classify_all 同样传）
     inp["planet"] = planet
     inp["keel_clearance_m"] = float(small_ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))
     assert climate_only_cpp(small_ctx, inp, c) == g["climate"]

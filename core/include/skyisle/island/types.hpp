@@ -37,6 +37,7 @@ struct NodeInputs {
     // 水系用
     double precip = 0, temp_sea = 0, lapse_c_per_km = 6.0, arable_frac = 0, river_size = 0;
     double precip_mm_ref = 4000.0;   // 相对降水 1 的毫米数（④ 的 precip_mm_ref，A3 起线性换算）；arable_frac 是降水线之后的（④ 的 arable_frac_eff）
+    std::vector<double> precip_share;   // ④ 各季降水占全年的份额（A2 起；空 = 旧产物，四季降水按带界摆动取样）
     bool has_river = false;
     // 气候用（④ 的岛上年均值）
     double temp = 0, storm = 0, window = 0, season_range = 0, season_range_sea = 0, temp_winter = 0, temp_summer = 0;
@@ -72,6 +73,8 @@ struct PlanetView {
     std::vector<double> cg_precip, cg_storm, cg_window, cg_cont;   // cg_cont 空 = 没有陆地性场（取 0.1）
     std::vector<double> band_lons, band_eq_n, band_eq_s;           // band_local 的经度与 eq_n / eq_s 两行
     double tilt_deg = 34.0, tau_land = 8.0, tau_ocean = 110.0, alt_cont = 0.0;
+    std::vector<double> season_shift;   // ④ 每季的带界位移（°，全球一个数，A2 起）；空 = 旧产物，按 band_shift_k 现算
+    double band_shift_k = 0.35;         // [s04.climate] season_band_shift_k
     Calendar cal;
 };
 
@@ -285,6 +288,9 @@ struct Group {
     std::vector<double> suit;
     GridD width_m, depth_m, cut_m, slope;
     GridD rain;                     // 局地年降水（mm，P4；陆地格，关掉局地雨时 = P_mm）
+    GridD runoff;                   // 年径流深（mm，A5：局地雨 × Budyko 径流系数；陆地格）
+    GridD runoff_acc;               // 上游的径流累计（mm·km²，= 年径流量 / 1000 m³）：大堰算水够灌多少地
+    double runoff_ratio = 0;        // 全群陆地的径流 / 降水
     GridI recv_i, recv_j;
     std::vector<RiverLine> lines;
     std::vector<RiverRec> rivers;   // 主岛

@@ -6,6 +6,7 @@
 
 #include "skyisle/flow.hpp"
 #include "skyisle/island/build.hpp"
+#include "skyisle/island/climate.hpp"
 #include "skyisle/island/farmland.hpp"
 #include "skyisle/island/river.hpp"
 
@@ -25,7 +26,7 @@ struct IslandHydro {
     bool present = false;
     int r0 = 0, c0 = 0, h = 0, w = 0;
     Mask mk;
-    GridD h_final, hf, hr, Akm, cut, width, depth, pit, Q;
+    GridD h_final, hf, hr, Akm, cut, width, depth, pit, Q, Racc;
     Grid<uint8_t> river, stream, lake, fp;
     std::vector<int64_t> recv;
     int n_lakes = 0;
@@ -243,7 +244,47 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                 if (land.v[k]) g.rain.v[k] = P_mm * g.rain.v[k] / rmean;
         }
     }
-    const double rq = 16.0;   // 雨量加权汇流的量子（1/16 mm）：权重取整后求和与次序无关，两个后端逐位相同
+    // Budyko 径流（PLAN-NATURE A5，spec 13 第九节第 6 条：冷的、湿的地方同样的雨出更多河水，热的、干的出得少）：
+    // 径流系数 = (1 + φ^w)^(1/w) − φ（傅抱璞式），φ = 潜在蒸散 / 局地雨；潜在蒸散按 Thornthwaite——各季的气温在本格高度
+    // （台面的季温 − 直减率 × (高度 − 台面)，零点以下取零点处），昼长按季中的赤纬。旧的全群一个 runoff_coef 0.45 作废
+    {
+        const SeasonThermal th = season_thermal(inp, pv);
+        const int ns = static_cast<int>(th.t_ref.size());
+        const double bw = c.get("hydro.budyko_w"), mps = static_cast<double>(th.months_per_season);
+        g.runoff = GridD(H, W, 0.0);
+        double rs = 0.0, ps = 0.0;
+        std::vector<double> T(ns);
+        for (size_t k = 0; k < N; ++k) {
+            if (!land.v[k]) continue;
+            const double dz = (std::max(g.height.v[k], 0.0) - inp.height_m) / 1000.0;
+            double I = 0.0;   // 热指数（按月：一季 months_per_season 个月）
+            for (int s = 0; s < ns; ++s) {
+                T[s] = th.t_ref[s] - inp.lapse_c_per_km * dz;
+                if (T[s] > 0) I += mps * std::pow(T[s] / 5.0, 1.514);
+            }
+            double pet = 0.0;
+            if (I > 0) {
+                const double a = ((6.75e-7 * I - 7.71e-5) * I + 1.792e-2) * I + 0.49239;
+                for (int s = 0; s < ns; ++s) {
+                    if (T[s] <= 0) continue;
+                    const double m = T[s] < 26.5 ? 16.0 * std::pow(10.0 * T[s] / I, a) : -415.85 + 32.24 * T[s] - 0.43 * T[s] * T[s];   // 30 日、12 小时的月
+                    pet += m * (th.day_hr[s] / 12.0) * (th.days_per_season / 30.0);
+                }
+            }
+            const double P = g.rain.v[k];
+            double r = 0.0;
+            if (P > 0) {
+                const double phi = pet / P;
+                r = clip(std::pow(1.0 + std::pow(phi, bw), 1.0 / bw) - phi, 0.0, 1.0);
+            }
+            g.runoff.v[k] = P * r;
+            rs += g.runoff.v[k];
+            ps += P;
+        }
+        g.runoff_ratio = ps > 0 ? rs / ps : 0.0;
+    }
+    const double runoff = g.runoff_ratio;
+    const double rq = 16.0;   // 径流加权汇流的量子（1/16 mm）：权重取整后求和与次序无关
     const int n_isl = static_cast<int>(g.islands.size());
     // 各岛的外框
     std::vector<int> rlo(n_isl, H), rhi(n_isl, -1), clo(n_isl, W), chi(n_isl, -1);
@@ -344,17 +385,23 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             if (mk.v[q]) amax = std::max(amax, R.Akm.v[q]);
         }
         R.max_acc = amax;
-        // 局地雨：年均流量按上游各格的雨（取整到 1/rq mm 的权重求和，次序无关）
+        // 年均流量按上游各格的径流深（Budyko，A5；取整到 1/rq mm 的权重求和，次序无关）；关掉局地雨时按全群的径流系数
+        R.Racc = GridD(h, w, 0.0);
         if (local_rain) {
             GridD wt(h, w, 0.0);
             for (int i = 0; i < h; ++i)
                 for (int j = 0; j < w; ++j)
-                    if (mk(i, j)) wt(i, j) = std::nearbyint(g.rain(i + R.r0, j + R.c0) * rq);
+                    if (mk(i, j)) wt(i, j) = std::nearbyint(g.runoff(i + R.r0, j + R.c0) * rq);
             const GridD Aw = accumulate(mk, fd, &wt);
-            const double runoff = c.get("hydro.runoff_coef");
             R.Q = GridD(h, w, 0.0);
             for (size_t q = 0; q < n; ++q)
-                if (mk.v[q]) R.Q.v[q] = Aw.v[q] * (cell_km2 / rq) * 1000.0 * runoff / year_s;
+                if (mk.v[q]) {
+                    R.Racc.v[q] = Aw.v[q] * (cell_km2 / rq);
+                    R.Q.v[q] = R.Racc.v[q] * 1000.0 / year_s;
+                }
+        } else {
+            for (size_t q = 0; q < n; ++q)
+                if (mk.v[q]) R.Racc.v[q] = R.Akm.v[q] * P_mm * runoff;
         }
         // 湖面：高程抬到填平面
         for (size_t q = 0; q < n; ++q) {
@@ -367,7 +414,6 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         R.stream = Grid<uint8_t>(h, w, 0);
         if (k == 0) {
             if (inp.has_river) {
-                const double runoff = c.get("hydro.runoff_coef");
                 const double q_area = c.get("hydro.river_min_q_m3s") * year_s / std::max(1e-9, P_mm / 1000.0 * runoff) / 1e6;
                 double amx = -INF;
                 for (size_t q = 0; q < n; ++q) amx = std::max(amx, R.Akm.v[q]);
@@ -413,7 +459,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         }
         // 河道成形
         const IslandRec& J = g.islands[k];
-        R.ch = carve_channels(hh, R.hr, mk, R.lake, R.recv, R.Akm, R.river, R.stream, P_mm, J.rim_j, J.keel_j, res_m, year_s, c, k == 0,
+        R.ch = carve_channels(hh, R.hr, mk, R.lake, R.recv, R.Akm, R.river, R.stream, P_mm, runoff, J.rim_j, J.keel_j, res_m, year_s, c, k == 0,
                               local_rain ? &R.Q : nullptr);
         R.cut = GridD(h, w, 0.0);
         R.h_final = GridD(h, w, NaN);
@@ -430,6 +476,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     // 写回群栅格
     g.filled = GridD(H, W, NaN);
     g.acc_km2 = GridD(H, W, 0.0);
+    g.runoff_acc = GridD(H, W, 0.0);
     g.lake = Grid<uint8_t>(H, W, 0);
     g.river = Grid<uint8_t>(H, W, 0);
     g.stream = Grid<uint8_t>(H, W, 0);
@@ -463,6 +510,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                 pit(gi, gj) = R.pit.v[q];
                 g.filled(gi, gj) = R.hf.v[q];
                 g.acc_km2(gi, gj) = R.Akm.v[q];
+                g.runoff_acc(gi, gj) = R.Racc.v[q];
                 if (R.lake.v[q]) g.lake(gi, gj) = 1;
                 g.cut_m(gi, gj) = R.cut.v[q];
                 g.height(gi, gj) = R.h_final.v[q];

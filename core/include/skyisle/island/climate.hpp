@@ -6,8 +6,15 @@
 
 namespace skyisle::island {
 
-// 四季：带界随太阳摆动取样 → 缩放到年均；温度 = 年均 + 半振幅 × cos(相位 − 滞后)；季型分类（只用行星层标量与网格，不看地形）
+// 四季：降水按 ④ 的份额、风暴 / 窗口 / 风按每季带界位移取样 → 缩放到年均；温度 = 年均 + 半振幅 × cos(相位 − 滞后)；季型分类（只用行星层标量与网格，不看地形）
 Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config& c);
+// 台面（inp.height_m）处各季季中的气温（build_climate 的 t_isl 同式）与季中的昼长（小时，按赤纬 = 倾角 × cos(季相)）：Budyko 的潜在蒸散用
+struct SeasonThermal {
+    std::vector<double> t_ref, day_hr;
+    double days_per_season = 84.0;
+    int months_per_season = 3;
+};
+SeasonThermal season_thermal(const NodeInputs& inp, const PlanetView& pv);
 // 一年逐日的季节曲线（温度按余弦；降水 / 风暴 / 窗口 / 风按季中值做周期插值 + 滑动平均）
 Daily daily_curves(const Climate& clim, const NodeInputs& inp);
 std::vector<SeasonParams> season_params(const Climate& clim, const Config& c);

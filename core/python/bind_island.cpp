@@ -81,6 +81,7 @@ NodeInputs inp_from(const nb::dict& d) {
     opt("temp_summer", x.temp_summer);
     opt("people_per_arable_km2", x.people_per_arable_km2);
     opt("precip_mm_ref", x.precip_mm_ref);
+    if (d.contains("precip_share") && !d["precip_share"].is_none()) x.precip_share = nb::cast<std::vector<double>>(d["precip_share"]);
     if (d.contains("pop") && !d["pop"].is_none()) x.pop = dget(d, "pop");
     if (d.contains("capital") && !d["capital"].is_none()) {
         nb::dict cap = nb::cast<nb::dict>(d["capital"]);
@@ -159,6 +160,8 @@ PlanetView planet_from(const nb::dict& d) {
         p.tau_land = dget(q, "tau_land");
         p.tau_ocean = dget(q, "tau_ocean");
         p.alt_cont = dget(q, "alt_cont");
+        if (q.contains("season_shift") && !q["season_shift"].is_none()) p.season_shift = nb::cast<std::vector<double>>(q["season_shift"]);
+        if (q.contains("band_shift_k")) p.band_shift_k = dget(q, "band_shift_k");
         nb::dict cal = nb::cast<nb::dict>(q["calendar"]);
         p.cal.seasons = nb::cast<int>(cal["seasons"]);
         p.cal.months_per_season = nb::cast<int>(cal["months_per_season"]);
@@ -307,6 +310,8 @@ nb::dict hydro_dict(Group& g) {
     d["cut_m"] = f32_np(g.cut_m);
     d["slope_deg"] = f32_np(g.slope);
     d["rain_mm"] = f32_np(g.rain);
+    d["runoff_mm"] = f32_np(g.runoff);
+    d["runoff_ratio"] = g.runoff_ratio;
     d["recv_i"] = grid_np(GridI(g.recv_i));
     d["recv_j"] = grid_np(GridI(g.recv_j));
     d["P_mm"] = g.P_mm;
