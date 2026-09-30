@@ -1,5 +1,5 @@
-// ④ 局地风与气候（s04_climate.py）：岛对风的扰动（localwind.py）、温度、风暴、上风水汽追踪降水（moisture.py）、季节强度（skeleton.season_range）、
-// 各群的气候标量与河流。无随机数（precip_noise_amp > 0 时才从 stage_rng(seed, 4) 取残余噪声）。
+// ④ 局地风与气候（s04_climate.py）：岛对风的扰动（localwind.py）、温度、风暴、上风水汽追踪降水（moisture.py；PLAN-NATURE A2 起四季各解一遍）、
+// 季节强度（skeleton.season_range）、各群的气候标量与河流。无随机数（precip_noise_amp > 0 时才从 stage_rng(seed, 4) 取残余噪声）。
 #include "skyisle/planet/planet.hpp"
 
 #include <algorithm>
@@ -392,40 +392,49 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
     C.lat_eff.resize(M);
     for (int i = 0; i < H; ++i)
         for (int j = 0; j < W; ++j) C.lat_eff[static_cast<size_t>(i) * W + j] = ax.lats[i] - D[static_cast<size_t>(i) * W + j];
-    std::vector<double> u_bg, v_bg, du, dv;
-    wind_profile(C.lat_eff, cfg, p, u_bg, v_bg);
+    std::vector<double> du, dv;
     g_vortex(ax, gi.lat, gi.lon, gi.radius_deg, cfg.get("s02.wind.g_vortex_speed"), du, dv);
-    C.u_bg.resize(M);
-    C.v_bg.resize(M);
-    for (size_t c = 0; c < M; ++c) {
-        C.u_bg[c] = u_bg[c] + du[c];
-        C.v_bg[c] = v_bg[c] + dv[c];
+    // 障碍场的梯度（绕流偏转、撞墙抬升共用）
+    const std::vector<double> dOdy = gradient_rows(O, H, W, ax.lats[1] - ax.lats[0]);
+    std::vector<double> dOdx(M);
+    for (int i = 0; i < H; ++i) {
+        const double cosl = np_maximum(std::cos(deg2rad(ax.lats[i])), 0.1);
+        for (int j = 0; j < W; ++j)
+            dOdx[static_cast<size_t>(i) * W + j] =
+                (O[static_cast<size_t>(i) * W + (j + 1) % W] - O[static_cast<size_t>(i) * W + (j - 1 + W) % W]) / (2.0 * (ax.lats[1] - ax.lats[0])) / cosl;
     }
-    {   // perturb_wind：摩擦 + 绕流偏转 + 尾流
-        const double r = ax.lats[1] - ax.lats[0];
-        const std::vector<double> dOdy = gradient_rows(O, H, W, r);
+    // 背景风（按局部带界坐标 lat，含 G 涡）→ 摩擦 + 绕流偏转 + 尾流
+    auto background = [&](const std::vector<double>& lat, std::vector<double>& ub, std::vector<double>& vb) {
+        std::vector<double> u0, v0;
+        wind_profile(lat, cfg, p, u0, v0);
+        ub.resize(M);
+        vb.resize(M);
+        for (size_t c = 0; c < M; ++c) {
+            ub[c] = u0[c] + du[c];
+            vb[c] = v0[c] + dv[c];
+        }
+    };
+    auto perturb = [&](const std::vector<double>& ub, const std::vector<double>& vb, std::vector<double>& u, std::vector<double>& v,
+                       std::vector<double>& wake) {
         const double kb = cfg.get("s04.localwind.deflect_k"), kf = cfg.get("s04.localwind.friction_k");
         std::vector<double> u2(M), v2(M);
-        for (int i = 0; i < H; ++i) {
-            const double cosl = np_maximum(std::cos(deg2rad(ax.lats[i])), 0.1);
-            for (int j = 0; j < W; ++j) {
-                const size_t c = static_cast<size_t>(i) * W + j;
-                const double dOdx = (O[static_cast<size_t>(i) * W + (j + 1) % W] - O[static_cast<size_t>(i) * W + (j - 1 + W) % W]) / (2.0 * r) / cosl;
-                const double spd = np_hypot(C.u_bg[c], C.v_bg[c]);
-                const double fric = 1.0 - kf * O[c];
-                u2[c] = (C.u_bg[c] - kb * spd * dOdx) * fric;
-                v2[c] = (C.v_bg[c] - kb * spd * dOdy[c]) * fric;
-            }
-        }
-        C.wake = wake_field(O, u2, v2, ax, cfg);
-        const double kw = cfg.get("s04.localwind.wake_k");
-        C.u.resize(M);
-        C.v.resize(M);
         for (size_t c = 0; c < M; ++c) {
-            C.u[c] = u2[c] * (1.0 - kw * C.wake[c]);
-            C.v[c] = v2[c] * (1.0 - kw * C.wake[c]);
+            const double spd = np_hypot(ub[c], vb[c]);
+            const double fric = 1.0 - kf * O[c];
+            u2[c] = (ub[c] - kb * spd * dOdx[c]) * fric;
+            v2[c] = (vb[c] - kb * spd * dOdy[c]) * fric;
         }
-    }
+        wake = wake_field(O, u2, v2, ax, cfg);
+        const double kw = cfg.get("s04.localwind.wake_k");
+        u.resize(M);
+        v.resize(M);
+        for (size_t c = 0; c < M; ++c) {
+            u[c] = u2[c] * (1.0 - kw * wake[c]);
+            v[c] = v2[c] * (1.0 - kw * wake[c]);
+        }
+    };
+    background(C.lat_eff, C.u_bg, C.v_bg);
+    perturb(C.u_bg, C.v_bg, C.u, C.v, C.wake);
     const double vlm = cfg.get("s04.localwind.local_wind_max"), llr = cfg.get("s04.localwind.local_land_ref");
     C.v_local.resize(M);
     for (size_t c = 0; c < M; ++c) C.v_local[c] = vlm * clip(L[c] / llr, 0.0, 1.0);
@@ -457,7 +466,7 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
     C.obstacle = O;
     C.land = L;
 
-    // ---------- 温度（°C，海面）
+    // ---------- 温度（°C，零点口径——原叫海面口径）
     const double teq = cfg.get("s04.climate.temp_eq_c"), tpole = cfg.get("s04.climate.temp_pole_c");
     C.temp.resize(M);
     for (int i = 0; i < H; ++i) {
@@ -465,7 +474,7 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
         const double t = (teq - (teq - tpole) * (s * s)) * p.insolation_rel;
         for (int j = 0; j < W; ++j) C.temp[static_cast<size_t>(i) * W + j] = t;
     }
-    // ---------- 风暴
+    // ---------- 风暴（按局部带界坐标 lat：年均用 lat_eff，各季用挪过的）
     const double storm_k = cfg.get("s04.localwind.storm_k");
     const double mid_c = cfg.has("s04.climate.storm_midlat_lat_deg") ? cfg.get("s04.climate.storm_midlat_lat_deg") * p.band_scale
                                                                      : 0.5 * (p.calm_top + p.westerlies_top);
@@ -477,107 +486,42 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
     const double seq = cfg.get("s04.climate.storm_eq_amp"), sma = cfg.get("s04.climate.storm_midlat_amp"),
                  smw = cfg.get("s04.climate.storm_midlat_width_deg"), sga = cfg.get("s04.climate.storm_g_amp");
     const Vec3 g_xyz = latlon_to_xyz(gi.lat, gi.lon);
-    C.storm.resize(M);
-    C.storm_no_g.resize(M);
-    C.stability.resize(M);
-    std::vector<double> ae(M);
+    std::vector<double> gdist(M);
     for (int i = 0; i < H; ++i)
-        for (int j = 0; j < W; ++j) {
-            const size_t c = static_cast<size_t>(i) * W + j;
-            ae[c] = std::fabs(C.lat_eff[c]);
-            double s = seq * gauss(ae[c], 0.0, 0.8 * p.eq_storm_top);
-            for (size_t k = 0; k < 4 && k < amps.size(); ++k) s = s + amps[k] * gauss(ae[c], shear_edges[k], sw);
-            s = s + sma * gauss(ae[c], mid_c, smw);
+        for (int j = 0; j < W; ++j) gdist[static_cast<size_t>(i) * W + j] = rad2deg(angdist(latlon_to_xyz(ax.lats[i], ax.lons[j]), g_xyz));
+    auto storm_of = [&](const std::vector<double>& lat, std::vector<double>& storm, std::vector<double>* no_g, std::vector<double>* ae) {
+        storm.resize(M);
+        if (no_g) no_g->resize(M);
+        if (ae) ae->resize(M);
+        for (size_t c = 0; c < M; ++c) {
+            const double a = std::fabs(lat[c]);
+            if (ae) (*ae)[c] = a;
+            double s = seq * gauss(a, 0.0, 0.8 * p.eq_storm_top);
+            for (size_t k = 0; k < 4 && k < amps.size(); ++k) s = s + amps[k] * gauss(a, shear_edges[k], sw);
+            s = s + sma * gauss(a, mid_c, smw);
             s = s * (1.0 - storm_k * O[c]);
-            C.storm_no_g[c] = clip(s, 0.0, 1.0);
-            const double dg = rad2deg(angdist(latlon_to_xyz(ax.lats[i], ax.lons[j]), g_xyz));
-            s = s + sga * gauss(dg, 0.0, 1.2 * gi.radius_deg);
-            C.storm[c] = clip(s, 0.0, 1.0);
-            C.stability[c] = 1.0 - C.storm[c];
+            if (no_g) (*no_g)[c] = clip(s, 0.0, 1.0);
+            s = s + sga * gauss(gdist[c], 0.0, 1.2 * gi.radius_deg);
+            storm[c] = clip(s, 0.0, 1.0);
         }
+    };
+    std::vector<double> ae;
+    storm_of(C.lat_eff, C.storm, &C.storm_no_g, &ae);
+    C.stability.resize(M);
+    for (size_t c = 0; c < M; ++c) C.stability[c] = 1.0 - C.storm[c];
 
-    // ---------- 降水：上风水汽追踪
-    const double ec = cfg.get("s04.climate.evap_temp_coeff"), er = cfg.get("s04.climate.evap_temp_ref_c");
-    std::vector<double> E(M);
-    for (size_t c = 0; c < M; ++c) E[c] = std::exp(ec * (C.temp[c] - er));
-    {
-        const std::vector<double> div = divergence(C.u, C.v, ax);
-        std::vector<double> mid;
-        for (int i = 0; i < H; ++i)
-            if (std::fabs(ax.lats[i]) < 80.0)
-                for (int j = 0; j < W; ++j) mid.push_back(div[static_cast<size_t>(i) * W + j]);
-        double sd = np_std(mid);
-        if (sd == 0.0) sd = 1.0;
-        C.conv.resize(M);
-        for (size_t c = 0; c < M; ++c) C.conv[c] = clip(-div[c] / sd, -2.0, 2.0);
-    }
-    {
-        const std::vector<double> dOdy = gradient_rows(O, H, W, res);
-        std::vector<double> up(M), pos;
-        for (int i = 0; i < H; ++i) {
-            const double cosl = np_maximum(std::cos(deg2rad(ax.lats[i])), 0.1);
-            for (int j = 0; j < W; ++j) {
-                const size_t c = static_cast<size_t>(i) * W + j;
-                const double dOdx = (O[static_cast<size_t>(i) * W + (j + 1) % W] - O[static_cast<size_t>(i) * W + (j - 1 + W) % W]) / (2.0 * res) / cosl;
-                up[c] = np_maximum(0.0, C.u[c] * dOdx + C.v[c] * dOdy[c]);
-                if (up[c] > 0) pos.push_back(up[c]);
-            }
-        }
-        const double up_ref = pos.empty() ? 1.0 : np_quantile(pos, 0.98);
-        C.uplift.resize(M);
-        for (size_t c = 0; c < M; ++c) C.uplift[c] = clip(up[c] / std::max(up_ref, 1e-9), 0.0, 1.0);
-    }
-    const double pck = cfg.get("s04.climate.precip_conv_k"), puk = cfg.get("s04.climate.precip_uplift_k"), psk = cfg.get("s04.climate.precip_storm_k");
-    C.eps.resize(M);
-    for (size_t c = 0; c < M; ++c) C.eps[c] = std::exp(pck * C.conv[c]) * (1.0 + puk * C.uplift[c] + psk * C.storm[c]);
-    std::vector<double> qf, Pf;
-    {   // run_on_coarse：粗网格上解，再双线性插回
-        const double res_run = cfg.get("s04.climate.moisture_res_deg");
-        const Axes axc = grid_axes(res_run);
-        int Hc = 0, Wc = 0;
-        const std::vector<double> uc = coarsen(C.u, ax, res_run, Hc, Wc), vc = coarsen(C.v, ax, res_run, Hc, Wc),
-                                  Ec = coarsen(E, ax, res_run, Hc, Wc), epc = coarsen(C.eps, ax, res_run, Hc, Wc);
-        if (Hc != axc.nlat || Wc != axc.nlon) throw std::invalid_argument("s04.climate.moisture_res_deg must be a multiple of shared.grid_res_deg");
-        std::vector<double> qc, Pc;
-        moisture_solve(uc, vc, Ec, epc, axc, cfg, qc, Pc, C.dt_s, C.n_steps);
-        const LatLonGrid Gc = llg(axc);
-        qf.resize(M);
-        Pf.resize(M);
-        for (int i = 0; i < H; ++i)
-            for (int j = 0; j < W; ++j) {
-                qf[static_cast<size_t>(i) * W + j] = grid_interp(qc, Gc, ax.lats[i], ax.lons[j]);
-                Pf[static_cast<size_t>(i) * W + j] = grid_interp(Pc, Gc, ax.lats[i], ax.lons[j]);
-            }
-    }
-    {
-        const double P_ref = np_quantile(Pf, cfg.get("s04.climate.precip_norm_pct") / 100.0);
-        C.precip.resize(M);
-        for (size_t c = 0; c < M; ++c) C.precip[c] = Pf[c] / std::max(P_ref, 1e-12);
-        const double amp = cfg.get("s04.climate.precip_noise_amp", 0.0);
-        if (amp > 0) {
-            Rng rng = stage_rng(seed, 4);
-            const std::vector<double> nz = fractal_noise(rng, H, W, 6, 3);
-            for (size_t c = 0; c < M; ++c) C.precip[c] = C.precip[c] + amp * nz[c];
-        }
-        for (double& x : C.precip) x = clip(x, 0.02, 1.0);
-        const double q98 = std::max(np_quantile(qf, 0.98), 1e-12);
-        C.q.resize(M);
-        for (size_t c = 0; c < M; ++c) C.q[c] = clip(qf[c] / q98, 0.0, 1.0);
-    }
-    // ---------- 季节窗口
-    const double tilt = p.axial_tilt_deg;
-    C.window.resize(M);
-    for (size_t c = 0; c < M; ++c) C.window[c] = clip(1.0 - 0.85 * C.storm[c] - 0.004 * tilt * gauss(ae[c], mid_c, 12.0), 0.03, 1.0);
     // ---------- 季节强度：全年温差 = 日照年变化 / λ × 热惯性振幅保留（区域陆地性 = L / obstacle_gain）
+    const double tilt = p.axial_tilt_deg;
     const double ydays = p.year_days();
     const double gain = cfg.get("s04.localwind.obstacle_gain", 1.0);
+    const double tl = cfg.get("s04.climate.season_tau_land_days"), to = cfg.get("s04.climate.season_tau_ocean_days");
+    const double wy = 2.0 * PI / ydays;
     C.continentality.resize(M);
     for (size_t c = 0; c < M; ++c) C.continentality[c] = clip(L[c] / std::max(1e-9, gain), 0.0, 1.0);
+    std::vector<double> lag(M);   // 热惯性的相位滞后（各格按陆地性）
     {
         const std::vector<double> amp = insolation_first_harmonic(ax.lats, tilt);
-        const double tl = cfg.get("s04.climate.season_tau_land_days"), to = cfg.get("s04.climate.season_tau_ocean_days");
         const double lam = cfg.get("s04.climate.season_lambda_w_m2_k");
-        const double wy = 2.0 * PI / ydays;
         C.season_range.resize(M);
         for (int i = 0; i < H; ++i) {
             const double dq2 = 2.0 * (amp[i] * p.insolation_rel) / lam;
@@ -587,9 +531,152 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
                 const double tau = cc * tl + (1.0 - cc) * to;
                 const double wt = wy * tau;
                 C.season_range[c] = dq2 * (1.0 / std::sqrt(1.0 + wt * wt));
+                lag[c] = std::atan(wt);
             }
         }
     }
+
+    // ---------- 年均风的辐合与撞墙抬升（展示用；降水用各季自己的）
+    auto conv_of = [&](const std::vector<double>& u, const std::vector<double>& v) {
+        const std::vector<double> div = divergence(u, v, ax);
+        std::vector<double> mid;
+        for (int i = 0; i < H; ++i)
+            if (std::fabs(ax.lats[i]) < 80.0)
+                for (int j = 0; j < W; ++j) mid.push_back(div[static_cast<size_t>(i) * W + j]);
+        double sd = np_std(mid);
+        if (sd == 0.0) sd = 1.0;
+        std::vector<double> out(M);
+        for (size_t c = 0; c < M; ++c) out[c] = clip(-div[c] / sd, -2.0, 2.0);
+        return out;
+    };
+    auto uplift_of = [&](const std::vector<double>& u, const std::vector<double>& v) {
+        std::vector<double> up(M), pos;
+        for (size_t c = 0; c < M; ++c) {
+            up[c] = np_maximum(0.0, u[c] * dOdx[c] + v[c] * dOdy[c]);
+            if (up[c] > 0) pos.push_back(up[c]);
+        }
+        const double up_ref = pos.empty() ? 1.0 : np_quantile(pos, 0.98);
+        std::vector<double> out(M);
+        for (size_t c = 0; c < M; ++c) out[c] = clip(up[c] / std::max(up_ref, 1e-9), 0.0, 1.0);
+        return out;
+    };
+    C.conv = conv_of(C.u, C.v);
+    C.uplift = uplift_of(C.u, C.v);
+
+    // ---------- 降水：上风水汽追踪，四季各解一遍（PLAN-NATURE A2，spec 13 第九节第 4、5 条）
+    // 每季：带界随太阳摆（全球一个 Δφ，按海洋的热惯性）→ 背景风按挪过的带界、②b 的障碍照年均 → 辐合（+ 岛群季风）、风暴、撞墙抬升；
+    // 零点口径的气温加季节项 → 蒸发。云带是逆温层：蒸发的水汽只有被抬过逆温层的那部分进得了岛那一层（抬升率 lift），
+    // 副热带下沉（辐散处）再压一道；降水效率 ε 同原来，外加下沉的压制。年雨 = 各季水量平均，按年均的 P98 归一；另给各季的份额。
+    const double ec = cfg.get("s04.climate.evap_temp_coeff"), er = cfg.get("s04.climate.evap_temp_ref_c");
+    const double pck = cfg.get("s04.climate.precip_conv_k"), puk = cfg.get("s04.climate.precip_uplift_k"), psk = cfg.get("s04.climate.precip_storm_k");
+    const double sub_eps = cfg.get("s04.climate.precip_subsidence_k");
+    const double l0 = cfg.get("s04.climate.lift_base"), lck = cfg.get("s04.climate.lift_conv_k"), ldk = cfg.get("s04.climate.lift_deep_k"),
+                 lsk = cfg.get("s04.climate.lift_storm_k"), luk = cfg.get("s04.climate.lift_uplift_k"), sub_lift = cfg.get("s04.climate.lift_subsidence_k");
+    const double dt0 = cfg.get("s04.climate.deep_temp_c"), dts = cfg.get("s04.climate.deep_temp_span_c");
+    const double kmon = cfg.get("s04.climate.monsoon_k"), mon_sm = cfg.get("s04.climate.monsoon_smooth_deg");
+    const double kshift = cfg.get("s04.climate.season_band_shift_k");
+    const int n_s = p.cal.present ? p.cal.seasons : 4;
+    const double dps = ydays / n_s;
+    const double offset = 1.5 * dps;                 // 季 1 的季中 = 北半球夏至（与岛群层的历法同）
+    const double wt_o = wy * to;
+    const double A_o = 1.0 / std::sqrt(1.0 + wt_o * wt_o), lag_o = std::atan(wt_o);
+    const double lag_l = std::atan(wy * tl);          // 季风的相位按岛（陆）的热惯性：岛晒热了才成热低压，滞后只有几天
+    const std::vector<double> Lm = gauss_smooth(L, H, W, res, mon_sm);   // 季风看大片的岛密处
+    std::vector<double> sgn(M), taper(M);
+    for (int i = 0; i < H; ++i)
+        for (int j = 0; j < W; ++j) {
+            sgn[static_cast<size_t>(i) * W + j] = ax.lats[i] >= 0 ? 1.0 : -1.0;
+            taper[static_cast<size_t>(i) * W + j] = clip(std::fabs(ax.lats[i]) / 10.0, 0.0, 1.0);   // 赤道两侧反相，近赤道收掉
+        }
+    const double res_run = cfg.get("s04.climate.moisture_res_deg");
+    const Axes axc = grid_axes(res_run);
+    const LatLonGrid Gc = llg(axc);
+    C.n_seasons = n_s;
+    C.season_shift.assign(n_s, 0.0);
+    std::vector<std::vector<double>> Pf(n_s), qf(n_s);
+    std::vector<double> eps_sum(M, 0.0), lift_sum(M, 0.0);
+    C.dt_s = INF;
+    C.n_steps = 0;
+    for (int s = 0; s < n_s; ++s) {
+        const double ph = 2.0 * PI * ((s + 0.5) * dps - offset) / ydays;
+        const double dphi = kshift * tilt * A_o * std::cos(ph - lag_o);
+        C.season_shift[s] = dphi;
+        std::vector<double> lat_s(M);
+        for (size_t c = 0; c < M; ++c) lat_s[c] = C.lat_eff[c] - dphi;
+        std::vector<double> ub, vb, u, v, wk, storm_s;
+        background(lat_s, ub, vb);
+        perturb(ub, vb, u, v, wk);
+        storm_of(lat_s, storm_s, nullptr, nullptr);
+        std::vector<double> conv = conv_of(u, v);
+        const std::vector<double> up = uplift_of(u, v);
+        std::vector<double> E(M), eps(M);
+        for (size_t c = 0; c < M; ++c) {
+            const double warm = sgn[c] * std::cos(ph - lag_l);                    // 夏 +1、冬 −1
+            conv[c] = clip(conv[c] + kmon * Lm[c] * warm * taper[c], -2.0, 2.0);  // 岛群季风：夏天岛密处成热低压
+            const double T = C.temp[c] + sgn[c] * 0.5 * C.season_range[c] * std::cos(ph - lag[c]);
+            const double deep = clip((T - dt0) / dts, 0.0, 1.0);                  // 暖海上的深对流
+            const double neg = np_minimum(conv[c], 0.0);                          // 辐散（副热带下沉）
+            const double lift = clip(l0 + lck * np_maximum(conv[c], 0.0) + ldk * deep + lsk * storm_s[c] + luk * up[c], 0.0, 1.0) * std::exp(sub_lift * neg);
+            E[c] = std::exp(ec * (T - er)) * lift;
+            eps[c] = std::exp(pck * conv[c]) * (1.0 + puk * up[c] + psk * storm_s[c]) * std::exp(sub_eps * neg);
+            eps_sum[c] += eps[c];
+            lift_sum[c] += lift;
+        }
+        int Hc = 0, Wc = 0;
+        const std::vector<double> uc = coarsen(u, ax, res_run, Hc, Wc), vc = coarsen(v, ax, res_run, Hc, Wc),
+                                  Ec = coarsen(E, ax, res_run, Hc, Wc), epc = coarsen(eps, ax, res_run, Hc, Wc);
+        if (Hc != axc.nlat || Wc != axc.nlon) throw std::invalid_argument("s04.climate.moisture_res_deg must be a multiple of shared.grid_res_deg");
+        std::vector<double> qc, Pc;
+        double dt = 0;
+        int64_t ns = 0;
+        moisture_solve(uc, vc, Ec, epc, axc, cfg, qc, Pc, dt, ns);
+        C.dt_s = std::min(C.dt_s, dt);
+        C.n_steps += ns;
+        Pf[s].resize(M);
+        qf[s].resize(M);
+        for (int i = 0; i < H; ++i)
+            for (int j = 0; j < W; ++j) {
+                Pf[s][static_cast<size_t>(i) * W + j] = grid_interp(Pc, Gc, ax.lats[i], ax.lons[j]);
+                qf[s][static_cast<size_t>(i) * W + j] = grid_interp(qc, Gc, ax.lats[i], ax.lons[j]);
+            }
+    }
+    {
+        std::vector<double> Pa(M, 0.0), qa(M, 0.0);
+        for (int s = 0; s < n_s; ++s)
+            for (size_t c = 0; c < M; ++c) {
+                Pa[c] += Pf[s][c];
+                qa[c] += qf[s][c];
+            }
+        C.precip_share.assign(static_cast<size_t>(n_s) * M, 1.0 / n_s);
+        for (size_t c = 0; c < M; ++c)
+            if (Pa[c] > 0)
+                for (int s = 0; s < n_s; ++s) C.precip_share[static_cast<size_t>(s) * M + c] = Pf[s][c] / Pa[c];
+        C.eps.resize(M);
+        C.lift.resize(M);
+        for (size_t c = 0; c < M; ++c) {
+            Pa[c] /= n_s;
+            qa[c] /= n_s;
+            C.eps[c] = eps_sum[c] / n_s;
+            C.lift[c] = lift_sum[c] / n_s;
+        }
+        const double P_ref = np_quantile(Pa, cfg.get("s04.climate.precip_norm_pct") / 100.0);
+        C.precip.resize(M);
+        for (size_t c = 0; c < M; ++c) C.precip[c] = Pa[c] / std::max(P_ref, 1e-12);
+        const double amp = cfg.get("s04.climate.precip_noise_amp", 0.0);
+        if (amp > 0) {
+            Rng rng = stage_rng(seed, 4);
+            const std::vector<double> nz = fractal_noise(rng, H, W, 6, 3);
+            for (size_t c = 0; c < M; ++c) C.precip[c] = C.precip[c] + amp * nz[c];
+        }
+        const double pmin = cfg.get("s04.climate.precip_min_rel");
+        for (double& x : C.precip) x = clip(x, pmin, 1.0);
+        const double q98 = std::max(np_quantile(qa, 0.98), 1e-12);
+        C.q.resize(M);
+        for (size_t c = 0; c < M; ++c) C.q[c] = clip(qa[c] / q98, 0.0, 1.0);
+    }
+    // ---------- 季节窗口
+    C.window.resize(M);
+    for (size_t c = 0; c < M; ++c) C.window[c] = clip(1.0 - 0.85 * C.storm[c] - 0.004 * tilt * gauss(ae[c], mid_c, 12.0), 0.03, 1.0);
 
     // ---------- 各群
     const size_t N = isl.n();
@@ -614,8 +701,18 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
     C.i_river_size.resize(N);
     C.i_temp_winter.resize(N);
     C.i_temp_summer.resize(N);
+    C.i_precip_share.assign(static_cast<size_t>(n_s) * N, 0.0);
+    std::vector<std::vector<double>> share_k(n_s);
+    for (int k = 0; k < n_s; ++k)
+        share_k[k].assign(C.precip_share.begin() + static_cast<std::ptrdiff_t>(k * M), C.precip_share.begin() + static_cast<std::ptrdiff_t>((k + 1) * M));
     const double rma = cfg.get("s04.climate.river_main_area_km2"), rh = cfg.get("s04.climate.river_height_m"),
-                 rpm = cfg.get("s04.climate.river_precip_min");
+                 rmm = cfg.get("s04.climate.river_min_mm");
+    // 降水线（A3）：生长季按零点口径的季温（和 ⑦ 的谷物门槛同一个口径；用岛上口径的话高度会经可耕率漏进 ⑨，犯原则乙）
+    const std::vector<double>& gt = cfg.list("s04.climate.grow_temp_c");
+    const double kd = cfg.get("s04.climate.dormant_rain_eff");
+    C.i_precip_mm.resize(N);
+    C.i_precip_eff_mm.resize(N);
+    C.i_arable_frac_eff.resize(N);
     for (size_t q = 0; q < N; ++q) {
         const double la = isl.lat[q], lo = isl.lon[q];
         C.i_temp_sea[q] = grid_interp(C.temp, G, la, lo);
@@ -623,13 +720,15 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
         C.i_storm[q] = grid_interp(C.storm, G, la, lo);
         C.i_stability[q] = grid_interp(C.stability, G, la, lo);
         C.i_window[q] = grid_interp(C.window, G, la, lo);
+        for (int k = 0; k < n_s; ++k) C.i_precip_share[static_cast<size_t>(k) * N + q] = grid_interp(share_k[k], G, la, lo);
         // float(lapse) × height_m（float32 数组）/ 1000：NEP 50 下按 float32 算
         const float h32 = static_cast<float>(isl.height[q]);
         const float lapse_h = static_cast<float>(lapse32 * h32) / 1000.0f;
         C.i_temp[q] = grid_interp(C.temp, G, la, lo) - static_cast<double>(lapse_h);
         C.i_catch[q] = f32(isl.arable_frac[q]) * f32(isl.area[q]) * C.i_precip[q];
         const double ma = f32(isl.main_area[q]);
-        C.i_has_river[q] = (ma >= rma) && (f32(isl.height[q]) >= rh) && (C.i_precip[q] >= rpm);
+        C.i_precip_mm[q] = precip_mm(C.i_precip[q], cfg);
+        C.i_has_river[q] = (ma >= rma) && (f32(isl.height[q]) >= rh) && (C.i_precip_mm[q] >= rmm);
         C.i_river_size[q] = C.i_has_river[q] ? ma * C.i_precip[q] : 0.0;
     }
     const double bonus = cfg.get("s04.climate.river_capacity_bonus");
@@ -645,8 +744,29 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
     for (size_t q = 0; q < N; ++q) {
         C.i_temp_winter[q] = C.i_temp[q] - 0.5 * C.i_season_range[q];
         C.i_temp_summer[q] = C.i_temp[q] + 0.5 * C.i_season_range[q];
+        // 有效雨 = Σ 各季的雨 × (休眠季的折扣 + (1 − 折扣) × 该季的生长度)：休眠季的雨存进土里、雪里，只算一部分
+        const double la = isl.lat[q], lag_i = grid_interp(lag, G, la, isl.lon[q]);
+        double eff = 0.0;
+        for (int k = 0; k < n_s; ++k) {
+            const double ph = 2.0 * PI * ((k + 0.5) * dps - offset) / ydays;
+            const double Ts = C.i_temp_sea[q] + (la >= 0 ? 1.0 : -1.0) * 0.5 * C.i_season_range_sea[q] * std::cos(ph - lag_i);
+            const double g = clip((Ts - gt[0]) / (gt[1] - gt[0]), 0.0, 1.0);
+            eff += C.i_precip_share[static_cast<size_t>(k) * N + q] * (kd + (1.0 - kd) * g);
+        }
+        C.i_precip_eff_mm[q] = C.i_precip_mm[q] * eff;
+        C.i_arable_frac_eff[q] = f32(isl.arable_frac[q]) * rain_line(C.i_precip_eff_mm[q], cfg);
     }
     return C;
+}
+
+double rain_line(double eff_mm, const Config& cfg) {
+    const std::vector<double>& xs = cfg.list("s04.climate.rain_line_mm");
+    const std::vector<double>& ys = cfg.list("s04.climate.rain_line_frac");
+    if (xs.empty() || xs.size() != ys.size()) throw std::invalid_argument("s04.climate.rain_line_mm / rain_line_frac must be non-empty and the same length");
+    if (eff_mm <= xs[0]) return ys[0] * np_maximum(eff_mm, 0.0) / xs[0];
+    for (size_t k = 1; k < xs.size(); ++k)
+        if (eff_mm <= xs[k]) return ys[k - 1] + (ys[k] - ys[k - 1]) * (eff_mm - xs[k - 1]) / (xs[k] - xs[k - 1]);
+    return ys.back();
 }
 
 World run(const Config& cfg, uint64_t seed) {

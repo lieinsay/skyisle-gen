@@ -95,6 +95,10 @@ template <class T>
 nb::ndarray<nb::numpy, T> arr2(const std::vector<T>& v, size_t h, size_t w) {
     return to_np(std::vector<T>(v), {h, w});
 }
+template <class T>
+nb::ndarray<nb::numpy, T> arr3(const std::vector<T>& v, size_t a, size_t h, size_t w) {
+    return to_np(std::vector<T>(v), {a, h, w});
+}
 inline nb::ndarray<nb::numpy, bool> barr(const std::vector<uint8_t>& v) { return bool_np(std::vector<uint8_t>(v), {v.size()}); }
 
 // 展平的配置：{"num": {键: 数}, "vec": {键: [数]}, "str": {键: 串}（可缺）}；Config 对象（make_config 转好的）直接用

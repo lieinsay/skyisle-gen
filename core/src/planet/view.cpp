@@ -94,7 +94,8 @@ island::NodeInputs node_inputs(const Islands& isl, const Climate& c, int64_t nod
     x.precip = f32(c.i_precip[q]);
     x.temp_sea = f32(c.i_temp_sea[q]);
     x.lapse_c_per_km = cfg.get("s04.climate.lapse_c_per_km");
-    x.arable_frac = f32(isl.arable_frac[q]);
+    x.arable_frac = c.i_arable_frac_eff.empty() ? f32(isl.arable_frac[q]) : f32(c.i_arable_frac_eff[q]);   // A3 起是降水线之后的
+    x.precip_mm_ref = cfg.get("s04.climate.precip_mm_ref", 4000.0);
     x.river_size = f32(c.i_river_size[q]);
     x.has_river = c.i_has_river[q] != 0;
     x.temp = f32(c.i_temp[q]);

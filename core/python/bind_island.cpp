@@ -80,6 +80,7 @@ NodeInputs inp_from(const nb::dict& d) {
     opt("temp_winter", x.temp_winter);
     opt("temp_summer", x.temp_summer);
     opt("people_per_arable_km2", x.people_per_arable_km2);
+    opt("precip_mm_ref", x.precip_mm_ref);
     if (d.contains("pop") && !d["pop"].is_none()) x.pop = dget(d, "pop");
     if (d.contains("capital") && !d["capital"].is_none()) {
         nb::dict cap = nb::cast<nb::dict>(d["capital"]);

@@ -72,11 +72,14 @@ Centers stage7(const Config& cfg, const Planet& p, const Islands& isl, const Cli
         };
         normalize(dn);
         normalize(an);
-        double pmax = -INF;
-        for (int64_t q = 0; q < N; ++q) pmax = std::max(pmax, f32(c.i_precip[q]));
         const double gamma = cfg.get(C7 + "area_exponent");
+        // 降水项是按毫米的驼峰（PLAN-NATURE A4）：年雨在 precip_hump_mm 之间 = 1，往干、往湿按对数距离的高斯降（靠天种粟麦的半湿润最好，旧的「越湿越好」作废）
+        const std::vector<double>& hump = cfg.list(C7 + "precip_hump_mm");
+        const double hw = cfg.get(C7 + "precip_hump_width");
         for (int64_t q = 0; q < N; ++q) {
-            const double pn = f32(c.i_precip[q]) / pmax;
+            const double mm = np_maximum(precip_mm(f32(c.i_precip[q]), cfg), 1.0);
+            const double d = mm < hump[0] ? std::log(hump[0] / mm) : (mm > hump[1] ? std::log(mm / hump[1]) : 0.0);
+            const double pn = std::exp(-0.5 * (d / hw) * (d / hw));
             suit[q] = pn * f32(c.i_stability[q]) * dn[q] * np_pow(an[q], gamma);
         }
         if (cfg.has_list(C7 + "season_winter_warm_c") && !c.i_season_range_sea.empty()) {

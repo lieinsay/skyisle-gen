@@ -168,13 +168,13 @@ density = [0.2, 0.2, 0.25, 0.25, 0.35, 1.0, 1.0, 0.25, 0.05, 0.04, 0.012, 0.012]
 # ---------------- ④ 气候 ----------------
 [s04.climate]
 # 河流（PLAN-BATCH3 5.5，决定 1）：主岛够大、够高、够湿的群有常年河流，按地球常见程度约六七成的群。
-# has_river = main_area ≥ river_main_area_km2 且 height ≥ river_height_m 且 precip ≥ river_precip_min
+# has_river = main_area ≥ river_main_area_km2 且 height ≥ river_height_m 且 年雨 ≥ river_min_mm
 # river_size = main_area × precip（集水面代理）。河默认只进九格表文本，不进人口容量：
 # catch × (1 + river_capacity_bonus × river_size/中位河)，bonus = 0 即不影响任何推导
 river_main_area_km2 = 300.0
 river_height_m = 0.0          # 旧 400：按「height_m = 峰高」时「岛够高才汇得成河」。台面口径（DESIGN-NOTES 四点十九）下 height_m 是陆地中位，
                               # 山在台面之上长出来，每个岛都有几百到几千米起伏——这条判据作废（#2051 台面 382 m、峰 2,026 m、1,800 km²、900 mm 曾被判无河）
-river_precip_min = 0.22       # 骨架第二版由 0.35 改：核心是谷物农业的半湿润带（相对降水 0.25–0.30 ≈ 700–900 mm），0.35 时核心区几乎无河（黄河流域年降水 400–800 mm）
+river_min_mm = 600.0          # A3 起按毫米（旧键 river_precip_min 是相对降水 0.22，按旧换算 ≈ 685 mm，作废）：半湿润就有常年河（黄河流域年降水 400–800 mm）
 river_capacity_bonus = 0.0
 temp_eq_c = 28.0
 temp_pole_c = -10.0           # 骨架第二版：倾角 34° 下极地年均日照比 20° 时高约七成，极地年均温相应上调（33° 海面年均 ≈ 16.7 °C，地球纬向平均约 17）
@@ -192,6 +192,39 @@ precip_uplift_k = 3.0         # ε ×(1 + k × 撞墙抬升)：迎风坡多雨 �
 precip_storm_k = 0.5          # ε ×(1 + k × 风暴)：锋面 / 风暴带多雨
 precip_norm_pct = 98.0        # 归一：P 的此分位 = 1
 precip_noise_amp = 0.0        # 残余纹理（0 = 全部由模型算出）
+precip_min_rel = 0.02         # 相对降水的下限（归一之后夹断；旧版写死 0.02）：× precip_mm_ref = 80 mm，出得了真沙漠（佛得角萨尔岛 91 mm）
+precip_mm_ref = 4000.0        # 相对降水 → 毫米（PLAN-NATURE A3）：mm = precip_mm_ref × 相对降水，线性——水汽模型的 P 本来就是水通量，按 P98 归一后乘回来。
+                              # ④ 写 climate_islands 的 precip_mm；⑦ 的驼峰、⑨、降水线、岛群层都用这一条。旧的 [island.climate] 150 + 3850 × p^1.3 作废
+                              # （它把中段压干、把干端垫到 173 mm 以上）。4000：P98 落在赤道雨带，地球洋面雨带的高值 3000–4000 mm
+# 四季（PLAN-NATURE A2，spec 13 第九节第 4、5 条）：四季各解一遍水汽，年雨 = 各季水量的平均（再按 precip_norm_pct 归一），另存各季的份额 precip_share。
+# 每季的带界随太阳整体南北摆 Δφ = k × 倾角 × A_海 × cos(季相 − 滞后_海)（A、滞后按 season_tau_ocean_days；全球一个数，②b 的障碍与带界位移照年均），
+# 背景风、风暴、辐合、撞墙抬升按挪过的带界重算；气温加季节项（零点口径的年均 + 半个全年温差 × cos）。
+season_band_shift_k = 0.35    # 带界摆幅系数：34° 倾角、海洋的振幅保留约 0.5 → 约 ±6°（地球的 ITCZ 在洋面摆 ±5–10°）；岛群层的 [island.climate] k_shift 同一个意思，A5 起改读这里
+# 云带是逆温层（spec 13 第九节第 4 条）：洋面蒸发的水汽只有被抬过逆温层的那部分进得了岛那一层——蒸发源 E × 抬升率 lift，
+# lift = clip(base + 辐合 + 深对流 + 风暴 + 撞墙抬升, 0, 1) × exp(k_下沉 × min(辐合, 0))：逆温层之上默认是干的，雨只在有东西把气往上送的地方
+lift_base = 0.1               # 什么都没有时也漏上来的比例（逆温层有破口、有湍流）
+lift_conv_k = 0.4             # × max(标准化辐合, 0)：辐合带（ITCZ、锋面）把低层的气往上送
+lift_deep_k = 0.5             # × 深对流：零点口径的季温在 deep_temp_c 起、再 deep_temp_span_c 升满（暖海上的对流冲穿逆温层）
+deep_temp_c = 24.0
+deep_temp_span_c = 4.0
+lift_storm_k = 3.0            # × 风暴强度：气旋、锋面把湿气卷上去（风暴 ≥ 0.27 就抬满：中纬风暴带 45–60° 常年抬满，西风带的雨受冷海的水汽量限制，不受抬升限制）
+lift_uplift_k = 0.8           # × 撞墙抬升：岛群迎风一侧
+lift_subsidence_k = 2.0       # × exp(k × min(辐合, 0))：辐散处（副热带高压、极地）下沉，把逆温层压得更结实（无风带辐合约 −0.65 → 压到约四分之一）
+precip_subsidence_k = 0.8     # 降水效率 ε 另乘 exp(k × min(辐合, 0))：下沉区即使有水汽也不易成雨
+# 三 seed（A2 定稿）：28–36° 岛密处（陆地覆盖上四分位）年雨中位 460–600 mm、夏半年占 73–80%，岛稀处（下四分位）180–265 mm——季风的边就是 400 毫米线；
+# 西风带 48–56° 1,000–1,200 mm，赤道 0–8° 3,200 mm；陆地 < 400 mm 27–28%、< 200 mm 11–14%（DESIGN-NOTES 四点四十四）
+monsoon_k = 1.2               # 岛群季风：夏季岛密处（陆地覆盖按 monsoon_smooth_deg 抹开）成热低压，辐合 + k × 陆地覆盖 × cos(季相 − 陆的滞后)，冬季反号；赤道 10° 内收掉。
+                              # 相位按岛（陆）的热惯性（season_tau_land_days），不按本地的海陆混合：岛晒热了才成热低压；按本地的会晚两个月、峰落到秋季。
+                              # 1.2 是「往夏雨冬干推一点」；2.0 时岛密处夏半年雨占八成以上，已是东亚那样的强季风
+monsoon_smooth_deg = 4.0
+# 降水线（PLAN-NATURE A3，spec 13 第九节第 5 条「季风的边就是 400 毫米线」）：arable_frac_eff = arable_frac（③ 的「地」）× 降水项，写进 climate_islands；
+# ⑨ 的人口与岛群层的已垦额度读它，④ 的 catch（⑥ 的介数源权重）照旧用 arable_frac。
+# 有效雨 = Σ 各季的雨 × (dormant_rain_eff + (1 − dormant_rain_eff) × 生长度)，生长度按零点口径的季温在 grow_temp_c 之间 0 → 1
+# （零点口径与 ⑦ 的谷物门槛同一个；用岛上口径的话高度会经可耕率漏进 ⑨，犯原则乙）
+grow_temp_c = [5.0, 12.0]     # 零点口径的季温：5 °C 起长、12 °C 长满（岛面一般比零点高 0.3–2 km，冷 2–13 °C）
+dormant_rain_eff = 0.5        # 休眠季的雨存进土里、雪里的那一半
+rain_line_mm = [250.0, 400.0, 600.0]    # 有效雨的折点：250 以下只剩有水处的绿洲地（按比例降到 0），400 上下起能靠天种，600 起满
+rain_line_frac = [0.15, 0.5, 1.0]
 storm_eq_amp = 1.0
 storm_shear_amp = [0.35, 0.3, 0.12, 0.35]   # 带界剪切风暴，按带界 [赤道永暴顶, 信风顶, 无风带顶, 西风顶] 分别给幅度。
                               # 骨架第二版：无风带顶（36°，副热带急流）穿过文明核心，地球上的风暴路径不在这里而在极锋 → 0.35 降到 0.12
@@ -310,7 +343,11 @@ g_neighborhood_radii = 2.5    # G 邻域 = 此倍数 × R_G
 [s07.centers]
 tau_c = 0.5                   # 窗内最大适宜度 < τ_c × 全局最大 → 报错（原则庚）
 smooth_hops = 2
-# 适宜度 = 降水 × 稳定 × 岛密度 × 岛群陆地规模^γ；γ=0 即完全不看面积。
+# 适宜度 = 降水驼峰 × 稳定 × 岛密度 × 岛群陆地规模^γ；γ=0 即完全不看面积。
+# 降水驼峰（PLAN-NATURE A4，spec 13 第九节第 7 条）：年雨（毫米，④ 的换算）在 precip_hump_mm 之间 = 1，往干、往湿按 exp(−½ (ln 距离 / width)²) 降
+# （宽 0.5：300 mm 0.59、200 mm 0.18、2,000 mm 0.38、3,000 mm 0.09）；旧的「降水 / 最大降水」越湿越好作废
+precip_hump_mm = [500.0, 1000.0]
+precip_hump_width = 0.5
 # γ 取 0.5 而非 1.0：归一化 log 面积与归一化 log 岛密度的标准差都是 ≈0.13、相关 −0.21，
 # γ=1 会让「面积」这个随机量与「岛密度」这个地理量等权且互相抵消，稀释中心涌现的地理结构
 # （实测 seed 2026 的 P7 从 238 个拒绝点掉到 31 个、地区覆盖不达标）。见 docs/DESIGN-NOTES §四点五。
@@ -368,9 +405,10 @@ high = [0.7, 0.95]
 # 与 docs/02 §八「兼并极难」和铁律三「春秋战国之交」的调和：正因兼并极难，只有先完成编户齐民、榨出组织能力的那个邦才兼并得动
 # —— 所以只有变法之国能兼并，其余诸邦五百年割据不动（docs/04 §一）。
 [s09.polity]
-precip_full = 0.25            # 人口 = P1 × 可耕地 × clip(降水 / precip_full, precip_floor, 1)：雨够即满载；干旱处按比例折减。
-                              # 骨架第二版由 0.5 改 0.25：核心是谷物（粟麦）农业，0.25 ≈ 700 mm/年已足（郑州 640 mm）；0.5 ≈ 1,900 mm 是稻作口径
-precip_floor = 0.25           #   折减下限（再干也不至于空）
+# 人口 = P1 × 陆地 × arable_frac_eff（④ 的降水线：能种多少地）× 单产；单产 = yield_floor + (1 − yield_floor) × clip((有效雨 − yield_mm[0]) / (yield_mm[1] − yield_mm[0]), 0, 1)。
+# PLAN-NATURE A3 把旧的 clip(降水 / precip_full, precip_floor, 1) 拆成两项（旧键 precip_full / precip_floor 作废）：地归降水线，这里只管同一块地打多少粮。
+yield_mm = [250.0, 700.0]
+yield_floor = 0.6             # 半干旱的地单产约为湿润处的六成；400 mm 的群：地 0.5 × 单产 0.73。700 mm 起满：谷物（粟麦）农业，郑州 640 mm（旧 precip_full 的来由）
 control_radius_days = 2.2     # R0：控制力 exp(−w / R) 的基准尺度（w = 商旅成本 × 后勤倍率 + R0 × L_trade）
 ship_logistics_mult = 3.0     # 群间需远航（间距 > 短渡 bridge_days）的边，大宗后勤成本倍率：短渡可达的才便宜（docs/02 §三「帝国只能长在密接群岛」；P5 起没有索桥，只改说法）
 control_min = 0.2             # θ：控制力低于此即圈不进来（半径 = R × ln(1/θ) ≈ 1.6 R）
@@ -444,6 +482,8 @@ p4_share_min = 0.10              # 第三批：每圈 3 个次级起源后使节
 p4_pass_frac = 0.8
 # 5 单向传播
 p5_centroid_frac = 0.75       # 部分次级起源的顺风向被障碍挡住（地理压过风向），0.9 过严
+p5_min_origins = 4            # 风稳的起源（按起源数，同一起源的几条特征 reach 几乎一样）少于此数时重心占比不成样本，P5 只按上下风强度比判
+                              # （A4：seed 42 的中心落进无风带，|u| ≥ 2 m/s 的起源只剩 2 个、8 条特征，两个起源都偏上风 2°；强度比仍 11.9）
 p5_min_wind_ms = 2.0          # 起源处 |u| 低于此不判上下风（旧版写死 1.0）。骨架第二版：核心在弱风过渡带，1 m/s 时 seed 7 只有 0.62，2 m/s 时 0.75–0.88
 p5_cost_ratio = 0.6
 p5_min_days = 3.0
@@ -468,10 +508,10 @@ c_shadow_ratio_min = 1.15     # 迎风 / 背风降水比的中位数
 c_shadow_frac_min = 0.6       # 迎风侧更湿的群占比
 c_band_amp_min = 1.0          # C2 带界最大位移（°）区间
 c_band_amp_max = 6.0
-arid_precip = 0.2             # 「干旱」口径（九格表 ② 与 C3 共用）：相对降水 0.2 ≈ 560 mm/年（半干旱上缘）。骨架第二版由 0.3 改：0.3 ≈ 900 mm 是半湿润，核心区不算干旱
-humid_precip = 0.55
-c_arid_min = 0.12             # C3 干旱岛（降水 < arid_precip）比例区间
-c_arid_max = 0.30
+arid_mm = 400.0               # 「干旱」口径（九格表 ② 与 C3 共用）：年雨 < 400 mm（干旱 + 半干旱；400 毫米线 = 农牧分界，spec 13 第九节第 5 条）。
+humid_mm = 800.0              # 「湿润」≥ 800 mm；之间是半湿润。A3 起按毫米（旧键 arid_precip / humid_precip 是相对降水 0.2 / 0.55，按旧换算 ≈ 560 / 1,900 mm，作废）
+c_arid_min = 0.15             # C3 干旱岛（年雨 < arid_mm）的群数比例区间：副热带岛稀处 + 雨影
+c_arid_max = 0.40
 c_river_min = 0.4             # C4 有河的群比例（只报告）
 c_river_max = 0.85
 # SK-cal 历法（R1）：旧版 4 季 × 28 日的潮汐锁定张力（0.92 Gyr）已随骨架第二版的 336 日消失；开关保留，默认关
@@ -806,9 +846,7 @@ guano_p = 0.35
 guano_km2 = 0.3
 
 [island.climate]              # 5.4 季节气候
-precip_mm_min = 150.0         # 第八节 a：相对降水 0 → 150 mm，1 → 4,000 mm，中间按 p^1.3
-precip_mm_max = 4000.0
-precip_mm_exp = 1.3
+# 相对降水 → 毫米：A3 起读 ④ 的 [s04.climate] precip_mm_ref（线性，与行星层同一条）；旧键 precip_mm_min / max / exp（150 + 3850 × p^1.3）作废
 k_shift = 0.35                # 带界随太阳摆动：Δφ = k_shift × 倾角 × A_sea × cos(相位 − 滞后)（地球 ITCZ 随 23.4° 倾角摆约 ±8°）
 four_season_range_c = 20.0    # 季型判据（5.4 表）：全年温差 ≥ 此值 → 四季分明（上海、郑州一级）
 two_season_range_c = 8.0      # 温差 ≥ 此值（半振幅 4 °C）且温度是最大差异 → 冷暖两季

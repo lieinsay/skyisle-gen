@@ -38,10 +38,8 @@ std::vector<double> match_mean(const std::vector<double>& raw, double target, do
     return x;
 }
 
-double precip_mm_of(double p_rel, const Config& c) {
-    const double lo = c.get("climate.precip_mm_min"), hi = c.get("climate.precip_mm_max"), e = c.get("climate.precip_mm_exp");
-    return lo + (hi - lo) * c_pow(clip(p_rel, 0.0, 1.0), e);
-}
+// 相对降水 → 毫米：与行星层同一条（④ 的 precip_mm_ref × p，PLAN-NATURE A3；旧的 150 + 3850 × p^1.3 作废）
+double precip_mm_of(double p_rel, const NodeInputs& inp) { return inp.precip_mm_ref * clip(p_rel, 0.0, 1.0); }
 
 size_t argmax_first(const std::vector<double>& v) {
     size_t b = 0;
@@ -175,7 +173,7 @@ Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config&
     for (int s = 0; s < n_s; ++s) {
         t_isl[s] = inp.temp + sgn * amp_isl * std::cos(ph[s] - lag_isl);
         t_sea[s] = inp.temp_sea + sgn * amp_sea * std::cos(ph[s] - lag_sea);
-        p_rate[s] = precip_mm_of(precip[s], c);
+        p_rate[s] = precip_mm_of(precip[s], inp);
         p_mm[s] = p_rate[s] * dps / ydays;
     }
     // 季型判定：分数 = 各项差异 / 该项门槛（温度按冷暖两季的门槛）
@@ -235,7 +233,7 @@ Climate build_climate(const NodeInputs& inp, const PlanetView& pv, const Config&
     C.a_temp = pyround(inp.temp, 2);
     C.a_temp_sea = pyround(inp.temp_sea, 2);
     C.a_precip_rel = pyround(inp.precip, 4);
-    C.a_precip_mm = pyround(precip_mm_of(inp.precip, c), 0);
+    C.a_precip_mm = pyround(precip_mm_of(inp.precip, inp), 0);
     C.a_storm = pyround(inp.storm, 4);
     C.a_window = pyround(inp.window, 4);
     C.a_range = pyround(r_t, 2);

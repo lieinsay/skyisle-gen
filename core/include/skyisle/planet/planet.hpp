@@ -167,9 +167,15 @@ struct Climate {
     std::vector<double> edges, dphi;
     // climate_grid.npz（float32）
     std::vector<double> precip, temp, storm, storm_no_g, stability, window, q, uplift, conv, eps, season_range, continentality;
+    // 四季（PLAN-NATURE A2）：各季的带界位移（全球一个数，°，向北为正）、各季降水占全年的份额 [季, lat, lon]、抬过逆温层的比例（四季平均）
+    int n_seasons = 0;
+    std::vector<double> season_shift, precip_share, lift;
     // climate_islands.npz（float32；has_river 布尔）
     std::vector<double> i_precip, i_temp, i_storm, i_stability, i_window, i_catch, i_river_size, i_temp_sea, i_season_range_sea,
         i_season_range, i_temp_winter, i_temp_summer;
+    std::vector<double> i_precip_share;   // [季, N]
+    // 降水线（PLAN-NATURE A3）：年雨毫米（= precip_mm_ref × 相对降水）、按生长季折算的有效雨、可耕率 × 降水项
+    std::vector<double> i_precip_mm, i_precip_eff_mm, i_arable_frac_eff;
     std::vector<uint8_t> i_has_river;
     // 摘要（水汽模型）
     double dt_s = 0;
@@ -180,6 +186,10 @@ std::vector<double> season_range(const std::vector<double>& lat_deg, const std::
                                  const Config& cfg, double insolation_rel);
 std::vector<double> insolation_first_harmonic(const std::vector<double>& lat_deg, double tilt_deg, int n = 360);
 Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w, const Islands& isl);
+// 相对降水 → 毫米（PLAN-NATURE A3）：线性，相对降水 1（= precip_norm_pct 分位）= precip_mm_ref。水汽模型的 P 本来就是水通量，按比例换算
+inline double precip_mm(double p_rel, const Config& cfg) { return cfg.get("s04.climate.precip_mm_ref", 4000.0) * p_rel; }
+// 降水线：有效雨（mm）→ 可耕地保留的比例；折点 rain_line_mm / rain_line_frac，折点之下按比例降到 0，最后一个折点之上取最后的值
+double rain_line(double eff_mm, const Config& cfg);
 
 // ---------------------------------------------------------------- 整个行星层（游戏新建世界时一次跑完，不经 npz）
 struct World {

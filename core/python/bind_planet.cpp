@@ -311,6 +311,9 @@ void bind_planet(nb::module_& m) {
                  {"continentality", &C.continentality}})
             d[k] = arr2(*v, H, W);
         d["band"] = arr2(C.band, H, W);
+        d["lift"] = arr2(C.lift, H, W);
+        d["precip_share"] = arr3(C.precip_share, static_cast<size_t>(C.n_seasons), H, W);
+        d["season_shift"] = arr(C.season_shift);
         d["edges"] = arr2(C.edges, 8, W);
         d["dphi"] = arr2(C.dphi, 8, W);
         nb::dict i;
@@ -321,6 +324,10 @@ void bind_planet(nb::module_& m) {
                  {"temp_summer", &C.i_temp_summer}})
             i[k] = arr(*v);
         i["has_river"] = barr(C.i_has_river);
+        i["precip_share"] = arr2(C.i_precip_share, static_cast<size_t>(C.n_seasons), C.i_precip.size());
+        i["precip_mm"] = arr(C.i_precip_mm);
+        i["precip_eff_mm"] = arr(C.i_precip_eff_mm);
+        i["arable_frac_eff"] = arr(C.i_arable_frac_eff);
         d["islands"] = i;
         d["dt_s"] = C.dt_s;
         d["n_steps"] = C.n_steps;
@@ -408,6 +415,16 @@ void bind_planet(nb::module_& m) {
                  {"season_range", &C.season_range}})
             *v = dv(cg, k);
         if (cg.contains("continentality")) C.continentality = dv(cg, "continentality");
+        if (cg.contains("precip_share")) {           // PLAN-NATURE A2 起才有
+            C.lift = dv(cg, "lift");
+            C.precip_share = dv(cg, "precip_share");
+            C.season_shift = dv(cg, "season_shift");
+            C.n_seasons = static_cast<int>(C.season_shift.size());
+            C.i_precip_share = dv(ci, "precip_share");
+            C.i_precip_mm = dv(ci, "precip_mm");
+            C.i_precip_eff_mm = dv(ci, "precip_eff_mm");
+            C.i_arable_frac_eff = dv(ci, "arable_frac_eff");
+        }
         for (auto [k, v] : std::initializer_list<std::pair<const char*, std::vector<double>*>>{
                  {"precip", &C.i_precip}, {"temp", &C.i_temp}, {"storm", &C.i_storm}, {"stability", &C.i_stability},
                  {"window", &C.i_window}, {"catch", &C.i_catch}, {"river_size", &C.i_river_size}, {"temp_sea", &C.i_temp_sea},

@@ -422,7 +422,8 @@ def climate_only_cpp(ctx, node_inp: dict, c: dict, cfg_obj=None) -> dict:
     cfg_obj：core().make_config(flat_config(c)) 预先转好的（逐群调用时省掉每次展平）。"""
     from . import decode
     d = {"node": 0, "seed": int(ctx.seed), "area_km2": 0.0, "main_area_km2": 0.0, "age": 0.0, "layered": False, "area_median_km2": 1.0,
-         "lapse_c_per_km": 6.0, "arable_frac": 0.0, "river_size": 0.0, "has_river": False}
+         "lapse_c_per_km": 6.0, "arable_frac": 0.0, "river_size": 0.0, "has_river": False,
+         "precip_mm_ref": float(ctx.cfg["s04"]["climate"].get("precip_mm_ref", 4000.0))}
     for k in ("lat", "lon", "height_m", "keel_clearance_m", "precip", "temp", "temp_sea", "storm", "window", "season_range", "season_range_sea",
               "temp_winter", "temp_summer"):
         d[k] = float(node_inp[k])

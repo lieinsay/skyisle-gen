@@ -54,10 +54,13 @@ def _node_inputs(ctx, node: int) -> dict:
               "temp_winter", "temp_summer"):
         d[k] = float(cli[k][node])
     d["has_river"] = bool(cli["has_river"][node])
+    if "arable_frac_eff" in cli:          # A3 起：已垦额度 = 降水线之后的可耕率
+        d["arable_frac"] = float(cli["arable_frac_eff"][node])
     d["area_median_km2"] = float(np.median(isl["area_km2"]))
     d["planet"] = planet
     d["keel_clearance_m"] = float(ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))
     d["lapse_c_per_km"] = float(ctx.cfg["s04"]["climate"]["lapse_c_per_km"])
+    d["precip_mm_ref"] = float(ctx.cfg["s04"]["climate"].get("precip_mm_ref", 4000.0))
     return d
 
 

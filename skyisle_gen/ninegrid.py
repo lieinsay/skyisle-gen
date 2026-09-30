@@ -215,7 +215,8 @@ class RegionData:
         return f"{band}·{sect}段·{cshort}-{r:03d}"
 
 
-def _moisture(p: float, arid: float = 0.2, humid: float = 0.55) -> str:
+def _moisture(p: float, arid: float = 400.0, humid: float = 800.0) -> str:
+    """年雨（mm，A3 起）→ 干旱 / 适中 / 湿润。"""
     return "humid" if p >= humid else ("moderate" if p >= arid else "arid")
 
 
@@ -323,9 +324,9 @@ def build_region_md(rd: RegionData, r: int) -> tuple[str, dict]:
           f" 体质细节【待填（03-生态与人）】。")
 
     # ---------- ④⑤⑥
-    precip_med = float(np.median(rd.clim["precip"][members]))
+    precip_med = float(np.median(rd.clim["precip_mm"][members]))
     ck = ctx.cfg.get("check", {})
-    moist = _moisture(precip_med, float(ck.get("arid_precip", 0.2)), float(ck.get("humid_precip", 0.55)))
+    moist = _moisture(precip_med, float(ck.get("arid_mm", 400.0)), float(ck.get("humid_mm", 800.0)))
     prod_t = rd.prod.get("production", {}).get(cls, {}).get(moist, {}).get("text", "【待填】")
     l4 = f"（{MOIST_ZH[moist]}）{prod_t}"
     if lay > 0.15:

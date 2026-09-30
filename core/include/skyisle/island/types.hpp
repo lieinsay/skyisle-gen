@@ -36,6 +36,7 @@ struct NodeInputs {
     double keel_clearance_m = 300.0, area_median_km2 = 1.0;
     // 水系用
     double precip = 0, temp_sea = 0, lapse_c_per_km = 6.0, arable_frac = 0, river_size = 0;
+    double precip_mm_ref = 4000.0;   // 相对降水 1 的毫米数（④ 的 precip_mm_ref，A3 起线性换算）；arable_frac 是降水线之后的（④ 的 arable_frac_eff）
     bool has_river = false;
     // 气候用（④ 的岛上年均值）
     double temp = 0, storm = 0, window = 0, season_range = 0, season_range_sea = 0, temp_winter = 0, temp_summer = 0;

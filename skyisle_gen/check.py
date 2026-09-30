@@ -274,6 +274,8 @@ def check_p5(w: World, cfg, rep: Report):
     from .sphere import grid_interp
     reach = w.fields["reach"].astype(np.float64)
     u_min = float(c.get("p5_min_wind_ms", 1.0))   # 只看风稳的起源：骨架第二版核心在无风带 / 西风带过渡处，1–2 m/s 的弱风里「顺风」无从谈起
+    # (a) 按特征计顺风占比（阈值按此校）；另数风稳的起源有几个——同一起源的几条特征 reach 几乎一样，起源太少时占比不成样本（A4 起）
+    origins_a: set[int] = set()
     good = 0
     total = 0
     for t in w.traits:
@@ -290,9 +292,13 @@ def check_p5(w: World, cfg, rep: Report):
             continue
         delta = float((r * dlon).sum() / r.sum())
         total += 1
+        origins_a.add(int(o))
         if delta * np.sign(u_o) > 0:
             good += 1
+    n_orig = len(origins_a)
     frac = good / total if total else float("nan")
+    min_orig = int(c.get("p5_min_origins", 1))
+    decidable = n_orig >= min_orig       # 风稳的起源太少时 (a) 不成样本，只报告、由 (b) 定
 
     # (b) 同带内上下风特征对：上风的传得过去，下风的传不回来
     u_grid = wind["u"].astype(np.float64)
@@ -322,14 +328,15 @@ def check_p5(w: World, cfg, rep: Report):
                 elif s_up_at_dn > 1e-6:
                     ratios.append(float(c["p5_strength_ratio"]) * 10)
     med_ratio = float(np.median(ratios)) if ratios else float("nan")
-    ok = (not np.isnan(frac)) and frac >= float(c["p5_centroid_frac"]) \
-        and (not np.isnan(med_ratio)) and med_ratio > float(c["p5_strength_ratio"])
+    ok_a = (not decidable) or ((not np.isnan(frac)) and frac >= float(c["p5_centroid_frac"]))
+    ok = ok_a and (not np.isnan(med_ratio)) and med_ratio > float(c["p5_strength_ratio"])
     rep.add("P5", "单向传播（顺风易、逆风难）",
-            {"centroid_downwind_frac": round(frac, 3) if total else None, "n_traits": total,
+            {"centroid_downwind_frac": round(frac, 3) if total else None, "n_origins": n_orig, "n_traits": total,
+             "centroid_decidable": decidable,
              "updown_strength_ratio_median": round(med_ratio, 2) if ratios else None,
              "n_pairs": len(ratios)},
-            {"frac>=": c["p5_centroid_frac"], "ratio>": c["p5_strength_ratio"]},
-            ok)
+            {"frac>=": c["p5_centroid_frac"], "n_origins>=": min_orig, "ratio>": c["p5_strength_ratio"]},
+            ok, note=None if decidable else f"风稳（|u| ≥ {u_min:g} m/s）的起源只有 {n_orig} 个，重心占比不成样本，只按上下风强度比判")
 
 
 # ---------------------------------------------------------------- P6
@@ -515,8 +522,9 @@ def check_climate(w: World, cfg, rep: Report):
     ok2 = float(c["c_band_amp_min"]) <= amp <= float(c["c_band_amp_max"])
     rep.add("C2", "带界是波状线：位移幅度在「有变化但仍是条带」的范围内（R11）",
             {"max_shift_deg": round(amp, 2)}, {"in": [c["c_band_amp_min"], c["c_band_amp_max"]]}, ok2, viz="skyisle viz wind")
-    # C3：干旱岛比例（九格表 arid 口径：降水 < check.arid_precip）
-    arid = float((clim_i["precip"] < float(c.get("arid_precip", 0.3))).mean())
+    # C3：干旱岛比例（九格表 arid 口径：年雨 < check.arid_mm；A3 起按毫米，④ 的 precip_mm）
+    mm = clim_i["precip_mm"] if "precip_mm" in clim_i else clim_i["precip"] * float(cfg["s04"]["climate"].get("precip_mm_ref", 4000.0))   # A3 之前的产物
+    arid = float((mm < float(c.get("arid_mm", 400.0))).mean())
     ok3 = float(c["c_arid_min"]) <= arid <= float(c["c_arid_max"])
     rep.add("C3", "干旱岛比例在校准区间（副热带辐散 + 雨影，沙漠不需要大陆）",
             {"arid_share": round(arid, 3)}, {"in": [c["c_arid_min"], c["c_arid_max"]]}, ok3, viz="skyisle viz climate")

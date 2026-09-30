@@ -16,12 +16,16 @@ const char* const STAGE_KEYS[6] = {"military", "administrative", "economic", "cu
 
 std::vector<double> population(const Config& cfg, const Islands& isl, const Climate& c) {
     const double p1 = cfg.get("shared.scale.people_per_arable_km2");
-    const double full = cfg.get("s09.polity.precip_full"), floor_ = cfg.get("s09.polity.precip_floor");
+    // PLAN-NATURE A3：能种多少地归 ④ 的降水线（arable_frac_eff），这里的雨项只管单产——有效雨 yield_mm[0] 以下单产 = yield_floor，yield_mm[1] 起满
+    const std::vector<double>& ym = cfg.list("s09.polity.yield_mm");
+    const double yf = cfg.get("s09.polity.yield_floor");
+    const bool eff = !c.i_arable_frac_eff.empty();
     std::vector<double> pop(isl.n());
     for (size_t q = 0; q < pop.size(); ++q) {
-        const double arable = f32(isl.area[q]) * f32(isl.arable_frac[q]);
-        const double wet = clip(f32(c.i_precip[q]) / full, floor_, 1.0);
-        pop[q] = p1 * arable * wet;
+        const double arable = f32(isl.area[q]) * (eff ? f32(c.i_arable_frac_eff[q]) : f32(isl.arable_frac[q]));
+        const double rain = eff ? f32(c.i_precip_eff_mm[q]) : precip_mm(f32(c.i_precip[q]), cfg);
+        const double y = yf + (1.0 - yf) * clip((rain - ym[0]) / (ym[1] - ym[0]), 0.0, 1.0);
+        pop[q] = p1 * arable * y;
     }
     return pop;
 }

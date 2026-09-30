@@ -174,10 +174,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     const size_t N = static_cast<size_t>(H) * W;
     Mask land(H, W, 0);
     for (size_t k = 0; k < N; ++k) land.v[k] = g.island_id.v[k] >= 0 ? 1 : 0;
-    {
-        const double lo = c.get("climate.precip_mm_min"), hi = c.get("climate.precip_mm_max"), e = c.get("climate.precip_mm_exp");
-        g.P_mm = lo + (hi - lo) * c_pow(clip(inp.precip, 0.0, 1.0), e);
-    }
+    g.P_mm = inp.precip_mm_ref * clip(inp.precip, 0.0, 1.0);   // 与行星层同一条换算（A3）
     const double P_mm = g.P_mm;
     g.wind_u = grid_interp(pv.wind_u, pv.wind_grid, inp.lat, inp.lon);
     g.wind_v = grid_interp(pv.wind_v, pv.wind_grid, inp.lat, inp.lon);

@@ -76,8 +76,9 @@ def test_main_island_and_river_fields(two_runs):
     assert np.all(main <= area * hi * (1 + 1e-5)) and np.all(main >= area * lo * (1 - 1e-5))  # float32：容差用相对量
     assert np.allclose(wall, np.maximum(0.0, h - s3["keel_clearance_m"]), atol=0.01)
     with np.load(a / "s04_climate" / "climate_islands.npz") as z:
-        river, size, precip, catch = z["has_river"], z["river_size"], z["precip"], z["catch"]
-    expect = (main >= c4["river_main_area_km2"]) & (h >= c4["river_height_m"]) & (precip >= c4["river_precip_min"])
+        river, size, precip, catch, mm = z["has_river"], z["river_size"], z["precip"], z["catch"], z["precip_mm"]
+    assert np.allclose(mm, c4["precip_mm_ref"] * precip.astype(np.float64), rtol=1e-6), "毫米 = precip_mm_ref × 相对降水（A3，线性）"
+    expect = (main >= c4["river_main_area_km2"]) & (h >= c4["river_height_m"]) & (mm >= c4["river_min_mm"])
     assert np.array_equal(river, expect)
     assert np.all(size[~river] == 0) and np.all(size[river] > 0)
     assert np.allclose(catch, arable * area * precip, rtol=1e-4), "bonus = 0 时河不得进集雨容量"
@@ -108,13 +109,15 @@ def test_polity_layer(two_runs):
     with np.load(a / "s03_islands" / "islands.npz") as z:
         cls, area, arable = z["cls"], z["area_km2"], z["arable_frac"]
     with np.load(a / "s04_climate" / "climate_islands.npz") as z:
-        precip = z["precip"]
+        eff_mm, arable_eff = z["precip_eff_mm"], z["arable_frac_eff"]
     with np.load(a / "s09_polity" / "polity.npz") as z:
         pol = {k: z[k] for k in z.files}
     p = cfg["s09"]["polity"]
     p1 = cfg["shared"]["scale"]["people_per_arable_km2"]
-    wet = np.clip(precip / p["precip_full"], p["precip_floor"], 1.0)
-    assert np.allclose(pol["pop"], p1 * area * arable * wet, rtol=1e-4)
+    lo, hi = p["yield_mm"]
+    yld = p["yield_floor"] + (1 - p["yield_floor"]) * np.clip((eff_mm - lo) / (hi - lo), 0.0, 1.0)
+    assert np.allclose(pol["pop"], p1 * area * arable_eff * yld, rtol=1e-4), "人口 = P1 × 陆地 × 降水线后的可耕率 × 单产（A3）"
+    assert np.all(arable_eff <= arable * (1 + 1e-6)), "降水线只减不增"
     assert (pol["polity"] >= 0).all(), "原则己：每个节点都属于某个政体"
     elig = (cls == 0) | (cls == 1)
     assert (pol["state"][elig] >= 0).all() and (pol["state"][~elig] < 0).all()

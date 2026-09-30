@@ -179,11 +179,30 @@ def validate(cfg: dict) -> None:
     if "height_age_decay" in pl and not (0.0 <= float(pl["height_age_decay"]) < 1.0):
         raise ValueError("s03.plates.height_age_decay 必须在 [0, 1)")
     c4 = cfg.get("s04", {}).get("climate", {})
-    for k in ("river_main_area_km2", "river_height_m", "river_capacity_bonus"):
+    for k in ("river_main_area_km2", "river_height_m", "river_capacity_bonus", "river_min_mm"):
         if k in c4 and float(c4[k]) < 0:
             raise ValueError(f"s04.climate.{k} 必须 ≥ 0")
-    if "river_precip_min" in c4 and not (0.0 <= float(c4["river_precip_min"]) <= 1.0):
-        raise ValueError("s04.climate.river_precip_min 必须在 [0, 1]")
+    # ---- 毫米换算、降水线（PLAN-NATURE A3）与 ⑦ 驼峰、⑨ 单产（A4）----
+    if "precip_mm_ref" in c4 and float(c4["precip_mm_ref"]) <= 0:
+        raise ValueError("s04.climate.precip_mm_ref 必须 > 0")
+    if "rain_line_mm" in c4 or "rain_line_frac" in c4:
+        xs, ys = [float(x) for x in c4.get("rain_line_mm", [])], [float(y) for y in c4.get("rain_line_frac", [])]
+        if not xs or len(xs) != len(ys) or xs[0] <= 0 or any(b <= a for a, b in zip(xs, xs[1:])) or any(not 0 <= y <= 1 for y in ys):
+            raise ValueError("s04.climate.rain_line_mm 须为递增的正数、与 rain_line_frac 等长，rain_line_frac ∈ [0, 1]")
+    if "grow_temp_c" in c4 and not float(c4["grow_temp_c"][1]) > float(c4["grow_temp_c"][0]):
+        raise ValueError("s04.climate.grow_temp_c 须为 [起, 满] 且 满 > 起")
+    if "dormant_rain_eff" in c4 and not (0.0 <= float(c4["dormant_rain_eff"]) <= 1.0):
+        raise ValueError("s04.climate.dormant_rain_eff 必须在 [0, 1]")
+    c7 = cfg.get("s07", {}).get("centers", {})
+    if "precip_hump_mm" in c7 and not (0 < float(c7["precip_hump_mm"][0]) <= float(c7["precip_hump_mm"][1])):
+        raise ValueError("s07.centers.precip_hump_mm 须为 [下, 上] 且 0 < 下 ≤ 上")
+    if "precip_hump_width" in c7 and float(c7["precip_hump_width"]) <= 0:
+        raise ValueError("s07.centers.precip_hump_width 必须 > 0")
+    c9 = cfg.get("s09", {}).get("polity", {})
+    if "yield_mm" in c9 and not (float(c9["yield_mm"][1]) > float(c9["yield_mm"][0])):
+        raise ValueError("s09.polity.yield_mm 须为 [下, 满] 且 满 > 下")
+    if "yield_floor" in c9 and not (0.0 <= float(c9["yield_floor"]) <= 1.0):
+        raise ValueError("s09.polity.yield_floor 必须在 [0, 1]")
     # ---- 水汽模型与岛对风的扰动（第三批 3、4）----
     if "moisture_tau_days" in c4 and float(c4["moisture_tau_days"]) <= 0:
         raise ValueError("s04.climate.moisture_tau_days 必须 > 0")

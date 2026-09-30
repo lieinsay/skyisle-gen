@@ -218,9 +218,11 @@ def test_generate_p6_waterworks(small_ctx, tmp_path):
     （压力门槛 0、片与圩的下限放小：整片湿地排干），check 的硬项过，圩田在额度之内（已垦 = 额度），各种渠、塘、闸与水田 / 泽田都走到。"""
     from skyisle_gen import island as isl
     vw = ["island.works.village_works=true", "island.works.big_max=0"]          # 四点四十起村级默认不出、大堰默认修：这里测留着的村级算法
-    forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
+    # 强开那一遍把水田线抬到 5000 mm：A3 起毫米换算是线性的，小世界的圩区都过 800 mm、全是水田，泽田要这样才走得到
+    forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05",
+              "island.works.polder_paddy_mm=5000"]
     base = ["island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1",
-            "island.works.village_works=false", "island.works.big_max=2"]
+            "island.works.village_works=false", "island.works.big_max=2", "island.works.polder_paddy_mm=800"]
     seen = set()
     for extra in (vw, vw + forced):
         for node in _nodes(small_ctx, 2):
