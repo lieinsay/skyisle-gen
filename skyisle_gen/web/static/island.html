@@ -106,6 +106,7 @@ a{color:var(--acc2)}
     <label class="chk" title="村（圆的大小 = 户数）、镇（橙圈，管几个村）、专业聚落（紫菱：矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地 / 盐井村；空心 = 工棚 / 季节住）、散户、泊场（拉近才画，方框 + H）/ 蓄水池、废村（灰 ✕）、有人用的岛（青三角：放牧 / 夏牧 / 庙 / 墓岛）；P7：航船线（青线，从最远的村开到镇上的大泊场）、镇朝大泊场的街（橙线 + 蓝方块）、中转站（红三角 = 有常住户，粉 = 轮班的烽火台）"><input type="checkbox" id="ovSettle" checked> 聚落</label>
     <label class="chk" title="水利分级（四点四十）：岛群层只画邑级的——橙红鱼嘴 = 大堰（都江堰级，邑管），粗青线 = 它的干渠 / 支渠，青绿 = 大堰灌到的在种的地，拉近后青方块 = 每个用水的村的分水口（虚线连到村）；圩田与纵浦横塘照旧。村级的渠、塘归营建器（village_works = true 时才在这里画出来：嫩绿 = 圩田（排干的湿地，深绿框是一个个圩）；渠（青：干渠粗、支渠细，从渠首的红三角散开；纵浦 / 横塘 / 排水渠蓝）；拉近后才画塘（蓝圆：村塘 / 山塘 / 圩塘 / 堰塘）与闸（褐方块：渠首闸 / 圩闸 / 排水闸）。P6b：每处都有管它的村（拉近后渠首、圩画一条细线连到管它的村；圩村 = 绿边的村）；灰色虚线 / 灰三角 / 灰圆 = 废村旁没人管的废渠、废渠首、废塘）"><input type="checkbox" id="ovWorks" checked> 水利（灌区 / 渠 / 圩田；拉近看塘、闸、管它的村）</label>
     <label class="chk" title="特殊的山（B3，island.json 的 landforms）：平行岭谷、掀斜断块山、峰林、冰川 / 冰斗 / 角峰、临空断山、天上的山、辉长岩锯齿峰、蛇纹岩秃山、方山 / 孤山、穿山天窗——橙三角 + 名字；拉近后加各类的量"><input type="checkbox" id="ovLand" checked> 特殊的山</label>
+    <label class="chk" title="崖壁泉线（C5：没进河道的地下水从崖壁上岩层与浮石的交界渗出；青点，大小按出水 L/s，实心 = 挂成崖瀑）与瀑布（C3：蓝倒三角 = 河从崖边跌下，白三角 = 岛内的瀑布，灰 = 跌水；溪涧的崖边瀑布拉近才画）"><input type="checkbox" id="ovSpring" checked> 泉线与瀑布</label>
     <label class="chk" title="采场（矿坑 ■ / 硫磺坑 ✕ / 盐井 ■ / 淘金点 ● / 采石场 ◆ / 土坑、采砂场 ·）、点（洞穴 ▲ / 泉眼 ○ / 温泉 ✱ / 盐泉 ○ / 贝壳化石 ◆）、片（泥炭 / 鸟粪 / 浮石露头）；拉近后标出赋存区。林木与各类赋存只在「资源分布」底图上"><input type="checkbox" id="ovRes"> 资源点位（采场 / 点 / 片）</label>
     <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="1.5"><span id="exagV" class="small">1.5</span></div>
     <div id="legend" class="legend"></div>
@@ -208,7 +209,9 @@ async function load(force = false, sets = null){
       res: rr.resource_u8 ? b64(rr.resource_u8, Uint8Array) : null, rf: rr.res_field_u8 ? b64(rr.res_field_u8, Uint8Array) : null, rw: rr.river_width_u8 ? b64(rr.river_width_u8, Uint8Array) : null,
       rd: rr.river_depth_u8 ? b64(rr.river_depth_u8, Uint8Array) : null,
       nat: rr.landcover_natural_u8 ? b64(rr.landcover_natural_u8, Uint8Array) : null, lu: rr.landuse_u8 ? b64(rr.landuse_u8, Uint8Array) : null,   // P6b：原始地表、人工改造
-      lith: rr.lith_u8 ? b64(rr.lith_u8, Uint8Array) : null };   // B2：出露岩性
+      lith: rr.lith_u8 ? b64(rr.lith_u8, Uint8Array) : null,   // B2：出露岩性
+      conf: rr.confine_u8 ? b64(rr.confine_u8, Uint8Array) : null, fw: rr.floor_w_u8 ? b64(rr.floor_w_u8, Uint8Array) : null,   // C2 限制度、谷底宽
+      cond: rr.condense_u8 ? b64(rr.condense_u8, Uint8Array) : null, cfor: rr.cloud_forest_u8 ? b64(rr.cloud_forest_u8, Uint8Array) : null };   // C4 凝结水、云雾林
     R.res_m = D.island.raster.res_m * R.step;
     buildWarp(); refined = null;
     // 汇流点（别的线的终点，落在这条线的中段）平滑时不动：各线各自平滑时干流上的汇流点被挪开、支流的终点还在原处，放大后汇流处断开一截（用户 09-30 看出来的）
@@ -557,6 +560,7 @@ function draw(){
   }
   if ($('ovRes').checked && D.resources) drawResources(ctx);
   if ($('ovLand').checked && D.island.landforms) drawLandforms(ctx);
+  if ($('ovSpring').checked && D.rivers) drawSprings(ctx);
   if ($('ovWorks').checked && D.settlements && D.settlements.waterworks) drawWorks(ctx);
   if ($('ovSettle').checked && D.settlements) drawSettlements(ctx);
   if ($('ovLabels').checked) { ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const i of J.islands) { const p = pos(i); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(p[0] - 9, p[1] - 7, 18, 14); ctx.fillStyle = '#fff'; ctx.fillText(i.id, p[0], p[1]); } }
@@ -578,7 +582,8 @@ function draw(){
     const dayT = D.climate.weather && D.climate.weather.days ? D.climate.weather.days[day].temp_c : D.climate.annual.temp_c;
     const T = D.climate.annual.temp_sea_c + (dayT - D.climate.annual.temp_c) - 6 * hv / 1000;
     let water = R.lake && R.lake[p] ? '湖' : (R.river && R.river[p] ? ['','小河','中河','大河'][R.river[p]] : (R.stream && R.stream[p] ? '溪涧' : ''));
-    if (water && water !== '湖' && R.rw && R.rw[p]) water += `（宽 ${R.rw[p] * 4} m · 深 ${fmt(R.rd[p] / 10, 1)} m${R.stream && R.stream[p] ? '，湿季' : ''}）`;
+    if (water && water !== '湖' && R.rw && R.rw[p]) water += `（宽 ${fmt(R.rw[p] / 2, 1)} m · 深 ${fmt(R.rd[p] / 10, 1)} m${R.stream && R.stream[p] ? '，湿季' : ''}）`;
+    if (water && water !== '湖' && R.conf && R.conf[p]) water += ` · 谷底 ${R.fw ? R.fw[p] * 20 : '—'} m，${['', '峡谷', '半限制', '开阔'][R.conf[p]]}`;
     if (!water && R.flood && R.flood[p]) water = liveOn() && dayTab && dayTab.flood[day] ? '漫滩（今日被淹：暴雨 / 风暴）' : '漫滩';
     const RS = D.resources; const zr = RS && R.zone ? RS.zones.classes[R.zone[p]] : ''; const rs = RS && R.res && R.res[p] ? RS.resources.classes[R.res[p]] : '';
     const NN = R.rows * R.cols; const fs = R.rf && RS && RS.fields ? RS.fields.kinds.map((k, t) => [RS.fields.names[t], R.rf[t * NN + p] / 255, RS.fields.thr[k]]).filter(x => x[1] > 0).map(x => `${x[0]} ${fmt(x[1], 2)}${x[1] >= x[2] ? '' : '（区外）'}`).join(' · ') : '';
@@ -588,7 +593,7 @@ function draw(){
       if (u) { const now = LU_NOW[u] || LC_NAMES[ck]; nt = `<br>原始：${LC_NAMES[nk]} → 现状：${now}（人工：${LU_HOW[u]}）`; }
       else if (nk !== ck) nt = `<br>原始：${LC_NAMES[nk]} → 现状：${LC_NAMES[ck]}`;
       else nt = `<br>原始地貌（没动过）`; }
-    tip.innerHTML = (sn ? `<b>${sn.name}</b> ${sn.hh} 户${sn.polder ? '（圩村）' : ''} · ${sn.town ? '集镇（营建在第四步）' : '双击营建此聚落'}<br>` : '') + `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? FARM_TIP[R.arable[p]] : ''}${water ? ' · ' + water : ''}${nt}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${R.lith && D.island.lith && R.lith[p] ? ' · 岩性 ' + D.island.lith.classes[R.lith[p]] : ''}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
+    tip.innerHTML = (sn ? `<b>${sn.name}</b> ${sn.hh} 户${sn.polder ? '（圩村）' : ''} · ${sn.town ? '集镇（营建在第四步）' : '双击营建此聚落'}<br>` : '') + `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? FARM_TIP[R.arable[p]] : ''}${water ? ' · ' + water : ''}${nt}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${R.lith && D.island.lith && R.lith[p] ? ' · 岩性 ' + D.island.lith.classes[R.lith[p]] : ''}${R.cond && R.cond[p] ? '<br>集水核凝结水 ' + R.cond[p] * 4 + ' mm/年' + (R.cfor && R.cfor[p] ? ' · 云雾林' : '') : ''}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
     tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 14) + 'px';
     $('coords').textContent = `x ${fmt(kmx, 2)} km, y ${fmt(kmy, 2)} km · 格 (${i}, ${j})`;
   });
@@ -599,7 +604,7 @@ function draw(){
   ['baseSel','resKind','ovWater','ovVec','ovFlood','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
   const resRow = () => { $('resKindRow').style.display = $('baseSel').value === 'resource' ? '' : 'none'; }; $('baseSel').addEventListener('change', resRow); resRow();
   $('ovFx').addEventListener('change', () => { if (!$('ovFx').checked) { const f = $('fx'); f.getContext('2d').clearRect(0, 0, f.width, f.height); } });
-  ['ovLinks','ovLabels','ovSettle','ovRes','ovWorks','ovLand'].forEach(id => $(id).addEventListener('change', draw));
+  ['ovLinks','ovLabels','ovSettle','ovRes','ovWorks','ovLand','ovSpring'].forEach(id => $(id).addEventListener('change', draw));
   $('exag').addEventListener('input', () => { $('exagV').textContent = $('exag').value; base = null; draw(); });
   $('btnFit').onclick = () => { fitView(); draw(); }; $('btnMain').onclick = () => zoomIsland(0);
   $('btnGo').onclick = () => { run = $('runIn').value.trim(); node = +$('nodeIn').value; load(); };
@@ -623,6 +628,23 @@ const LF_MEASURE = { tower_karst: r => `石柱 ${r.tower_h_m} m · ${r.density_p
   tilted_block: r => `歪向 ${r.dip_to_deg}° · 断崖 ${r.scarp_m} m`, gabbro_crags: r => `${r.area_km2} km² · 坡 ${r.slope_med_deg}°`,
   serpentine_barren: r => `${r.area_km2} km² · 裸 ${fmt(r.bare_frac * 100, 0)}%`, mesa: r => `顶 ${r.area_km2} km² · 崖 ${r.rise_m} m`, butte: r => `顶 ${r.area_km2} km² · 崖 ${r.rise_m} m`,
   natural_arch: r => `洞口 ${r.opening_m} m · 看得见云` };
+// C5 崖壁泉线与 C3 瀑布（rivers.json 的 springline / falls）
+function drawSprings(ctx){
+  const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];
+  const zoomed = view.s * (10 / R.step) > 6;
+  for (const s of D.rivers.springline || []) {
+    const [x, y] = cellPos(s[1]); const r = Math.max(1.2, Math.min(5, 1 + Math.sqrt(s[2]))); ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#5ff0ff'; ctx.lineWidth = 1; ctx.stroke(); if (s[5]) { ctx.fillStyle = '#5ff0ff'; ctx.fill(); }
+  }
+  ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+  for (const f of D.rivers.falls || []) {
+    const edge = f.kind === '崖边瀑布'; if (edge && f.level < 1 && !zoomed) continue; if (!edge && f.kind === '跌水' && !zoomed) continue;
+    const [x, y] = cellPos(f.cell); const s = edge ? (f.level >= 1 ? 6 : 4) : 5; ctx.beginPath();
+    if (edge) { ctx.moveTo(x - s, y - s * 0.6); ctx.lineTo(x + s, y - s * 0.6); ctx.lineTo(x, y + s); } else { ctx.moveTo(x, y - s); ctx.lineTo(x + s, y + s * 0.6); ctx.lineTo(x - s, y + s * 0.6); }
+    ctx.closePath(); ctx.fillStyle = edge ? '#3d7dff' : (f.kind === '瀑布' ? '#ffffff' : '#9aa'); ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.fill(); ctx.stroke();
+    if (zoomed && (f.level >= 1 || !edge)) { const t = `${f.kind} ${fmt(f.drop_m, 0)} m`; ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x + 6, y - 8, ctx.measureText(t).width + 4, 13); ctx.fillStyle = '#cfe0ff'; ctx.fillText(t, x + 8, y + 2); }
+  }
+}
 function drawLandforms(ctx){
   const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];
   const zoomed = view.s * (10 / R.step) > 6;

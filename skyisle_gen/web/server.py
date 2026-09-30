@@ -274,6 +274,8 @@ class Handler(BaseHTTPRequestHandler):
         S = json.loads((out / "settlements.json").read_text(encoding="utf-8")) if (out / "settlements.json").exists() else None
         RS = json.loads((out / "resources.json").read_text(encoding="utf-8")) if (out / "resources.json").exists() else None
         RV = json.loads((out / "rivers.json").read_text(encoding="utf-8")) if (out / "rivers.json").exists() else None
+        if RV and "segments" in RV:      # C3 的逐点数据几 MB，调试台只画中心线、瀑布、泉线：段只留个数
+            RV["n_segments"] = len(RV.pop("segments"))
         return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "settlements": S, "resources": RS, "rivers": RV, "island_cfg": ctx.cfg.get("island", {}),
                 "preview_res": f"/api/island/preview?run={rid}&node={node}&res=1&t={int(time.time())}",
                 "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
@@ -301,7 +303,8 @@ class Handler(BaseHTTPRequestHandler):
         # P6b：landcover_natural = 没有人以前的地表（码同 landcover），landuse = 人工改造（0 没动过 … 7 采场，island/waterworks.py 的 LANDUSE_CLASSES）
         for k, dt in (("landcover", np.uint8), ("river", np.uint8), ("stream", np.uint8), ("lake", np.uint8), ("arable", np.uint8), ("cliff", np.uint8),
                       ("floodplain", np.uint8), ("terrain_zone", np.uint8), ("resource", np.uint8), ("landcover_natural", np.uint8), ("landuse", np.uint8),
-                      ("lith", np.uint8)):                                               # B2：出露岩性（码见 island.json 的 lith.classes）
+                      ("lith", np.uint8),                                                # B2：出露岩性（码见 island.json 的 lith.classes）
+                      ("confine", np.uint8), ("cloud_forest", np.uint8), ("river_water", np.uint8)):   # C2 限制度、C4 云雾林、C1 记成水面的河道格
             if k in arrs:
                 out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
         if "cultivable" in arrs:      # P5：田的编码与 farmland.png 同——1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒
@@ -311,9 +314,13 @@ class Handler(BaseHTTPRequestHandler):
             rf = np.ascontiguousarray(arrs["res_field"][:, ::step, ::step]).astype(np.uint8)
             out["res_field_u8"] = base64.b64encode(rf.tobytes()).decode("ascii")
             out["res_field_k"] = int(rf.shape[0])
-        if "river_width_m" in arrs:   # 河宽 / 4 m、水深 × 10（u8：到 1020 m / 25.5 m）
-            out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_width_m"]) / 4.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+        if "river_width_m" in arrs:   # 河宽 × 2（0.5 m 一档，C1 去夸张后大多几米）、水深 × 10（u8：到 127.5 m / 25.5 m）
+            out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_width_m"]) * 2.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
             out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_depth_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+        if "floor_w_m" in arrs:       # C2 谷底宽 / 20 m（到 5100 m）；C4 凝结水 / 4 mm（到 1020 mm）
+            out["floor_w_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["floor_w_m"]) / 20.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+        if "condense_mm" in arrs:
+            out["condense_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["condense_mm"]) / 4.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "slope_deg" in arrs:
             out["slope_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["slope_deg"]) * 4), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "flowacc_km2" in arrs:
