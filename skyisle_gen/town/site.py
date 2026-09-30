@@ -134,6 +134,45 @@ def _anchors(S: dict, site: dict, frame_x: float, frame_y: float) -> dict:
     return {"landings": landings, "exits": exits, **extra}
 
 
+def _water_anchors(S: dict, site: dict, rc: float, cc: float, cres: float, reach: float) -> dict | None:
+    """岛群层的水利（四点四十：水利分级）换成窗口平面坐标（m）：穿过窗口的渠（邑级大堰的渠 level = 邑；village_works 打开时村的渠 level = 村）、
+    本村的分水口（大堰的渠上离村最近的格，turnouts）、窗口里的闸。村级的渠、塘默认不在岛群层出——归营建器按风格修（塘 / 井 / 水圳 / 风水塘……）；
+    这里只把上游的「邑的渠从哪过、本村在哪分水」告诉营建器（记进 plan.json、画在 plan.png 上，营建算法暂不读它）。"""
+    WK = S.get("waterworks")
+    if not WK:
+        return None
+    rec = site["rec"]
+    v = rec.get("village") if isinstance(rec, dict) and "village" in rec else rec
+    vid = v.get("id") if isinstance(v, dict) else None
+
+    def xy(r, c):
+        return [round((float(c) - cc) * cres, 2), round(-(float(r) - rc) * cres, 2)]
+    canals = []
+    for c in WK.get("canals", []):
+        if c.get("abandoned"):
+            continue
+        P = np.asarray(c["pts"], dtype=np.float64)
+        L = np.stack([(P[:, 1] - cc) * cres, -(P[:, 0] - rc) * cres], axis=1)
+        if np.abs(L).max(axis=1).min() > reach:
+            continue
+        canals.append({"kind": c["kind"], "level": "邑" if "work" in c else "村", "work": c.get("work"), "village": c.get("village"),
+                       "width_m": c.get("width_m"), "line": np.round(L, 2).tolist()})
+    turnouts = []
+    for b in WK.get("big_works", []):
+        for t in b.get("turnouts", []):
+            if t["village"] == vid:
+                turnouts.append({"work": int(b["id"]), "kind": b["kind"], "xy": xy(t["cell"][0] + 0.5, t["cell"][1] + 0.5), "served_km2": t["served_km2"],
+                                 "dist_m": round(float(t["dist_km"]) * 1000.0, 1), "maintainer": b["maintainer"]})
+    sluices = []
+    for x in WK.get("sluices", []):
+        q = xy(x["cell"][0] + 0.5, x["cell"][1] + 0.5)
+        if not x.get("abandoned") and max(abs(q[0]), abs(q[1])) <= reach:
+            sluices.append({"kind": x["kind"], "xy": q, "village": x.get("village")})
+    if not (canals or turnouts or sluices):
+        return None
+    return {"canals": canals, "turnouts": turnouts, "sluices": sluices, "village_works": (WK.get("summary") or {}).get("village_works")}
+
+
 def _fields(T) -> np.ndarray:
     """群栅格上的田（0 / 1 田 / 2 梯田）：已垦 + 撂荒（P5）；P5 之前的产物读 arable。"""
     if "cultivated" in T.files:
@@ -206,6 +245,9 @@ def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, hal
                      if k in ("elev_m", "field", "landing", "water", "shore_dist_km", "market_town", "seat", "subtype", "note")},
         "anchors": _anchors(S, site, frame_x, frame_y),
     }
+    wa = _water_anchors(S, site, rc, cc, cres, reach)
+    if wa:
+        meta["anchors"]["water"] = wa
     return sd, meta
 
 

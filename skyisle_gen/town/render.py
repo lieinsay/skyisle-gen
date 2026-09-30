@@ -13,6 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.collections import LineCollection, PatchCollection  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Circle, Patch, Polygon  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -253,6 +254,34 @@ def _labels(P: dict) -> list:
     return out
 
 
+def draw_water_anchors(ax, meta: dict, pt_per_m: float) -> list:
+    """四点四十：岛群层给的水利（邑的渠、本村的分水口、闸）画在营建图上；返回图例项（没有就空）。"""
+    wa = (meta.get("anchors") or {}).get("water")
+    if not wa:
+        return []
+    hs = []
+    for c in wa["canals"]:
+        L = np.asarray(c["line"], dtype=np.float64)
+        big = c["level"] == "邑"
+        col = "#d06010" if big else "#0a8a8a"
+        ax.plot(L[:, 0], L[:, 1], color=col, lw=max(1.6 if big else 1.0, float(c.get("width_m") or 3.0) * pt_per_m), solid_capstyle="round", zorder=6, alpha=0.9)
+    if any(c["level"] == "邑" for c in wa["canals"]):
+        hs.append(Line2D([], [], color="#d06010", lw=2.4, label="邑的渠（大堰）"))
+    if any(c["level"] == "村" for c in wa["canals"]):
+        hs.append(Line2D([], [], color="#0a8a8a", lw=1.6, label="村的渠（岛群层）"))
+    for t in wa["turnouts"]:
+        ax.scatter([t["xy"][0]], [t["xy"][1]], s=46, marker="s", c="#20c0d0", edgecolors="k", linewidths=0.6, zorder=9)
+        ax.annotate(f"分水口（{t['kind']}{t['work']}，本村灌 {t['served_km2']:.2f} km²）", (t["xy"][0], t["xy"][1]), xytext=(5, 4), textcoords="offset points",
+                    fontsize=7.5, color="#106070", zorder=9, bbox={"fc": "w", "ec": "none", "alpha": 0.6, "pad": 0.5})
+    if wa["turnouts"]:
+        hs.append(Line2D([], [], marker="s", ls="", mfc="#20c0d0", mec="k", label="本村的分水口"))
+    for x in wa["sluices"]:
+        ax.scatter([x["xy"][0]], [x["xy"][1]], s=20, marker="s", c="#402020", edgecolors="w", linewidths=0.4, zorder=8)
+    if wa["sluices"]:
+        hs.append(Line2D([], [], marker="s", ls="", mfc="#402020", mec="w", label="闸"))
+    return hs
+
+
 def _legend_handles(P: dict | None) -> list:
     h = [Patch(color=np.array(FARM_RGB) / 255, label="田"), Patch(color=np.array(WATER_RGB[1]) / 255, label="河"),
          Patch(color=np.array(WATER_RGB[2]) / 255, label="季节性溪涧"), Patch(color=np.array(WATER_RGB[3]) / 255, label="湖 / 海"),
@@ -353,10 +382,11 @@ def _render(out_png: Path, sd: dict, meta: dict, cfg: dict, stats: dict | None, 
     ax.set_aspect("equal")
     ax.tick_params(labelsize=7)
     ax.set_title(_title(meta, P, style_name) + ("（局部）" if detail else ""), fontsize=11)
+    fig.canvas.draw()
+    bb = ax.get_window_extent()
+    pt_per_m = bb.width / span_x * 72.0 / fig.dpi
+    wh = draw_water_anchors(ax, meta, pt_per_m)
     if P:
-        fig.canvas.draw()
-        bb = ax.get_window_extent()
-        pt_per_m = bb.width / span_x * 72.0 / fig.dpi
         draw_plan(ax, P, pt_per_m, labels=True, label_size=8 if detail else 6.5)
     # 比例尺与指北
     bar = 10 ** math.floor(math.log10(span_x / 4))
@@ -369,7 +399,7 @@ def _render(out_png: Path, sd: dict, meta: dict, cfg: dict, stats: dict | None, 
     ax.annotate("北", xy=(ext[1] - 0.05 * span_x, ext[3] - 0.04 * span_y), xytext=(ext[1] - 0.05 * span_x, ext[3] - 0.12 * span_y),
                 ha="center", fontsize=9, arrowprops={"arrowstyle": "-|>", "color": "k"}, bbox={"fc": "w", "ec": "none", "alpha": 0.7, "pad": 1},
                 zorder=21)
-    hs = _legend_handles(P)
+    hs = _legend_handles(P) + wh
     ax.legend(handles=hs, loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=7.0, frameon=False, ncol=2 if len(hs) > 16 else 1,
               columnspacing=0.8, handlelength=1.4)
     fig.text(axw + 0.03, 0.05, "\n".join(_info_lines(meta, stats, P, step, res)), fontsize=7.5, va="bottom")
