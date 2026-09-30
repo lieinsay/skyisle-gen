@@ -150,10 +150,8 @@ def _products(out):
     return res
 
 
-# B0 起河宽不夸张（× 1），漫滩 = 10 × 真实河宽不到一格；B1 起谷是真切出来的 V 形——C2 的谷底宽之前，小世界里没有平的谷底：
-# 湿地（周围最陡的坡 < 2.5°）、圩田、大堰（干渠从渠首第一格就被谷坡挡住）都出不来。水利那几条测的是算法的每条路径，
-# 照旧用夸张的河宽（漫滩跟着宽）把谷底铺出来（DESIGN-NOTES 四点四十六）
-OLD_FLOOD = ["island.hydro.width_scale=8.0", "island.hydro.depth_scale=3.0"]
+# B 之后谷是真切出来的、C2 起谷底按地球的宽（DESIGN-NOTES 四点四十六 / 四点四十七）：小世界里湿地少，圩田靠强开（B 的一段时间里用夸张河宽 OLD_FLOOD 铺谷底，C2 撤了）
+OLD_FLOOD: list[str] = []
 
 
 def _gen(ctx, node, root, threads=4, sets=(), **kw):
@@ -229,7 +227,7 @@ def test_generate_p6_waterworks(small_ctx, tmp_path):
     # 强开的第二遍把水田线抬到 5000 mm：A3 起毫米换算是线性的，小世界的圩区都过 800 mm、全是水田，泽田要这样才走得到
     forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
     zetian = ["island.works.polder_paddy_mm=5000"]
-    base = ["island.hydro.width_scale=1.0", "island.hydro.depth_scale=1.0", "island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1",
+    base = ["island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1",
             "island.works.village_works=false", "island.works.big_max=2", "island.works.polder_paddy_mm=800"]
     seen = set()
     for extra in (OLD_FLOOD + vw, OLD_FLOOD + vw + forced, OLD_FLOOD + vw + forced + zetian):
@@ -257,7 +255,7 @@ def test_generate_p6b_manage(small_ctx, tmp_path):
     forced = ["island.works.polder_village_blocks=1", "island.works.manage_walk_km=3.0", "island.settle.ruin_min_hh=2",
               "island.works.works_src_min_km2=1.0", "island.works.works_stream_min_km2=2.0", "island.works.canal_min_cmd_km2=0.05",
               "island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
-    base = ["island.hydro.width_scale=1.0", "island.hydro.depth_scale=1.0", "island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3",
+    base = ["island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3",
             "island.works.polder_block_min_km2=0.1", "island.works.polder_village_blocks=3", "island.works.manage_walk_km=2.0", "island.settle.ruin_min_hh=8",
             "island.works.works_src_min_km2=10.0", "island.works.works_stream_min_km2=30.0", "island.works.canal_min_cmd_km2=0.5",
             "island.works.village_works=false", "island.works.big_max=2"]
@@ -288,8 +286,10 @@ def test_generate_bigworks(small_ctx, tmp_path):
     每个用水的村一个分水口，SET-works / SET-nature 过，已垦 = 额度、人口不变。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island.check import _nature_check, _works_check
-    forced = ["island.works.big_src_min_km2=1.0", "island.works.big_min_cmd_km2=0.2", "island.works.big_min_quota_frac=0.0", "island.works.big_try=4"]
-    base = ["island.hydro.width_scale=1.0", "island.hydro.depth_scale=1.0", "island.works.big_src_min_km2=30.0", "island.works.big_min_cmd_km2=20.0", "island.works.big_min_quota_frac=0.1", "island.works.big_try=10"]
+    # 小世界按 300 m 一格：C2 的谷底（汇水几十 km² 的几百米）不到一两格，干渠走不出渠首——强开那遍把谷底系数放大，铺出几格宽的谷底
+    forced = ["island.works.big_src_min_km2=1.0", "island.works.big_min_cmd_km2=0.2", "island.works.big_min_quota_frac=0.0", "island.works.big_try=4",
+              "island.hydro.valley_floor_k_m=300.0"]
+    base = ["island.hydro.valley_floor_k_m=50.0", "island.works.big_src_min_km2=30.0", "island.works.big_min_cmd_km2=20.0", "island.works.big_min_quota_frac=0.1", "island.works.big_try=10"]
     seen = set()
     for extra in (OLD_FLOOD, OLD_FLOOD + forced):
         for node in _nodes(small_ctx, 3):

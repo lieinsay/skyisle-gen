@@ -340,7 +340,10 @@ def test_resources_from_the_seafloor(small_ctx, tmp_path):
     assert {"salt", "saltspring", "fossil"} <= kinds, kinds
     assert any(d.get("subtype") == "骨架空洞" for d in R["deposits"])
     ages = {i["id"]: i["age_zh"] for i in J["islands"]}
-    assert all(ages[d["island"]] == "新岛" for d in R["deposits"] if d["kind"] == "hotspring")
+    # C4 起：温泉在新岛（余热）或大核山上（核山温泉：集水核强度 ≥ hotspring_core_min）
+    core_s = J["hydro"]["water"]["core_strength"]
+    assert all(ages[d["island"]] == "新岛" or (d["subtype"] == "核山温泉" and core_s[d["island"]] >= 0.25 - 1e-3)
+               for d in R["deposits"] if d["kind"] == "hotspring")
     assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "stone"} <= set(LITH_LAYERS)
     assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "ore"} <= set(ORE_ORIGIN)
     wells = {w["occurrence"]: w for w in R["workings"] if w["kind"] == "salt"}

@@ -1,6 +1,7 @@
 """第六节：岛群生成器的一致性校验（`skyisle island check <节点>`）。
 
-IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-season / IS-float / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap 为软项；
+IS-area / IS-surface / IS-arable / IS-river / IS-channel / IS-water / IS-season / IS-float / IS-link / IS-terr / IS-det / IS-iso 为硬项，IS-daily、IS-terr-gap、IS-valley 为软项
+（IS-water 水账闭合、IS-valley 谷底宽合理是 C6 加的，PLAN-NATURE 第七节）；
 资源 RES-site / RES-occ / RES-work / RES-geo 为硬项，RES-quarry 为软项；
 聚落 SET-pop / SET-field / SET-site / SET-land / SET-town / SET-home / SET-farm / SET-use / SET-works / SET-market / SET-nature 为硬项，SET-water 为软项（PLAN-SETTLE 第六节；SET-dock 随码头取消，四点十八；
 SET-farm / SET-use 是 P5 加的：宜垦 / 已垦 / 撂荒与定居门槛、没人住的岛有人用；SET-works 是 P6 加的：渠、塘、闸、圩田（P6b 加管它的村走得到、废弃的水利）；
@@ -83,15 +84,26 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             inc |= both & (a_ >= g["height"] - 0.5) & (b_ >= g["height"] - 0.5)
         has_nb = rvm & anyp
         below = float(inc[has_nb].mean()) if has_nb.any() else 1.0
-        add("IS-channel", "常年河每格有河宽 / 水深；河道切在两岸之下（横断面两侧都不低于河道）的占比", {"width_depth_ok": ok_wd, "below_banks": round(below, 4)},
-            "全有 / ≥ 0.95", ok_wd and below >= 0.95)
+        # C1：河道格的 height 是平岸水面；记成水面的（river_water）恰是河宽够一格的河道格
+        water_ok = True
+        if "river_water" in g and c is not None:
+            thr_w = float(c.get("hydro", {}).get("river_water_min_cells", 1.0)) * g["res_km"] * 1000.0
+            water_ok = bool((g["river_water"].astype(bool) == (rvm & (g["river_width_m"] >= thr_w))).all())
+        add("IS-channel", "常年河每格有河宽 / 水深；河道切在两岸之下（横断面两侧都不低于河道）的占比；记成水面的河道格恰是河宽够一格的（C1）",
+            {"width_depth_ok": ok_wd, "below_banks": round(below, 4), "river_water_ok": water_ok}, "全有 / ≥ 0.95 / 是", ok_wd and below >= 0.95 and water_ok)
+    if "runoff_acc" in g:
+        items.append(_water_budget(g))
+    if "rivernet" in g:
+        items.append(_valley_check(g, c))
     R = g.get("resources")
     if R is not None:
         from .grid import binary_dilate
         from .resources import FIELD_KINDS, LITH_LAYERS, ORE_ORIGIN, RES_INDEX, rock_site_mask
         bad_site, bad_geo = [], []
         ages = {i["id"]: i["age_zh"] for i in J["islands"]}
-        water = (g["river"] > 0) | g["lake"]
+        core_s = (J.get("hydro", {}).get("water") or {}).get("core_strength") or []
+        core_min = float((c or {}).get("water", {}).get("hotspring_core_min", 0.0))
+        water = _water_surface(g)
         fs_ids = [d["id"] for d in R["deposits"] if d["kind"] == "floatstone"]
         near_fs = binary_dilate(np.isin(g["patch_id"], fs_ids), 1) if fs_ids else np.zeros(water.shape, dtype=bool)
         RFg = g["res_field"]
@@ -106,7 +118,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             marked = (g["patch_id"][i, j_] == d["id"]) if d["form"] == "patch" else (g["resource"][i, j_] == RES_INDEX[d["kind"]])
             if g["island_id"][i, j_] != d["island"] or water[i, j_] or (g["cliff"][i, j_] and not on_cliff_ok) or not marked:
                 bad_site.append(d["id"])
-        # P3（没有火山）：不许有熔岩管 / 火山口；骨架空洞开在浮石露头旁；温泉、硫磺只在新岛；溶洞只在老岛；石料岩性是三层之一；
+        # P3（没有火山）：不许有熔岩管 / 火山口；骨架空洞开在浮石露头旁；温泉、硫磺只在新岛（C4 起集水核的核山温泉除外）；溶洞只在老岛；石料岩性是三层之一；
         # 金属矿是海底带上来的那几种；盐泉在岩盐赋存上；贝壳化石在海相石灰岩的石料赋存区里
         for d in R["deposits"] + R["occurrences"]:
             a = ages.get(d["island"])
@@ -116,7 +128,8 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             if (("熔岩" in text or "火山" in text)
                     or (sub == "骨架空洞" and not near_fs[i, j_])
                     or (sub in ("溶洞", "落水洞", "地下河") and a != "老岛")
-                    or (d["kind"] in ("sulfur", "hotspring") and a != "新岛")
+                    or (d["kind"] in ("sulfur", "hotspring") and a != "新岛" and sub != "核山温泉")
+                    or (sub == "核山温泉" and (d["island"] >= len(core_s) or core_s[d["island"]] < core_min - 1e-3))
                     or (d["kind"] == "stone" and sub not in LITH_LAYERS)
                     or (d["kind"] == "ore" and sub not in ORE_ORIGIN)
                     or (d["kind"] == "saltspring" and RFg[fk["salt"]][i, j_] < int(round(R["fields"]["thr"]["salt"] * 255.0)) - 1)
@@ -148,7 +161,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
                 bad_w.append(w["id"])
         add("RES-work", "采场（矿坑 / 硫磺坑 / 淘金点 / 采石场 / 土坑 / 采砂场）不在耕地、林地、水面、崖缘上，落在本类的赋存场里、挂着同类赋存区",
             {"bad": bad_w[:10], "n": len(R["workings"])}, "bad = 0", not bad_w)
-        add("RES-geo", "资源与地质背景一致（没有火山：无熔岩管 / 火山口，骨架空洞开在浮石露头旁；温泉、硫磺只在新岛，溶洞只在老岛；"
+        add("RES-geo", "资源与地质背景一致（没有火山：无熔岩管 / 火山口，骨架空洞开在浮石露头旁；温泉、硫磺只在新岛（核山温泉只在大核山上），溶洞只在老岛；"
                        "石料岩性为海相石灰岩 / 辉长岩 / 蛇纹岩，金属矿是海底带上来的那几种；盐泉在岩盐赋存上，贝壳化石在海相石灰岩里）",
             {"bad": bad_geo[:10]}, "bad = 0", not bad_geo)
         nq = sum(1 for o in R["occurrences"] if o["kind"] == "stone" and o["island"] == 0)
@@ -218,10 +231,11 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             all(1 <= v["field"] <= len(S["fields"]) for v in S["villages"])
         add("SET-field", "每村有田；Σ 田块 = 已垦", {"fields_km2": round(f_sum, 3), "arable_km2": round(arable_km2, 3), "villages_have_field": every}, "< 1%",
             abs(f_sum - arable_km2) <= 0.01 * max(arable_km2, 1e-9) and every)
+        wsurf = _water_surface(g)
         bad = 0
         for v in S["villages"] + S.get("specials", []):
             i, j_ = v["cell"]
-            if g["cliff"][i, j_] or g["lake"][i, j_] or g["river"][i, j_] or g["island_id"][i, j_] != v["island"]:
+            if g["cliff"][i, j_] or wsurf[i, j_] or g["island_id"][i, j_] != v["island"]:
                 bad += 1
         cells = _np.array([v["cell"] for v in S["villages"]], dtype=float)
         sep_share = 1.0
@@ -240,7 +254,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
                 miss += 1
                 continue
             i, j_ = L_["cell"]
-            if g["island_id"][i, j_] != v["island"] or g["lake"][i, j_] or g["river"][i, j_] > 0 or g["cliff"][i, j_]:
+            if g["island_id"][i, j_] != v["island"] or wsurf[i, j_] or g["cliff"][i, j_]:
                 bad_l += 1
             steep += not L_["flat"]
         add("SET-land", "每个村 / 镇 / 专业聚落 / 中转站有泊场（同岛、非水非崖；坡 > 4° 的只报告）；没有桥头",
@@ -307,7 +321,7 @@ def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
     vil_isl = {v["island"] for v in S["villages"]}
     no_floor = [k for k in S["farmland"].get("floor_islands", []) if k not in vil_isl]     # 大岛保底（用户 09-29 定）：保底的岛都有村
     bad_ruin = [r["id"] for r in S.get("ruins", []) if r["abandoned_years"] < 1 or iid[r["cell"][0], r["cell"][1]] != r["island"]
-                or g["cliff"][r["cell"][0], r["cell"][1]] or g["lake"][r["cell"][0], r["cell"][1]] or g["river"][r["cell"][0], r["cell"][1]] > 0]
+                or g["cliff"][r["cell"][0], r["cell"][1]] or _water_surface(g)[r["cell"][0], r["cell"][1]]]
     out.append({"id": "SET-farm", "name": "已垦 ⊂ 宜垦 ∪ 圩田（梯田标记一致；圩田是排干的湿地、记 1）、撂荒 ⊂ 宜垦且不与已垦重叠；有农户的岛已垦都够 settle_min_hh 户（定居门槛）、"
                 "有已垦的岛都有村或散户（这两条强填时不查）；大岛保底的岛都有村；废村在自己的岛上、撤空了 ≥ 1 年",
                 "value": {"not_cultivable": bad_sub, "terrace_mismatch": bad_ter, "bad_polder": bad_pol, "bad_fallow": bad_fal, "below_threshold": small[:10],
@@ -339,7 +353,7 @@ def _farm_checks(g: dict, S: dict, c: dict | None) -> list[dict]:
 def _market_check(g: dict, S: dict, c: dict | None) -> dict:
     """SET-market（P7）：大泊场在本岛的缓坡平地上（非水非崖）；镇挨着的大泊场同岛、在 town_harbor_km 内；航船线的每个村都是搭航船去这条线的镇的，
     每个搭航船的村恰在一条线上；中转站的站址与瞭望处在本岛陆地上、不上水面崖缘，户 = 各角色之和，常住的有户、轮班的没有，不在同一座岛上摆两处。"""
-    iid, cliff, lake, river = g["island_id"], g["cliff"], g["lake"], g["river"] > 0
+    iid, cliff, lake, river = g["island_id"], g["cliff"], g["lake"], _water_surface(g)   # river：记成水的河道格（C1）
     mc = (c or {}).get("market") or {}
     smax = float(mc.get("harbor_slope_max_deg", 4.0))
     th_km = float(mc.get("town_harbor_km", 2.0))
@@ -495,6 +509,66 @@ def _works_manage(g: dict, S: dict, pid: np.ndarray) -> tuple[list, list, list, 
             corners = np.concatenate([np.stack([ii + a, jj + c], axis=1) for a in (0, 1) for c in (0, 1)])
             one("圩", p, corners)
     return far, unmanaged, bad_aband, bad_cmd
+
+
+def _water_budget(g: dict) -> dict:
+    """IS-water（C6 水账闭合）：陆地的径流（雨 × Budyko 径流系数 + 凝结水）= 各出口（崖边、湖、平地的汇点）的径流累计；
+    地下水补给 = 各出口的补给累计；每格凝结水 ≤ 局地雨（spec 13 第八节：最多 1 倍），雨产的径流 ≤ 局地雨；逐日径流指数年均 = 1。"""
+    land = g["island_id"] >= 0
+    cell = g["res_km"] ** 2
+    outlet = land & (g["recv_i"] < 0)
+    run = g["runoff_mm"].astype(np.float64)
+    tot = float(run[land].sum()) * cell
+    out_ = float(g["runoff_acc"][outlet].sum())
+    e_run = abs(out_ - tot) / max(1e-9, tot)
+    val = {"runoff_mm_km2": round(tot, 1), "outflow_mm_km2": round(out_, 1), "err": round(e_run, 7)}
+    ok = e_run < 1e-4
+    rain = g["rain_mm"].astype(np.float64)
+    if "condense_mm" in g:
+        cond = g["condense_mm"].astype(np.float64)
+        over_c = int((land & (cond > rain + 1e-3)).sum())
+        over_r = int((land & (run - cond > rain + 1e-3)).sum())
+        val.update({"condense_over_rain": over_c, "rain_runoff_over_rain": over_r})
+        ok = ok and over_c == 0 and over_r == 0
+    if "recharge_acc" in g:
+        rtot = float(g["recharge_mm"].astype(np.float64)[land].sum()) * cell
+        e_rec = abs(float(g["recharge_acc"][outlet].sum()) - rtot) / max(1e-9, rtot)
+        val["recharge_err"] = round(e_rec, 7)
+        ok = ok and e_rec < 1e-4
+    if "rivernet" in g:
+        e_idx = max((abs(float(np.mean(b["index"])) - 1.0) for b in g["rivernet"]["basins"] if len(b["index"])), default=0.0)
+        val["index_mean_err"] = round(e_idx, 7)
+        ok = ok and e_idx < 1e-6
+    return {"id": "IS-water", "name": "水账闭合（C6）：陆地径流 = 出口的径流累计，补给 = 出口的补给累计；凝结水、雨产的径流都不超过局地雨；逐日径流指数年均 = 1",
+            "value": val, "threshold": "相对误差 < 1e−4（径流权重取整到 1/16 mm、float32）、超出 0 格", "pass": bool(ok), "hard": True, "note": None}
+
+
+def _valley_check(g: dict, c: dict | None) -> dict:
+    """IS-valley（C6 谷底宽合理，软）：常年河量出的左右谷底宽不超过 C2 的谷底宽；开阔段谷底宽 / 平岸河宽的中位在 10–200 倍
+    （地球上不受限的河谷漫滩宽多为河宽的十几到上百倍）；谷底宽不超过上限。"""
+    N = g["rivernet"]
+    lvl = N["level"]
+    rv = lvl >= 1
+    res_m = g["res_km"] * 1000.0
+    cells = N["cell"].astype(np.int64)
+    W = g["height"].shape[1]
+    fw = g["floor_w_m"].reshape(-1)[cells].astype(np.float64)
+    w = N["w"].astype(np.float64)
+    excess = int((rv & (N["fp_l"] + N["fp_r"] > np.maximum(0.0, fw - w) + res_m)).sum())
+    vmax = float((c or {}).get("hydro", {}).get("valley_floor_max_m", 3000.0))
+    over = int((rv & (fw > vmax + 1e-6)).sum())
+    op = rv & (N["confine"] == 3)
+    ratio = float(np.median(fw[op] / np.maximum(w[op], 0.1))) if op.any() else float("nan")
+    ok = excess == 0 and over == 0 and (not op.any() or 10.0 <= ratio <= 200.0)
+    return {"id": "IS-valley", "name": "谷底宽合理（C6）：量出的左右谷底宽不超过谷底宽，谷底宽不过上限，开阔段谷底宽 / 平岸河宽的中位在 10–200",
+            "value": {"fp_excess": excess, "over_max": over, "open_ratio_p50": round(ratio, 1) if op.any() else None, "n_river_pts": int(rv.sum())},
+            "threshold": "0 / 0 / 10–200", "pass": bool(ok), "hard": False, "note": None}
+
+
+def _water_surface(g: dict) -> np.ndarray:
+    """水面：湖与记成水的河道格（C1：河宽过一格的，地表 = 河）。更窄的河道格在岸上（河槽由中心线 + 宽表达），点、村、泊场可以在上面；
+    旧产物（C1 之前）所有河道格的地表都是河，同一个式子还是旧口径。"""
+    return g["lake"] | (g["landcover"] == 10)
 
 
 def _nature_check(g: dict, S: dict) -> dict:

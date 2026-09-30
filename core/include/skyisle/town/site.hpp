@@ -55,6 +55,7 @@ struct WindowIn {
     Mask lake, floodplain, arable, terrace;
     Grid<uint8_t> landcover;
     GridD river_depth;                    // 河道 / 溪涧格的水深
+    bool height_is_surface = false;       // 河道格的 height 是平岸水面（岛群产物 C1 起，island.json hydro.channel_height = surface）；false = 旧产物，height 是河床
     double coarse_res_m = 100.0;
     double center_r = 0.0, center_c = 0.0;   // 窗口中心在粗栅格里的连续坐标（格角为原点，行向南、列向东）
     double frame_x = 0.0, frame_y = 0.0;     // 窗口中心在岛群平面坐标里的位置（m）

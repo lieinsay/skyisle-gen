@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from .groundwater import NOTE_HOTSPRING_CORE, NOTE_SPRING, SPRING_ZH
 from .resources import (NOTE_FOSSIL, NOTE_HOTSPRING, NOTE_SALT, NOTE_SALTSPRING, NOTE_SULFUR, NOTE_VOID, ORE_NOTE, RES_FORM, RES_INDEX, RES_NAMES,
                         WORK_ZH, ZONE_NAMES, _shape)
 
@@ -24,6 +25,7 @@ SUBTYPE_ZH = {
     "goldsilver": "金银", "iron": "铁", "leadzinc": "铅锌", "copper": "铜", "tin": "锡", "chromium": "铬", "nickel": "镍", "manganese": "锰",
     "hydrothermal": "热泉硫磺", "marine_limestone": "海相石灰岩", "gabbro": "辉长岩", "serpentinite": "蛇纹岩",
     "lake_clay": "河湖黏土", "stream_clay": "溪边黏土", "river_gravel": "河滩砂砾", "placer_gold": "砂金", "salt_dome": "盐丘",
+    **SPRING_ZH,
 }
 NOTE_ZH = {
     "floatstone_body": "岛体本身的浮石：可开采，采掉的量相对岛体微不足道，不影响浮空",
@@ -71,6 +73,11 @@ def deposit(d: dict) -> dict:
     note = d.get("note")
     if note == "waterfall_cave":
         out["note"] = f"常年河（流域 {d['note_arg']:.0f} km²）跌下崖缘处的水帘后"
+    elif note == "spring_flow":
+        out["note"] = NOTE_SPRING.format(d["note_arg"])
+        out["flow_ls"] = d["note_arg"]
+    elif note == "hotspring_core":
+        out["note"] = NOTE_HOTSPRING_CORE.format(d["note_arg"])
     elif note:
         out["note"] = NOTE_ZH[note]
     if d.get("cleared"):

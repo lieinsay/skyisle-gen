@@ -223,7 +223,7 @@ def build_hydro_cpp(ctx, node: int, c: dict, g: dict, log=print) -> None:
     state = {"inp": inputs(ctx, node, inp), "height": np.ascontiguousarray(g["height"], dtype=np.float64),
              "island_id": np.ascontiguousarray(g["island_id"], dtype=np.int16), "cliff": np.ascontiguousarray(g["cliff"], dtype=bool),
              "res_km": float(g["res_km"]), "origin_x": float(ox), "origin_y": float(oy),
-             "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "age": float(i["age"]), "young": i["age_zh"] == "新岛",
+             "islands": [{"rim_m": float(i["rim_m"]), "keel_m": float(i["keel_m"]), "peak_m": float(i["peak_m"]), "age": float(i["age"]), "young": i["age_zh"] == "新岛",
                           "multicore": bool(i.get("cores"))} for i in J["islands"]]}
     if "strat_top" in g:
         state["strat_top"] = np.ascontiguousarray(g["strat_top"], dtype=np.float64)
@@ -302,6 +302,14 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
         from .landforms import lith_summary
         g["lith"] = R["lith"]
         J["lith"] = lith_summary(R["lith"], island_id)
+    # C1 / C2：河床、谷底宽、限制度、记成水的河道格；C4 / C5：凝结水、云雾林、地下水、崖壁泉线
+    for k in ("bed_m", "floor_w_m", "confine", "river_water", "condense_mm", "cloud_forest", "bfi", "recharge_mm", "recharge_acc", "runoff_acc"):
+        if k in R:
+            g[k] = R[k]
+    if "springline" in R:
+        g["springline"] = [dict(s) for s in R["springline"]]
+    if "year_s" in R:
+        g["year_s"] = float(R["year_s"])
     cover, arable = R["landcover"], R["arable"]
     n_land = int(land.sum())
     share = {LANDCOVER_CLASSES[i]: round(float(((cover == i) & land).sum()) / max(1, n_land), 4) for i in range(1, 12)}
@@ -325,11 +333,18 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
                   "river_km2": round(float((river > 0).sum()) * cell_km2, 3),
                   "floodplain_km2": round(float(g["floodplain"].sum()) * cell_km2, 3),
                   "max_incision_m": round(float(R["max_cut"]), 1),
-                  "channel_note": "河宽 / 水深见 terrain.npz 的 river_width_m / river_depth_m（溪涧为湿季值）；height 在河道格是河床，水面 = 河床 + 水深；rivers[].waterfall_m = 河口跌下崖缘的落差",
+                  "channel_height": "surface",
+                  "channel_note": "河宽 / 水深见 terrain.npz 的 river_width_m / river_depth_m（真实比例；溪涧为湿季值）；height 在河道格是平岸水面（= 滩面），"
+                                  "河床 = height − 水深（C1；channel_height = surface，旧产物没有这个键时 height 是河床）；河宽 ≥ 一格的河道格地表记成河，"
+                                  "更窄的在岸上（河槽由 rivers.json 的中心线 + 宽 + 深表达）；rivers[].waterfall_m = 河口跌下崖缘的落差",
                   "wind_ms": [round(u, 2), round(v, 2)],
                   "river_levels": {"1": "小河", "2": "中河", "3": "大河", "stream": "季节性溪涧（water.png 值 1）"}}
     from .hydro import local_precip_summary
     J["hydro"]["local_precip"] = local_precip_summary(g["rain_mm"], island_id, hc)
+    from .groundwater import valley_summary, water_summary
+    J["hydro"]["valley"] = valley_summary(g, cell_km2)
+    if "condense_mm" in R:
+        J["hydro"]["water"] = water_summary(g, R, island_id, cell_km2)
     J["constraints"]["arable_frac"]["actual"] = round(float((arable > 0).sum()) / max(1, n_land), 4)
     hm = height[island_id == 0]
     J["constraints"]["height_m"]["actual"] = round(float(np.nanmedian(hm)), 1)
@@ -405,6 +420,12 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         resource_summary(g)
         Rr = g["resources"]
         log(f"  资源（C++）：点与片 {len(Rr['deposits'])} 处，赋存区 {len(Rr['occurrences'])}，采场 {len(Rr['workings'])}")
+    if "rivernet" in R:                   # C3：河的数据（天气之后算）
+        from .rivernet import river_data_summary
+        g["rivernet"] = R["rivernet"]
+        J["hydro"]["river_data"] = rd = river_data_summary(g)
+        log(f"  河的数据（C++）：{rd['segments']} 段，河 {rd['length_km']['河']:.0f} km、溪涧 {rd['length_km']['溪涧']:.0f} km；"
+            f"瀑布 {rd['falls']}；流域 {rd['basins']}，平岸 / 年均 {rd.get('bf_ratio_range', '—')}")
     g["timing"]["settle"] = float(secs[4])
     return g
 

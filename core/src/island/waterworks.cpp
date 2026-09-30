@@ -299,7 +299,7 @@ BigPlan big_plan(const Group& g, const Config& c, const std::vector<uint8_t>& pi
             if (std::find(used_out.begin(), used_out.end(), outs[i]) != used_out.end()) continue;
             const int32_t cc = kept[i];
             const int ci = cc / W, cj = cc % W, k = g.island_id.v[cc];
-            const double z0 = g.height.v[cc] + static_cast<double>(f32(g.depth_m.v[cc])) + weir;
+            const double z0 = g.height.v[cc] + weir;   // 河道格的高程就是平岸水面（C1）
             const double water = g.runoff_acc.v[cc] / 1000.0 / duty;   // 上游一年的径流（mm·km² → m·km²）/ 一年灌一遍的水（A5：Budyko）
             const int64_t cap_n = static_cast<int64_t>(std::floor(water / cell_km2));
             int64_t m = 0;
@@ -356,7 +356,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
     for (size_t k = 0; k < N; ++k)
         if (plan.polder_id.v[k] > 0 && fields_raster.v[k] > 0) pol_field[fields_raster.v[k]] = 1;
     std::vector<double> zf(N, 0.0);
-    for (size_t k = 0; k < N; ++k) zf[k] = (land(k) ? g.height.v[k] : 0.0) + (land(k) ? static_cast<double>(f32(g.depth_m.v[k])) : 0.0);
+    for (size_t k = 0; k < N; ++k) zf[k] = land(k) ? g.height.v[k] : 0.0;   // 水面：河道格的高程就是平岸水面（C1）
     // 管水利的村：田 → 种它的村（挂在村上的圩田也算）；走得到 = 离村格心的整数平方 ≤ W2
     double t = wc("manage_walk_km") / res_km;
     const double W2 = t * t;
@@ -1259,7 +1259,8 @@ void landuse_layers(Group& g, const std::vector<int32_t>& cmd_cells) {
     g.landuse = Grid<uint8_t>(g.H, g.W, 0);
     for (size_t k = 0; k < N; ++k) {
         uint8_t& nat = g.landcover_natural.v[k];
-        if (g.river.v[k] > 0) nat = RIVER;
+        // C1：只有记成水（河宽过一格）的河道格原来就是河；窄河那一格原来是岸上的地表
+        if (g.river_water.v.empty() ? g.river.v[k] > 0 : g.river_water.v[k] != 0) nat = RIVER;
         if (g.lake.v[k]) nat = LAKE;
         const uint8_t lc = g.landcover.v[k];
         const bool chg = g.island_id.v[k] >= 0 && lc != nat;

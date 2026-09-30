@@ -335,6 +335,38 @@ nb::dict hydro_dict(Group& g) {
     d["runoff_mm"] = f32_np(g.runoff);
     d["runoff_ratio"] = g.runoff_ratio;
     if (!g.lith.v.empty() && !g.strat_top.v.empty()) d["lith"] = grid_np(Grid<uint8_t>(g.lith));
+    // C1 / C2：河床、谷底宽、限制度、记成水的河道格
+    if (!g.bed_m.v.empty()) {
+        d["bed_m"] = f32_np(g.bed_m);
+        d["floor_w_m"] = f32_np(g.floor_w);
+        d["confine"] = grid_np(Grid<uint8_t>(g.confine));
+    }
+    if (!g.river_water.v.empty()) d["river_water"] = mask_np(Mask(g.river_water));
+    // C4 / C5：凝结水、云雾林、集水核强度、地下水、崖壁泉线
+    if (!g.condense.v.empty()) {
+        d["condense_mm"] = f32_np(g.condense);
+        d["core_s"] = to_np(std::vector<double>(g.core_s), {g.core_s.size()});
+    }
+    if (!g.cloud_forest.v.empty()) d["cloud_forest"] = mask_np(Mask(g.cloud_forest));
+    if (!g.recharge.v.empty()) {
+        d["bfi"] = f32_np(g.bfi);
+        d["recharge_mm"] = f32_np(g.recharge);
+        d["recharge_acc"] = grid_np(GridD(g.recharge_acc));
+        nb::list sl;
+        for (const SpringSeg& s : g.springline) {
+            nb::dict e;
+            e["island"] = s.island;
+            e["cell"] = nb::make_tuple(s.ci, s.cj);
+            e["q_ls"] = s.q_ls;
+            e["height_m"] = s.height_m;
+            e["length_km"] = s.length_km;
+            e["fall"] = s.fall;
+            sl.append(e);
+        }
+        d["springline"] = sl;
+    }
+    d["year_s"] = g.year_s;
+    d["runoff_acc"] = grid_np(GridD(g.runoff_acc));
     d["recv_i"] = grid_np(GridI(g.recv_i));
     d["recv_j"] = grid_np(GridI(g.recv_j));
     d["P_mm"] = g.P_mm;
@@ -455,6 +487,74 @@ nb::dict daily_dict(const Daily& D) {
     return d;
 }
 
+// C3 河的数据：逐点按列（numpy），段 / 瀑布 / 流域是 dict 的 list（前端 decode 与写 rivers.json）
+nb::dict rivernet_dict(const RiverNet& R) {
+    nb::dict d;
+    d["cell"] = vec_np(R.cell);
+    d["level"] = vec_np(R.level);
+    d["d50c"] = vec_np(R.d50c);
+    d["planform"] = vec_np(R.planform);
+    d["confine"] = vec_np(R.confine);
+    d["acc"] = vec_np(R.acc);
+    d["q_mean"] = vec_np(R.q_mean);
+    d["q_bf"] = vec_np(R.q_bf);
+    d["w"] = vec_np(R.w);
+    d["d"] = vec_np(R.d);
+    d["surf"] = vec_np(R.surf);
+    d["bed"] = vec_np(R.bed);
+    d["slope"] = vec_np(R.slope);
+    d["d50_mm"] = vec_np(R.d50_mm);
+    d["ssc"] = vec_np(R.ssc);
+    d["fp_l"] = vec_np(R.fp_l);
+    d["fp_r"] = vec_np(R.fp_r);
+    nb::list segs, falls, basins;
+    for (const RiverNet::Seg& s : R.segs) {
+        nb::dict e;
+        e["island"] = s.island;
+        e["down"] = s.down;
+        e["join"] = s.join;
+        e["start"] = s.start;
+        e["n"] = s.n;
+        e["basin"] = s.basin;
+        e["level"] = s.level;
+        e["exit"] = static_cast<int>(s.exit);
+        e["length_km"] = s.length_km;
+        segs.append(e);
+    }
+    for (const RiverNet::Fall& f : R.falls) {
+        nb::dict e;
+        e["seg"] = f.seg;
+        e["idx"] = f.idx;
+        e["cell"] = nb::make_tuple(f.ci, f.cj);
+        e["level"] = f.level;
+        e["kind"] = static_cast<int>(f.kind);
+        e["drop_m"] = f.drop_m;
+        e["length_m"] = f.length_m;
+        e["q_mean"] = f.q_mean;
+        falls.append(e);
+    }
+    for (const RiverNet::Basin& b : R.basins) {
+        nb::dict e;
+        e["seg"] = b.seg;
+        e["island"] = b.island;
+        e["mouth"] = nb::make_tuple(b.ci, b.cj);
+        e["area_km2"] = b.area_km2;
+        e["q_mean"] = b.q_mean;
+        e["bfi"] = b.bfi;
+        e["recession_days"] = b.recession_days;
+        e["quick_days"] = b.quick_days;
+        e["snow_frac"] = b.snow_frac;
+        e["cond_frac"] = b.cond_frac;
+        e["bf_ratio"] = b.bf_ratio;
+        e["index"] = vec_np(b.index);
+        basins.append(e);
+    }
+    d["segs"] = segs;
+    d["falls"] = falls;
+    d["basins"] = basins;
+    return d;
+}
+
 nb::dict weather_dict(const WeatherYear& Y, const std::vector<SeasonParams>& P) {
     nb::dict d;
     d["day"] = vec_np(Y.day);
@@ -556,6 +656,7 @@ void bind_island(nb::module_& m) {
             d["settle_landuse"] = grid_np(Grid<uint8_t>(g.landuse));
             d["settle_pop"] = g.settle_pop;
         }
+        if (g.has_rnet) d["rivernet"] = rivernet_dict(g.rnet);
         d["seconds"] = nb::make_tuple(g.sec_total, g.sec_hydro, g.sec_resources, g.sec_climate, g.sec_settle);
         return d;
     }, "inp"_a, "planet"_a, "cfg"_a, "year"_a = 0, "steps"_a = 5, "res_m"_a = 0.0, "threads"_a = 1);
@@ -677,6 +778,7 @@ void bind_island(nb::module_& m) {
             r.id = static_cast<int>(k);
             r.rim_j = dget(e, "rim_m");
             r.keel_j = dget(e, "keel_m");
+            if (e.contains("peak_m")) r.peak_j = dget(e, "peak_m");   // C4 凝结按高出岸缘的比例（峰 − 岸缘）
             r.age_j = dget(e, "age");
             // 谷收拢（P4）看岛龄档与是不是多核岛：新岛 × capture_young、多核岛不收（多核的核在这里只要「有没有」）
             if (e.contains("young") && nb::cast<bool>(e["young"])) r.kind = YOUNG;

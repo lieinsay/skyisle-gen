@@ -157,7 +157,7 @@ Site build_site_window(const WindowIn& in, const Config& c) {
             }
         }
 
-    // 河：顶点处的河床 = 粗格高程（河道格存的是河床），水面 = 河床 + 水深，顺流单调不增；再平滑
+    // 河：顶点处的水面 = 粗格高程（C1 起河道格存的是平岸水面；旧产物存的是河床，水面 = 河床 + 水深），顺流单调不增；再平滑
     const int smooth = c.geti("site.river_smooth");
     for (const River& r0 : in.rivers) {
         if (r0.line.size() < 2) continue;
@@ -169,8 +169,8 @@ Site build_site_window(const WindowIn& in, const Config& c) {
             const double rr = in.center_r - r.line[k].y / cres, cc = in.center_c + r.line[k].x / cres;
             const int ni = nearest_cell(rr, H0), nj = nearest_cell(cc, W0);
             const double depth = std::max(0.1, in.river_depth(ni, nj));
-            const double bed = hf(ni, nj);
-            run = std::min(run, bed + depth);
+            const double surf = in.height_is_surface ? hf(ni, nj) : hf(ni, nj) + depth;
+            run = std::min(run, surf);
             r.depth_m[k] = depth;
             r.surface_m[k] = run;
         }

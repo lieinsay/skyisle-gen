@@ -195,11 +195,12 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         water.v[k] = (river.v[k] || g.lake.v[k] || g.stream.v[k] > 0) ? 1 : 0;
         slope[k] = static_cast<double>(static_cast<float>(g.slope.v[k]));
     }
-    // 漫滩：河两格内坡 < 3°
+    // 漫滩不建房：水系的谷底漫滩（C2，谷底 = 平岸水面，涨水即漫）+ 河两格内坡 < 3° 的平地
     Mask flood(H, W, 0);
     {
         const Mask r2 = binary_dilate(river, 2);
-        for (size_t k = 0; k < N; ++k) flood.v[k] = (r2.v[k] && slope[k] < 3.0 && !river.v[k]) ? 1 : 0;
+        for (size_t k = 0; k < N; ++k)
+            flood.v[k] = ((r2.v[k] && slope[k] < 3.0 && !river.v[k]) || (!g.floodplain.v.empty() && g.floodplain.v[k])) ? 1 : 0;
     }
     const int wnear = static_cast<int>(sc("water_near_cells")), snear = static_cast<int>(sc("shore_near_cells"));
     const GridI dist_water = distance_bands(water, wnear);

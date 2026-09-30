@@ -291,6 +291,7 @@ void bind_town(nb::module_& m) {
         in.terrace = mask_any(inp["terrace"]);
         in.landcover = grid_any<uint8_t>(inp["landcover"]);
         in.river_depth = grid_any<double>(inp["river_depth"]);
+        in.height_is_surface = inp.contains("height_is_surface") && nb::cast<bool>(inp["height_is_surface"]);
         in.coarse_res_m = num(inp, "coarse_res_m");
         in.center_r = num(inp, "center_r");
         in.center_c = num(inp, "center_c");

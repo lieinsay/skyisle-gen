@@ -162,6 +162,31 @@ struct RiverLine {
     std::vector<LinePt> pts;   // 群栅格坐标（行 + 0.5、列 + 0.5）
 };
 
+// 河的数据（C3，rivernet.cpp）：干支分段、沿程每点、瀑布与跌水、逐日径流指数。逐点的量按段连续存放（段的 start / n 指进去）
+struct RiverNet {
+    std::vector<int32_t> cell;                                   // 群栅格扁平下标
+    std::vector<uint8_t> level, d50c, planform, confine;         // 级别（0 溪涧 / 1–3）、河床质档、平面型、限制度
+    std::vector<float> acc, q_mean, q_bf, w, d, surf, bed, slope, d50_mm, ssc, fp_l, fp_r;
+    struct Seg {
+        int island = 0, down = -1, join = -1, start = 0, n = 0, basin = -1, level = 0;
+        uint8_t exit = 0;                                        // 0 汇入别的段 / 1 崖边 / 2 湖 / 3 没入地里
+        double length_km = 0;
+    };
+    std::vector<Seg> segs;
+    struct Fall {
+        int seg = 0, idx = 0, ci = 0, cj = 0, level = 0;
+        uint8_t kind = 0;                                        // 0 崖边瀑布 / 1 瀑布 / 2 跌水
+        double drop_m = 0, length_m = 0, q_mean = 0;
+    };
+    std::vector<Fall> falls;
+    struct Basin {
+        int seg = -1, island = 0, ci = 0, cj = 0;
+        double area_km2 = 0, q_mean = 0, bfi = 0, recession_days = 0, quick_days = 0, snow_frac = 0, bf_ratio = 0, cond_frac = 0;
+        std::vector<double> index;                               // 逐日径流指数（年均 = 1）
+    };
+    std::vector<Basin> basins;                                   // 每条出崖边的常年河一个；最后一个是「其余」（小流域共用）
+};
+
 // 地貌（B3，landforms.cpp）：一处特殊的山 / 地貌。kind 是 ASCII 代码（前端映射中文）；r、c 是群栅格的行列（格心 = 整数 + 0.5，同 LinePt），
 // 地形阶段先按局部栅格记、贴图时换成群栅格；attr 是各类的量（尺寸、成因条件）
 struct LandformRec {
@@ -179,6 +204,16 @@ struct Basins {
 };
 
 // ---------------------------------------------------------------- 资源的记录（resources.hpp）
+struct SpringSeg {                    // 崖壁泉线的一段（C5）：没进河道、走到岸边的地下水从崖壁上岩层与浮石的交界渗出来
+    int island = 0;
+    std::vector<int32_t> cells;       // 岸边出口格（群栅格扁平下标）
+    int ci = 0, cj = 0;               // 代表格（中间那格）
+    double q_ls = 0;                  // 年均出水（L/s）
+    double height_m = 0;              // 泉线的高程（骨架顶面在崖壁上的高度）
+    double length_km = 0;
+    bool fall = false;                // 出水够大、挂成崖瀑
+};
+
 struct Deposit {                      // 点与片（resources.json 的 deposits）
     int id = 0, kind = 0;
     std::string subtype;              // "" = None
@@ -308,6 +343,17 @@ struct Group {
     Grid<uint8_t> cultivable, cover_natural;
     std::vector<double> suit;
     GridD width_m, depth_m, cut_m, slope;
+    GridD bed_m;                    // 河床高程（C1：河道格的 height 是平岸水面，河床 = height − depth_m；其余 NaN）
+    GridD floor_w;                  // 谷底全宽（m，C2：河道格的目标 W）
+    Grid<uint8_t> confine;          // 限制度（C2，河道格）：1 峡谷 / 2 半限制 / 3 开阔
+    GridD chan_slope;               // 河道比降（C3，河与溪涧的中心线格；其余 NaN）
+    Grid<uint8_t> river_water;      // 河宽过一格、在栅格上记成水的河道格（C1；其余河道格的地表是岸上的）
+    GridD condense;                 // 集水核的凝结水（mm/年，C4；只进水账：runoff 已含它，rain 不含）
+    std::vector<double> core_s;     // 各岛集水核的强度（C4，跟山走）
+    Grid<uint8_t> cloud_forest;     // 云雾林（C4：林地里凝结水多的格）
+    GridD bfi, recharge, recharge_acc;   // 地下水（C5）：基流比例（按岩性）、补给（mm）、顺流向累计的补给（mm·km²；河道格 = 河的基流）
+    std::vector<SpringSeg> springline;   // 崖壁泉线（C5）
+    double year_s = 0;              // 一年的秒数（PlanetView，水系里记下：资源层的温泉、泉的出水要用）
     GridD rain;                     // 局地年降水（mm，P4；陆地格，关掉局地雨时 = P_mm）
     GridD runoff;                   // 年径流深（mm，A5：局地雨 × Budyko 径流系数；陆地格）
     GridD runoff_acc;               // 上游的径流累计（mm·km²，= 年径流量 / 1000 m³）：大堰算水够灌多少地
@@ -316,6 +362,8 @@ struct Group {
     std::vector<RiverLine> lines;
     std::vector<RiverRec> rivers;   // 主岛
     Basins basins;
+    RiverNet rnet;                  // C3：天气之后（有聚落就在聚落之后）算
+    bool has_rnet = false;
     double P_mm = 0, river_thr = NaN, dz = 0, wind_u = 0, wind_v = 0, max_cut = 0;
     int n_falls = 0;
     double sec_hydro = 0;

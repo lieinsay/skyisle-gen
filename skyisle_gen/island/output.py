@@ -98,9 +98,12 @@ def write_terrain(out: Path, g: dict) -> None:
     # P6b：landcover_natural = 没有人以前的地表（码同 landcover），landuse = 人工改造（waterworks.LANDUSE_CLASSES：0 没动过 … 7 采场）
     # B2–B4（DESIGN-NOTES 四点四十六）：lith = 露出的岩性（landforms.LITH_NAMES），rockwall_m / rockwall_dir = 崖层（落差、朝向 16 向，255 = 无），
     # coast_dist_m = 亚格岸距（陆地为正、虚空为负，岸线 = 岛形连续场的零等值线）
+    # C1 / C2（DESIGN-NOTES 四点四十七）：河道格的 height 是平岸水面（= 谷底的滩面），bed_m = 河床（其余 NaN），river_water = 河宽够一格、记成水面的河道格；
+    # floor_w_m / confine = 河道格上的谷底宽（m）与限制度（1 峡谷 / 2 半限制 / 3 开阔）；floodplain = 谷底里的岸上格；
+    # C4 / C5：condense_mm = 集水核的凝结水（只进水账，runoff_mm 含它、rain_mm 不含），cloud_forest = 云雾林，recharge_mm = 地下水补给
     for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "river_width_m",
               "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse",
-              "lith", "rockwall_m", "rockwall_dir", "coast_dist_m"):
+              "lith", "rockwall_m", "rockwall_dir", "coast_dist_m", "bed_m", "river_water", "floor_w_m", "confine", "condense_mm", "cloud_forest", "recharge_mm"):
         if k in g:
             arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)
@@ -120,9 +123,17 @@ def write_terrain(out: Path, g: dict) -> None:
             write_png8(out / "farmland.png", farmland_codes(g), FARMLAND_PALETTE)
     if "river_lines" in g:
         # 河道中心线（矢量）：点 = [行, 列, 河宽 m, 级别 0 溪涧 / 1–3 小中大河, 汇流 km²]，群栅格坐标（格心 = 整数 + 0.5）
-        (out / "rivers.json").write_text(json.dumps({"note": "河道中心线：每条从源头顺流到汇流点或出口；点 = [行, 列, 河宽 m, 级别（0 = 季节性溪涧）, 汇流 km²]，群栅格坐标",
-                                                     "res_m": g["json"]["raster"]["res_m"], "lines": g["river_lines"]},
-                                                    ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        doc = {"note": "河道中心线：每条从源头顺流到汇流点或出口；点 = [行, 列, 河宽 m, 级别（0 = 季节性溪涧）, 汇流 km²]，群栅格坐标",
+               "res_m": g["json"]["raster"]["res_m"], "lines": g["river_lines"]}
+        if "rivernet" in g:
+            from .rivernet import rivers_doc
+            doc.update(rivers_doc(g))
+        if "springline" in g:
+            doc["springline_note"] = ("崖壁泉线（C5）：没进河道、顺流向走到岸边的地下水，从崖壁上岩层与浮石的交界渗出；按段记：岛号、代表格 [行, 列]、"
+                                      "出水 L/s、渗出处的高程（骨架顶面，m）、段长 km、是否成挂在崖壁上的泉瀑")
+            doc["springline"] = [[int(s["island"]), [int(x) for x in s["cell"]], round(float(s["q_ls"]), 2), round(float(s["height_m"]), 0),
+                                  round(float(s["length_km"]), 2), bool(s["fall"])] for s in g["springline"]]
+        (out / "rivers.json").write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (out / "island.json").write_text(json.dumps(g["json"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
 

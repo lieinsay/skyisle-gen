@@ -782,7 +782,8 @@ river_big_size = 1500.0
 basin_mouth_km2 = 5.0         # 主岛集水盆地：汇流 ≥ max(此值, basin_mouth_frac × 岛面积) 的出口算河口，其集水区为一个盆地
 basin_mouth_frac = 0.02
 basin_large_frac = 0.10       # 「大盆地」= 集水区 ≥ 岛面积的此比例（R9 推论 2 的素材，≥ 2 个时标出；0.15 时三 seed 没有一个群达标，0.10 约两成）
-# 河道成形（C++ 的 river.cpp）：水力几何 w = a·Q^b × width_scale、d = c·Q^f × depth_scale，Q = 汇流 × 年降水 × 径流系数 / 一年
+# 河道成形（C++ 的 river.cpp）：水力几何 w = a·Q^b、d = c·Q^f（真实比例，C1 起没有夸张键），Q = 上游径流深的累计 / 一年（A5）。
+# 河道格的高程记平岸水面（= 滩面；河床 = 高程 − 水深，C1）：窄河那一格的平均就是岸，河槽由中心线 + 宽 + 深表达
 meander_m = 6.0               # 汇流路由面的弯曲噪声幅度（m）与特征尺度（km）：河在缓坡上蜿蜒，不走网格直线；0 = 关
 meander_km = 0.8
 edge_tilt_m_per_km = 1.5      # 路由面朝岸缘的微倾（m/km，最远算到 edge_tilt_km）：岸缘夹平的台面向外排水
@@ -801,24 +802,39 @@ oro_rise_max_km = 2.0
 windward_gain = 0.3
 windward_smooth_km = 3.0
 windward_ref_m_per_km = 50.0
-width_a = 5.0                 # Leopold–Maddock：w ≈ 5·Q^0.5 m、d ≈ 0.35·Q^0.4 m（Q 以 m³/s 计）
-width_b = 0.5
+width_a = 5.0                 # Leopold & Maddock（1953）的下游关系，按年均流量：w ≈ 5·Q^0.5 m、d ≈ 0.35·Q^0.4 m（Q 以 m³/s 计）；
+width_b = 0.5                 # 对过泰晤士河（Q 约 65 m³/s，宽约 60 m）、莱茵河巴塞尔（约 1000 m³/s，约 200 m）。旧键 width_scale / depth_scale（夸张）C1 删了
 depth_c = 0.35
 depth_f = 0.4
-width_scale = 1.0             # 夸张倍数（B0，PLAN-NATURE：09-24 为在 100 m 格上看得见河设的 × 8 / × 3 去掉，回到真实比例；C1 删这两个键）
-depth_scale = 1.0
+river_water_min_cells = 1.0   # 河宽 ≥ 此值 × 格宽的河道格在栅格上记成水（地表 = 河、不开田）；更窄的河在岸上（C1：河道不按整格记）
 stream_width_mult = 0.5       # 季节性溪涧按同式 × 此值（湿季的宽 / 深）
 incise_m = 25.0               # 河床下切：干流河口 incise_m，上游按 (汇流 / 主岛最大汇流)^0.5 递减
 stream_incise_m = 3.0         # 溪涧切沟深度
 stream_grade_max = 0.12       # 溪涧河床从汇入处往上游的最大比降（接到下切的干流上，不留悬沟）
 notch_m = 12.0                # 河口最多切进岸缘多少米（崖缘上的豁口；河从这里跌下成瀑布）
-floodplain_mult = 10.0        # 漫滩全宽 = 河宽 × 此值（上限 floodplain_max_m）；漫滩高程 = 河床 + 水深（涨水即漫）
-floodplain_max_m = 2500.0
-# 谷坡：小流量（≤ q_gorge m³/s）为峡谷坡，按 log Q 过渡到大流量（≥ q_wide）的宽谷坡。峡谷坡按河床那格露出的岩性的坍塌角（B2，[island.strat] talus_deg；
-# 旧键 gorge_deg 32° 只在没有岩层时用）；C2 换成按限制度的谷坡
-wide_deg = 9.0
-q_gorge = 0.5
-q_wide = 40.0
+min_grade = 0.001             # 河床的最小比降（C3）：到河口的河道长 L 上河床至少高出豁口 min_grade × L（小河砂砾床的下游段约 1 m/km；
+                              # 旧的下切到豁口以下的段一路压在豁口上、比降 ≈ 0）
+# 谷底（C2，PLAN-NATURE「漫滩照地球」）：侧蚀把谷底展平——谷底全宽 W = 河宽 + valley_floor_k_m × A^valley_floor_exp（A 为汇水 km²）× 岩性系数 × 岛龄系数 × 比降系数，
+# 夹 valley_floor_max_m；谷底 = 平岸水面（滩面，涨水即漫：terrain.npz 的 floodplain，聚落不在上面建房）。
+# K 按地球的河谷取（汇水 100 km² 的中年石灰岩山谷底约 300 m、1000 km² 约 800 m；A 小的头水谷底不到一格，仍是 V 形谷）；
+# 岩性系数按河床那格露出的岩性（石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石：软岩宽、硬岩窄），岛龄系数按本岛岛龄插值（新岛刚切、窄，老岛宽）。
+# 限制度按 W / 河宽：≤ confine_gorge_ratio 峡谷、≥ confine_open_ratio 开阔、中间半限制；谷坡在该处岩性的坍塌角（峡谷，B2 的 [island.strat] talus_deg）
+# 与 min(坍塌角, valley_side_open_deg)（开阔：谷坡下有坡积裙）之间按 log 比值过渡。旧键 floodplain_mult / floodplain_max_m（10 × 河宽）、
+# wide_deg / q_gorge / q_wide（按流量 32° → 9°）作废；gorge_deg 32° 只在没有岩层时用
+valley_floor_k_m = 50.0
+valley_floor_exp = 0.4
+valley_floor_max_m = 3000.0
+valley_lith = [1.0, 1.6, 0.6, 1.3, 0.5]
+valley_age = [0.0, 0.3, 0.65, 1.0]
+valley_age_mult = [0.5, 0.8, 1.2, 1.6]
+confine_gorge_ratio = 3.0
+confine_open_ratio = 15.0
+valley_side_open_deg = 15.0
+# 比降系数 1 / (1 + (S / valley_slope_ref)^valley_slope_exp) 乘在侧蚀展宽上（谷底 = 河宽 + 展宽）：S = 顺流向 valley_slope_len_m 内的河床比降。
+# 2% 处减半、3% 剩 0.23、5% 剩 0.06（Montgomery & Buffington 的平床型 → 阶梯深潭型：陡处下切快过侧蚀，谷底只剩河道，峡谷就这样出来）
+valley_slope_ref = 0.02
+valley_slope_exp = 3.0
+valley_slope_len_m = 500.0
 valley_max_km = 2.0           # 河谷剖面最远作用到离河床多远（算力上限：100 m 格 = 20 圈扩张）
 stream_valley_cells = 3       # 溪涧沟只影响几格
 # 谷收拢（P4，L15；DESIGN-NOTES 四点三十五）：山在中间的岛，平行的小沟里有的切得快、往上游啃，把旁边沟的上游抢过来（河流袭夺），谷越来越少、剩下的越来越大。
@@ -840,6 +856,62 @@ capture_chan_km2 = 1.0
 capture_s_min = 0.3
 capture_margin_m = 5.0
 capture_max_frac = 0.2
+
+[island.water]                # 集水核（C4，spec 13 第八节）与地下水（C5，spec 13 第一节第 7 条、第二节第 6 条）：PLAN-NATURE C，DESIGN-NOTES 四点四十七
+# 集水核：长在山根的浮石骨架里，大小跟山走，让流过山的空气里的水汽凝在林子、岩面上（云雾截留的放大）——凝结水只进水账（渗进岩层 → 基流与泉，
+# 河的流量变大），不进局地雨 rain_mm、不进天气；行星层不知道它（不回灌）。
+# 凝结 = 局地雨 × min(1, core_gain × 核强度 × 高出岸缘的比例^core_elev_exp × 迎风 × 湿度)：
+#   核强度 = (高出岸缘的山体体积 km³)^(1/3) / core_len_km，夹 core_s_max（大山根深核大，碎的小岛核弱）；
+#   迎风 = 1 + core_windward_gain × clip(山脉尺度的迎风坡 / [island.hydro] windward_ref_m_per_km, −1, 1)；
+#   湿度 = min(1, 局地雨 / core_hum_full_mm)^core_hum_exp（像除湿器：干的群照样干，湿的山更湿，干湿格局不乱）；最多到局地雨的 1 倍
+core_gain = 1.0
+core_len_km = 10.0
+core_s_max = 1.5
+core_elev_exp = 1.5
+core_windward_gain = 0.5
+core_hum_full_mm = 1500.0
+core_hum_exp = 1.5
+cloud_forest_min_mm = 150.0   # 云雾林：林地里凝结 ≥ 此值且 ≥ cloud_forest_min_frac × 局地雨（terrain.npz 的 cloud_forest；地表仍记林地）
+cloud_forest_min_frac = 0.25
+heat_share = 0.001            # 凝结的潜热进岩体的份额（千分之一：大核山下的热流与地球平均相当，深循环的水出得了温泉；百分之一满山沸泉，太过）
+hotspring_mw = 5.0            # 一座岛进岩体的热每这么多 MW 给一处核山温泉（泊松；沿谷底、离核山近）
+hotspring_core_min = 0.25     # 大核山：集水核强度 ≥ 此值（高出岸缘的山体约 16 km³ 以上）的岛才有核山温泉（RES-geo 按它查）
+# 地下水：岛的上层岩层是含水层，闭孔的浮石骨架是底。各格的补给 = 雨的径流 × 基流比例 + 凝结水；基流比例与退水常数按出露岩性
+# （石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石：石灰岩岩溶、大泉，辉长岩裂隙，泥灰岩与蛇纹岩差，浮石不透水）。没有岩层的旧配置按 bfi_default。
+# 地下水顺流向走：进了河道是河的基流；一路没进河道、走到岸边的，从崖壁上岩层与浮石的交界渗出来——崖壁泉线（按 springline_seg_km 一段，
+# 出水 < springline_min_ls 的不记，≥ springline_fall_ls 挂成崖瀑）。泉眼的多少与种类也按岩性：spring_lith_mult 乘泉的密度
+bfi = [0.55, 0.25, 0.4, 0.2, 0.0]
+bfi_default = 0.4
+recession_days = [60.0, 15.0, 30.0, 15.0, 30.0]
+springline_seg_km = 1.0
+springline_min_ls = 0.5
+springline_fall_ls = 5.0
+spring_lith_mult = [1.5, 0.5, 1.2, 0.3, 0.0]
+
+[island.rivers]               # 河的数据（C3，PLAN-NATURE 第七节；DESIGN-NOTES 四点四十七；rivernet.cpp）：rivers.json 的干支分段、沿程每点、瀑布与跌水、
+                              # 逐日径流指数。只给驱动量：流速、当天水位与水面宽、河段型、冰情、水色由游戏推
+shields_gravel = 0.05         # 砾石床的平岸 Shields 数（Parker 等 2007 约 0.05）：D50 = 平岸水深 × 比降 / (1.65 × 此值) × 上游岩性的粗细
+shields_sand = 1.0            # 按砾床算出来 < 2 mm 的落到砂床（砂床的平岸 Shields 数约 1：砾—砂的突变是真的）
+d50_lith = [1.0, 0.4, 1.3, 0.6, 0.3]    # 上游岩性给的粗细（石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石：泥灰岩风化成泥，辉长岩出粗砾，蛇纹岩碎成片，浮石一磨就碎）
+low_energy_w_m2 = 10.0        # 平面型：砂泥床、潜在比河流功率 < 此值的是低能顺直（岸有黏性、摆不动）；其余按 Kleinhans & van den Berg 2011
+                              # （> 900 × D50^0.42 辫状、> 90 × D50^0.42 曲流带串沟心滩、以下曲流；峡谷一律「受限」）
+bqart_lith = [1.0, 1.75, 0.6, 1.5, 1.0] # 悬沙 BQART 的岩性项 L（Syvitski & Milliman 2007：硬的深成岩 0.5–0.75、混合 1、软的沉积岩 1.5–2；石灰岩多溶解、按 1）
+bqart_farm = 1.0              # 人的项 E = (1 + 此值 × 上游已垦占比) × (1 − bqart_forest × 上游林地占比)：全垦 × 2（S&M 的 E_h 上限）、全林 × 0.7
+bqart_forest = 0.3
+floor_tol_m = 0.5             # 量左右谷底宽：高出河面不到此值的格算谷底（同漫滩的判据）
+fall_step_m = 3.0             # 跌水：相邻两点河床落 ≥ 此值、且比降 ≥ fall_grad 算一级，连着的几级合起来
+fall_grad = 0.15
+fall_min_m = 5.0              # 合起来的落差 ≥ 此值才记（崖边的瀑布一律记，落差 = 河面 − 岛底）
+fall_wall_grad = 0.25         # 合起来落差 ≥ fall_wall_m 且平均比降 ≥ 此值、或落在崖层上的叫瀑布（100 m 的格看不出单级的竖直跌落：
+fall_wall_m = 20.0            # 河穿过硬岩崖带时这样的落差多半是一串瀑布与深潭），其余叫跌水
+snow_t_c = 0.5                # 逐日径流指数：该带日均温 ≤ 此值时降水积成雪（与逐日天气记雪的门槛同）
+melt_t_c = 0.0                # 度日融雪：融 = ddf_mm × (日均温 − 此值)
+ddf_mm = 3.0                  # 度日因子（mm / °C / 日；地球的季节雪 2–5）
+bands = 8                     # 流域按高程分几带（等径流量）算积雪
+quick_k_days = 0.25           # 快流（地表径流）线性水库的时间常数 = 此值 × 流域面积^quick_exp 天（100 km² 约 1 天），夹 [quick_min_days, quick_max_days]；
+quick_exp = 0.3               # 基流的按 [island.water] recession_days（按岩性、按基流量加权）
+quick_min_days = 0.5
+quick_max_days = 5.0
 
 [island.landcover]            # 5.3 地表分类与可耕地
 rock_temp_c = -6.0            # 海拔温度（海面年均 − 6 °C/km × 高程）低于此 → 裸岩；低于 alpine_temp_c → 高山草甸

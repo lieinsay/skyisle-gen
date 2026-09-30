@@ -9,6 +9,7 @@
 #include "skyisle/island/climate.hpp"
 #include "skyisle/island/landforms.hpp"
 #include "skyisle/island/resources.hpp"
+#include "skyisle/island/rivernet.hpp"
 #include "skyisle/island/settle.hpp"
 
 namespace skyisle::island {
@@ -46,6 +47,7 @@ Group generate(const NodeInputs& inp, const PlanetView& pv, const Config& c, int
         g.sec_climate += now_s() - t0;
     }
     if (steps >= 5) build_settlements(g, pv, c);
+    if (g.has_weather) build_rivernet(g, c);   // C3：河的数据（逐日径流指数读天气；有聚落时悬沙读已垦）
     return g;
 }
 
@@ -90,7 +92,7 @@ LodBlock block_reduce(const Group& g, int f) {
                         if (id < ncls) cnt_i[id]++;
                         const uint8_t lc = g.landcover(i, j);
                         if (lc < 12) cnt_c[lc]++;
-                        if (g.river(i, j) > 0 || g.lake(i, j)) ++n_water;
+                        if (lc == 10 || g.lake(i, j)) ++n_water;   // 地表是河（C1：宽过一格的河道格）或湖；窄河在岸上，不算水面
                     }
                 }
             const size_t o = static_cast<size_t>(bi) * Wb + bj;
