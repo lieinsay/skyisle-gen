@@ -8,8 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from skyisle_gen.config import load_config, apply_sets
-from skyisle_gen.pipeline import run
+pytest.importorskip("skyisle_gen._core", reason="C++ 扩展没编：python core/build.py")
+
+from skyisle_gen.config import load_config          # noqa: E402
+from skyisle_gen.pipeline import run                # noqa: E402
 
 # 小世界只测确定性、缓存链与归一化，不测原则庚：1600 岛的骨架窗内岛太少，τ_c 放宽到 0.3
 SMALL = ["s03.islands.n_islands=1600", "s07.regions.n_regions=12",

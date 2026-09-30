@@ -1,7 +1,9 @@
-"""5.5 逐日天气：一年（默认 336 天）按年份种子可复现。
+"""5.5 逐日天气的前端：逐日模拟在 C++ 核心里（core/src/island/climate.cpp，Python 参考版删于 2026-09-30，tag python-reference-final）；
+这里只剩天气类型表、每季的链参数（IS-daily 对照雨日比例用）、逐日表与季汇总的拼装（set_weather）、IS-daily 的多年统计与总览图的逐日条。
 
+模拟的算法（C++ 同式）：一年（默认 336 天）按年份种子可复现。
 晴雨：每季一个两状态马尔可夫链（干→湿、湿→湿），由该季雨量与雨日比例反解；雨量伽马分布，期望缩放到该季总量，
-      单年围绕气候值波动、多年平均回到气候值（IS-daily：30 年样本 < 5%）。
+      单年围绕气候值波动、多年平均回到气候值（IS-daily：60 年样本 < 5%）。
 风暴：按该季风暴强度生成持续 1–4 天的事件（泊松个数），风暴日强制大风、大雨、禁航。
 风：围绕该季平均风向风速的 AR(1) 扰动；温度：季节曲线 + AR(1) 日际扰动，雨日 / 风暴日偏凉。
 云海漫顶：低岛（台面 < fog_surface_max_m）在静风、潮湿的日子被云海漫上岸缘 —— 本世界独有的天气类型。
@@ -17,8 +19,6 @@ import numpy as np
 TYPES = ["晴", "多云", "小雨", "大雨", "云海漫顶", "风暴", "小雪", "大雪", "暴风雪"]
 TYPE_COLORS = {"晴": "#f7d76b", "多云": "#c8ccd2", "小雨": "#8fb8de", "大雨": "#3b6fb6", "云海漫顶": "#e6e1f2", "风暴": "#7a2d8c",
                "小雪": "#dfe8f5", "大雪": "#b7c6dc", "暴风雪": "#5a4a8c"}
-SNOW_TYPES = {"小雪", "大雪", "暴风雪"}
-STORM_TYPES = {"风暴", "暴风雪"}
 
 
 def season_params(clim: dict, wc: dict) -> list[dict]:
@@ -43,119 +43,8 @@ def season_params(clim: dict, wc: dict) -> list[dict]:
     return out
 
 
-def simulate_year(rng, clim: dict, daily: dict, params: list[dict], surface_m: float, wc: dict, rim_m: float | None = None,
-                  lapse_c_per_km: float = 6.0) -> dict:
-    cal = clim["calendar"]
-    ydays = int(round(cal["year_days"]))
-    dps = int(round(cal["days_per_season"]))
-    dpm = int(round(cal["days_per_month"]))
-    season = daily["season"]
-    n = ydays
-    wet = np.zeros(n, dtype=bool)
-    # 马尔可夫链（起始按平稳分布）
-    state = rng.uniform() < params[int(season[0])]["f_wet"]
-    for d in range(n):
-        p = params[int(season[d])]
-        pr = p["p_ww"] if state else p["p_dw"]
-        state = rng.uniform() < pr
-        wet[d] = state
-    # 雨量：伽马，湿日均值按季
-    shape = float(wc["rain_gamma_shape"])
-    mean_wet = np.array([params[int(s)]["mean_wet_mm"] for s in season])
-    precip = np.where(wet, rng.gamma(shape, 1.0, n) * mean_wet / shape, 0.0)
-    # 风暴事件
-    storm_id = np.zeros(n, dtype=np.int32)
-    eid = 0
-    dur_lo, dur_hi = int(wc["storm_days_min"]), int(wc["storm_days_max"])
-    mean_dur = 0.5 * (dur_lo + dur_hi)
-    for s in range(int(cal["seasons"])):
-        p = params[s]
-        # 事件会重叠：泊松布尔模型的覆盖率 = 1 − exp(−λ·均长/季长)，反解 λ 使风暴日占比 = storm_frac
-        lam = -math.log(max(1e-9, 1.0 - p["storm_frac"])) * dps / mean_dur if p["storm_frac"] > 0 else 0.0
-        k = int(rng.poisson(lam)) if lam > 0 else 0
-        starts = sorted(rng.integers(s * dps, (s + 1) * dps, k).tolist()) if k else []
-        for st in starts:
-            eid += 1
-            dur = int(rng.integers(dur_lo, dur_hi + 1))
-            for d in range(st, st + dur):
-                storm_id[d % n] = eid           # 跨年回绕，不截断
-    storm = storm_id > 0
-    precip = np.where(storm, rng.gamma(shape, 1.0, n) * float(wc["storm_rain_mult"]) * mean_wet / shape, precip)
-    wet = wet | storm
-    # 风：AR(1) 围绕季曲线；风暴日加强
-    phi = float(wc["wind_ar1"])
-    mu_u, mu_v = daily["wind_u"], daily["wind_v"]
-    sp_mu = np.hypot(mu_u, mu_v)
-    sig = float(wc["wind_sigma_rel"]) * sp_mu + float(wc["wind_sigma_min"])
-    eu = np.zeros(n)
-    ev = np.zeros(n)
-    z = rng.normal(0.0, 1.0, (n, 2))
-    for d in range(1, n):
-        eu[d] = phi * eu[d - 1] + math.sqrt(1 - phi * phi) * sig[d] * z[d, 0]
-        ev[d] = phi * ev[d - 1] + math.sqrt(1 - phi * phi) * sig[d] * z[d, 1]
-    u = mu_u + eu
-    v = mu_v + ev
-    speed = np.hypot(u, v)
-    if storm.any():
-        gust = float(wc["storm_wind_mult"]) * np.maximum(speed, 1.0) + float(wc["storm_wind_add"])
-        speed = np.where(storm, gust, speed)
-    wind_from = (np.degrees(np.arctan2(-u, -v)) + 360.0) % 360.0
-    # 温度：季曲线 + AR(1)
-    phi_t = float(wc["temp_ar1"])
-    sig_t = float(wc["temp_sigma_c"])
-    et = np.zeros(n)
-    zt = rng.normal(0.0, 1.0, n)
-    for d in range(1, n):
-        et[d] = phi_t * et[d - 1] + math.sqrt(1 - phi_t * phi_t) * sig_t * zt[d]
-    temp = daily["temp_c"] + et - float(wc["rain_cool_c"]) * wet - float(wc["storm_cool_c"]) * storm
-    # 云海漫顶：低岛、静风、潮湿（今日或昨日有雨，或本季雨日多）、非风暴
-    fog = np.zeros(n, dtype=bool)
-    if surface_m < float(wc["fog_surface_max_m"]):
-        low = 1.0 - min(1.0, max(0.0, (surface_m - 300.0) / max(1.0, float(wc["fog_surface_max_m"]) - 300.0)))
-        humid = np.maximum(wet.astype(float), np.roll(wet, 1).astype(float) * 0.7) * 0.6 + np.array([params[int(s)]["f_wet"] for s in season]) * 0.4
-        calm = np.clip(1.0 - speed / float(wc["fog_calm_ms"]), 0.0, 1.0)
-        p_fog = float(wc["fog_p0"]) * (0.3 + 0.7 * low) * calm * humid
-        fog = (rng.uniform(0.0, 1.0, n) < p_fog) & ~storm & (precip < float(wc["heavy_rain_mm"]))
-    # 天气类型。雨 / 雪按岸缘气温分：逐日 temp 是台面处的气温，岸缘 = temp + 直减率 × (台面 − 岸缘)（岸缘在台面之下，更暖）
-    cloudy = ~wet & (rng.uniform(0.0, 1.0, n) < np.array([params[int(s)]["f_wet"] for s in season]) * float(wc["cloudy_k"]))
-    rim = surface_m if rim_m is None else float(rim_m)
-    t_rim = temp + lapse_c_per_km * (surface_m - rim) / 1000.0
-    snowy = t_rim <= float(wc["snow_temp_c"])
-    heavy = precip >= float(wc["heavy_rain_mm"])
-    t = np.full(n, 0, dtype=np.int8)                      # 晴
-    t[cloudy] = 1
-    t[wet & ~heavy] = 2
-    t[wet & heavy] = 3
-    t[fog] = 4
-    t[storm] = 5
-    t[wet & ~heavy & snowy & ~storm] = 6                  # 小雪
-    t[wet & heavy & snowy & ~storm] = 7                   # 大雪
-    t[storm & snowy] = 8                                  # 暴风雪
-    t[fog & ~storm] = 4
-    # 出航：非风暴、风 < sail_wind_max、按季窗口的平静概率
-    calm_ok = rng.uniform(0.0, 1.0, n) < np.array([params[int(s)]["p_calm"] for s in season])
-    sailable = ~storm & (speed < float(wc["sail_wind_max_ms"])) & calm_ok
-    day = np.arange(n)
-    return {"day": day, "season": season, "month": day // dpm, "day_of_month": day % dpm + 1, "type": t,
-            "precip_mm": precip, "temp_c": temp, "wind_from_deg": wind_from, "wind_ms": speed, "sailable": sailable,
-            "storm_event": storm_id, "wet": wet, "temp_rim_c": t_rim, "snow": snowy & wet}
-
-
-def build_weather(ctx, node: int, c: dict, g: dict, year: int = 0, log=print) -> None:
-    from . import _rng
-    wc = c["weather"]
-    clim = g["climate"]
-    daily = g["daily"]
-    params = season_params(clim, wc)
-    surface = float(g["inp"]["height_m"])
-    rim = float(g["json"]["islands"][0]["rim_m"])
-    rng = _rng(ctx, node, f"weather:{year}")
-    y = simulate_year(rng, clim, daily, params, surface, wc, rim_m=rim, lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
-    set_weather(g, y, params, year, log=log)
-
-
 def set_weather(g: dict, y: dict, params: list[dict], year: int, log=print) -> None:
-    """一年逐日数组 → 逐日表、季汇总、g["weather"] 与 island.json 的 weather 摘要（两个后端共用：cpp 后端只算 y 与 params）。"""
+    """一年逐日数组 → 逐日表、季汇总、g["weather"] 与 island.json 的 weather 摘要（y 与 params 由 C++ 算）。"""
     clim = g["climate"]
     names = clim["season_names"]
     n = y["day"].size
@@ -189,27 +78,11 @@ def set_weather(g: dict, y: dict, params: list[dict], year: int, log=print) -> N
 
 
 def multi_year_stats(ctx, node: int, c: dict, g: dict, years: int = 30) -> dict:
-    """IS-daily：多年样本的季降水均值与雨日比例，对照气候值（cpp 后端的逐年模拟在 C++ 里，统计照旧在这里）。"""
-    from . import _rng
-    from .engine import backend
-    wc = c["weather"]
+    """IS-daily：多年样本的季降水均值与雨日比例，对照气候值（逐年模拟在 C++ 里，统计在这里）。"""
+    from .engine import weather_years_cpp
     clim = g["climate"]
-    params = season_params(clim, wc)
-    surface = float(g["inp"]["height_m"])
-    n_s = int(clim["calendar"]["seasons"])
-    if backend(ctx) == "cpp":
-        from .engine import weather_years_cpp
-        P, F = weather_years_cpp(ctx, node, c, g, years)
-    else:
-        P = np.zeros((years, n_s))
-        F = np.zeros((years, n_s))
-        for yv in range(years):
-            y = simulate_year(_rng(ctx, node, f"weather:{yv}"), clim, g["daily"], params, surface, wc, rim_m=float(g["json"]["islands"][0]["rim_m"]),
-                              lapse_c_per_km=float(g["inp"]["lapse_c_per_km"]))
-            for s in range(n_s):
-                m = y["season"] == s
-                P[yv, s] = y["precip_mm"][m].sum()
-                F[yv, s] = y["wet"][m].mean()
+    params = season_params(clim, c["weather"])
+    P, F = weather_years_cpp(ctx, node, c, g, years)
     clim_p = np.array([s["precip_mm"] for s in clim["seasons"]])
     annual = P.sum(axis=1)
     se = float(annual.std(ddof=1) / math.sqrt(years)) if years > 1 else 1.0
@@ -223,7 +96,6 @@ def multi_year_stats(ctx, node: int, c: dict, g: dict, years: int = 30) -> dict:
 
 
 def draw_weather_strip(ax, g: dict) -> None:
-    import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
     y = g["weather"]["arrays"]
     n = y["day"].size

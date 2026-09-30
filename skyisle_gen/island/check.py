@@ -168,7 +168,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
                 {"annual_rel_err": st["annual_rel_err"], "annual_z": st["annual_z"], "annual_se_rel": st["annual_se_rel"],
                  "season_rel_err": st["precip_rel_err"], "wet_frac_err": st["wet_frac_err"]},
                 "< 0.05 或 z < 3 / ≤ 0.05", (st["annual_rel_err"] < 0.05 or st["annual_z"] < 3.0) and max(st["wet_frac_err"]) <= 0.05, hard=False)
-    # IS-terr：势力范围（territory.py）——陆地不越过与邻群的分界线；只是离线不到半道缝的算软项
+    # IS-terr：势力范围（C++ 的 territory.cpp）——陆地不越过与邻群的分界线；只是离线不到半道缝的算软项
     t = cons.get("territory")
     if t is not None and "violation_km" in t:
         v, half = float(t["violation_km"]), 0.5 * float(t.get("gap_km", 3.0))

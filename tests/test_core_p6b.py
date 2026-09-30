@@ -1,8 +1,9 @@
-"""行星计划 P6b：第三层其余部分（资源、聚落与层级、四季、逐日天气、粗版降采样、整群 generate）的 C++ 核心与 numpy 版对照。
+"""行星计划 P6b：第三层其余部分（资源、聚落与层级、四季、逐日天气、粗版降采样、整群 generate）的 C++ 核心。
 
-扩展没编（python core/build.py）时整个文件跳过。公共件逐位比：指数 ziggurat / 伽马（形状 < 1）/ 对数正态 / 泊松 / 不放回抽签、
-np.quantile / np.interp / np.convolve（BLAS ddot）/ float32 成对求和、label_by_island / window_extrema、田块的 k-means；
-整群的两个后端对照（产物逐字节、island check）在文件后半。
+扩展没编（python core/build.py）时整个文件跳过。与 numpy 逐位比的公共件：指数 ziggurat / 伽马（形状 < 1）/ 对数正态 / 泊松 / 不放回抽签、
+np.quantile / np.interp / np.convolve（BLAS ddot）/ float32 成对求和；label_by_island / window_extrema / 田块的 k-means 按性质验；
+文件后半是整群 generate 的各条代码路径（资源 P3、已垦 P5、水利 P6 / P6b / 分级、镇与航船 P7）：每条都走到、check 的相应项过、与线程数无关。
+Python 参考后端 2026-09-30 删了（git tag python-reference-final），两个后端逐字节的对照随之删掉。
 """
 import sys
 from pathlib import Path
@@ -14,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 core = pytest.importorskip("skyisle_gen._core", reason="C++ 扩展没编：python core/build.py")
 
-from skyisle_gen.island import grid as G          # noqa: E402
 from skyisle_gen.rng import entity_rng             # noqa: E402
 
 KEY = "island:2051:weather:0"
@@ -68,38 +68,53 @@ def test_quantile_interp_convolve_sum32():
 
 
 def test_label_by_island_and_window_extrema():
+    """label_by_island：8 连通块按岛拆开，每个标号只在一座岛上；window_extrema = 方窗里陆地格的最大 / 最小（暴力对照）。"""
     rng = np.random.default_rng(4)
-    for _ in range(20):
+    for t in range(20):
         H, W = 60, 80
         iid = np.full((H, W), -1, np.int16)
         iid[5:30, 5:40] = 0
         iid[20:55, 35:75] = 1
         iid[40:58, 2:30] = 2
         m = (rng.random((H, W)) < 0.6) & (iid >= 0)
-        a1, n1 = G.label_by_island(m, iid, 8)
-        a2, n2 = core.label_by_island(m, iid, 8)
-        assert n1 == n2 and np.array_equal(a1, a2)
+        lab, n = core.label_by_island(m, iid, 8)
+        assert (lab[~m] == 0).all() and set(np.unique(lab[m]).tolist()) == set(range(1, n + 1))
+        lab8, _ = core.label_components(m, 8)                 # 标号 = (8 连通块, 岛号) 的一对：跨岛的块按岛拆开
+        pairs = {(int(x), int(y)) for x, y in zip(lab8[m], iid[m])}
+        assert n == len(pairs) >= core.label_components(m, 8)[1]
+        for v in range(1, n + 1):
+            cells = lab == v
+            assert np.unique(iid[cells]).size == 1 and np.unique(lab8[cells]).size == 1
         h = rng.normal(0, 100, (H, W))
-        hi1, lo1 = G.window_extrema(h, 4, iid >= 0)
-        hi2, lo2 = core.window_extrema(h, 4, iid >= 0)
-        assert np.array_equal(hi1, hi2) and np.array_equal(lo1, lo2)
+        land = iid >= 0
+        hi, lo = core.window_extrema(h, 4, land)
+        if t < 3:                                  # 暴力对照（慢，挑几轮）
+            for i in range(H):
+                for j in range(W):
+                    w = land[max(0, i - 4):i + 5, max(0, j - 4):j + 5]
+                    if w.any():
+                        v = h[max(0, i - 4):i + 5, max(0, j - 4):j + 5][w]
+                        assert hi[i, j] == v.max() and lo[i, j] == v.min(), (i, j)
+        assert (hi[land] >= h[land]).all() and (lo[land] <= h[land]).all()
 
 
-def test_kmeans_split_matches():
-    """田块切分（settle._kmeans_split）：不放回抽初值 + 12 轮 Lloyd，均值沿 axis 0 顺序加。"""
-    from skyisle_gen.island.settle import _kmeans_split
+def test_kmeans_split():
+    """田块切分（C++ 的 kmeans_split：不放回抽初值 + 12 轮 Lloyd）：标号在 [0, k)、不多于点数、同 key 重跑相同。"""
     rng = np.random.default_rng(5)
     for t in range(40):
         n = int(rng.integers(5, 3000))
         ii, jj = rng.integers(0, 200, n), rng.integers(0, 200, n)
         k = int(rng.integers(1, 12))
         key = f"island:{t}:settle:fields"
-        a = _kmeans_split(entity_rng(7, 21, key), ii, jj, k)
-        b = core.kmeans_split(7, key, ii.astype(np.int32).tolist(), jj.astype(np.int32).tolist(), k)
-        assert np.array_equal(np.asarray(a), b), t
+        args = (7, key, ii.astype(np.int32).tolist(), jj.astype(np.int32).tolist(), k)
+        a = np.asarray(core.kmeans_split(*args))
+        assert a.shape == (n,) and a.min() >= 0 and a.max() < k and np.unique(a).size <= min(k, n), t
+        assert np.array_equal(a, core.kmeans_split(*args)), t
+        if k > 1 and n >= 50:
+            assert np.unique(a).size > 1, t
 
 
-# ---------------------------------------------------------------- 小世界：整群 generate 两个后端逐字节对照
+# ---------------------------------------------------------------- 小世界：整群 generate 的各条代码路径
 SMALL = ["s03.islands.n_islands=1600"]
 
 
@@ -135,56 +150,50 @@ def _products(out):
     return res
 
 
-def _gen(ctx, node, backend, root, threads=4, **kw):
+def _gen(ctx, node, root, threads=4, sets=(), **kw):
     from skyisle_gen import island as isl
-    out, g = isl.generate(ctx, node, res_m=300.0, sets=[f"engine.backend={backend}", f"engine.threads={threads}"], log=lambda *a: None,
-                          return_state=True, out_root=root, **kw)
-    ctx.cfg["engine"]["backend"] = "python"
-    return out, g
+    return isl.generate(ctx, node, res_m=300.0, sets=[f"engine.threads={threads}"] + list(sets), log=lambda *a: None,
+                        return_state=True, out_root=root, **kw)
 
 
-def test_generate_products_identical(small_ctx, tmp_path):
-    """整群 generate（地形 → 资源 → 四季 → 天气 → 聚落）：两个后端的整套产物逐字节相同（island.json 只差 meta.seconds / engine）。"""
+def _hard_fails(ctx, node, g, out):
+    from skyisle_gen.island.check import evaluate
+    return [i["id"] for i in evaluate(g, out, node=node, c=ctx.cfg["island"]) if not i["pass"] and i["hard"]]   # 不给 ctx：IS-daily（软项、慢）不跑
+
+
+def test_generate_products(small_ctx, tmp_path):
+    """整群 generate（地形 → 资源 → 四季 → 天气 → 聚落）：产物齐全、栅格同形、check 的硬项全过；有河、无河的群都走到。"""
     for node in _nodes(small_ctx):
-        a, ga = _gen(small_ctx, node, "python", tmp_path / "py")
-        b, gb = _gen(small_ctx, node, "cpp", tmp_path / "cpp")
-        pa, pb = _products(a), _products(b)
-        assert sorted(pa) == sorted(pb), node
-        bad = [k for k in pa if pa[k] != pb[k]]
-        assert not bad, (node, bad)
+        b, gb = _gen(small_ctx, node, tmp_path / "a")
         assert gb["json"]["meta"]["engine"] == "cpp"
-        for k in ("terrain_zone", "patch_id", "resource", "res_field", "settle_raster", "settle_fields", "landcover"):
-            assert ga[k].dtype == gb[k].dtype and np.array_equal(ga[k], gb[k]), (node, k)
-        assert ga["settle"] == gb["settle"] and ga["resources"] == gb["resources"] and ga["climate"] == gb["climate"]
-        for k in ("day", "season", "temp_c", "wind_u", "wind_v", "precip_mm"):
-            assert np.array_equal(ga["daily"][k], gb["daily"][k]), (node, k)
+        shape = gb["island_id"].shape
+        for k in ("terrain_zone", "patch_id", "resource", "settle_raster", "settle_fields", "landcover"):
+            assert gb[k].shape == shape, (node, k)
+        assert gb["res_field"].shape == (7,) + shape
+        for f in ("island.json", "terrain.npz", "climate.json", "resources.json", "settlements.json", "weather_y0.csv", "preview.png"):
+            assert (b / f).exists(), (node, f)
+        n_days = len(gb["weather"]["days"])
+        assert all(gb["daily"][k].shape == (n_days,) for k in ("day", "season", "temp_c", "wind_u", "wind_v", "precip_mm"))
+        assert not _hard_fails(small_ctx, node, gb, b), node
 
 
-def test_generate_p3_resources_identical(small_ctx, tmp_path):
+def test_generate_p3_resources(small_ctx, tmp_path):
     """P3（没有火山）的新资源（骨架空洞、只在新岛的温泉、热泉硫磺、按剥蚀深浅的石料岩性、岩盐 / 盐泉 / 盐井 / 盐井村、贝壳化石）：
-    把新岛门槛、盐丘与化石的密度调高让每样都出得来，两个后端的整套产物仍逐字节相同。"""
+    把新岛门槛、盐丘与化石的密度调高让每样都出得来，RES-* 与其余硬项过。"""
     from skyisle_gen import island as isl
     extra = ["island.terrain.age_young=0.6", "island.resources.density_per_100km2.salt=3.0", "island.resources.fossil_per_km2=1.0"]
     node = _nodes(small_ctx, 1)[0]
-    outs = {}
-    for b in ("python", "cpp"):
-        out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
-                              return_state=True, out_root=tmp_path / b)
-        small_ctx.cfg["engine"]["backend"] = "python"
-        outs[b] = (_products(out), g)
-    (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
+    out, ga = _gen(small_ctx, node, tmp_path / "a", sets=extra)
     kinds = {d["kind"] for d in ga["resources"]["deposits"]} | {o["kind"] for o in ga["resources"]["occurrences"]}
     assert {"salt", "saltspring", "fossil", "hotspring"} <= kinds, kinds
-    assert sorted(pa) == sorted(pb)
-    assert not [k for k in pa if pa[k] != pb[k]]
-    assert ga["resources"] == gb["resources"] and ga["settle"] == gb["settle"]
+    assert not _hard_fails(small_ctx, node, ga, out)
     isl.island_config(small_ctx, ["island.terrain.age_young=0.3", "island.resources.density_per_100km2.salt=0.05",
                                   "island.resources.fossil_per_km2=0.1"])   # --set 会留在 ctx 上：改回默认（之前漏了，后面的测试都跑在 age_young 0.6 上）
 
 
-def test_generate_p5_farmland_identical(small_ctx, tmp_path):
+def test_generate_p5_farmland(small_ctx, tmp_path):
     """P5（宜垦 / 已垦 / 撂荒、定居门槛、没人住 ≠ 没人用、荒地归谁）：小世界里没人住的岛多半已有工棚，特殊用途分两遍走——
-    一遍放宽放牧（夏牧、烽火台、废村、工棚），一遍关掉放牧与烽火台、庙与墓岛必有；每条代码路径走到，两个后端的整套产物仍逐字节相同。"""
+    一遍放宽放牧（夏牧、烽火台、废村、工棚），一遍关掉放牧与烽火台、庙与墓岛必有；每条代码路径走到、check 的硬项过。"""
     from skyisle_gen import island as isl
     common = ["island.settle.ruin_min_hh=4", "island.settle.graze_min_km2=0.05", "island.settle.graze_reach_km=1e3", "island.settle.shieling_min_km2=0.5"]
     passes = [common + ["island.settle.graze_max=1"], common + ["island.settle.graze_max=0", "island.market.beacon_max=0", "island.settle.shrine_p=1.0", "island.settle.tomb_p=1.0",
@@ -194,16 +203,8 @@ def test_generate_p5_farmland_identical(small_ctx, tmp_path):
     seen = set()
     for extra in passes:
         for node in _nodes(small_ctx, 3)[1:3]:
-            outs = {}
-            for b in ("python", "cpp"):
-                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
-                                      return_state=True, out_root=tmp_path / b)
-                small_ctx.cfg["engine"]["backend"] = "python"
-                outs[b] = (_products(out), g)
-            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
-            assert sorted(pa) == sorted(pb)
-            assert not [k for k in pa if pa[k] != pb[k]], node
-            assert ga["settle"] == gb["settle"]
+            out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
+            assert not _hard_fails(small_ctx, node, gb, out), node
             S = gb["settle"]
             seen |= {u["kind"] for u in S["uses"]} | {x["occupancy"] for x in S["specials"]} | ({"废村"} if S["ruins"] else set())
             seen |= {"烽火台"} if any("烽火" in r["functions"] for r in S["relays"]) else set()      # P7：烽火台归中转站
@@ -212,9 +213,9 @@ def test_generate_p5_farmland_identical(small_ctx, tmp_path):
     assert {"烽火台", "庙", "墓岛", "废村", "工棚", "保底"} <= seen and seen & {"放牧", "夏牧"}, seen
 
 
-def test_generate_p6_waterworks_identical(small_ctx, tmp_path):
+def test_generate_p6_waterworks(small_ctx, tmp_path):
     """P6（水利：谷口的渠、村塘 / 山塘 / 堰塘、圩田的纵浦横塘与圩塘、闸）：默认门槛下小世界里已有圩田、季节性渠首；再强开一遍圩田
-    （压力门槛 0、片与圩的下限放小：整片湿地排干），两个后端的整套产物仍逐字节相同，圩田在额度之内（已垦 = 额度），各种渠、塘、闸与水田 / 泽田都走到。"""
+    （压力门槛 0、片与圩的下限放小：整片湿地排干），check 的硬项过，圩田在额度之内（已垦 = 额度），各种渠、塘、闸与水田 / 泽田都走到。"""
     from skyisle_gen import island as isl
     vw = ["island.works.village_works=true", "island.works.big_max=0"]          # 四点四十起村级默认不出、大堰默认修：这里测留着的村级算法
     forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
@@ -223,16 +224,8 @@ def test_generate_p6_waterworks_identical(small_ctx, tmp_path):
     seen = set()
     for extra in (vw, vw + forced):
         for node in _nodes(small_ctx, 2):
-            outs = {}
-            for b in ("python", "cpp"):
-                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
-                                      return_state=True, out_root=tmp_path / b)
-                small_ctx.cfg["engine"]["backend"] = "python"
-                outs[b] = (_products(out), g)
-            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
-            assert sorted(pa) == sorted(pb)
-            assert not [k for k in pa if pa[k] != pb[k]], node
-            assert ga["settle"] == gb["settle"]
+            out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
+            assert not _hard_fails(small_ctx, node, gb, out), node
             S = gb["settle"]
             W = S["waterworks"]
             assert S["farmland"]["cultivated_km2"] == S["farmland"]["quota_km2"]
@@ -243,9 +236,9 @@ def test_generate_p6_waterworks_identical(small_ctx, tmp_path):
     assert {"村塘", "山塘", "圩塘", "堰塘", "渠首闸", "圩闸", "排水闸", "干渠", "支渠", "纵浦", "横塘", "排水渠", "季节性渠首", "水田", "泽田"} <= seen, seen
 
 
-def test_generate_p6b_manage_identical(small_ctx, tmp_path):
+def test_generate_p6b_manage(small_ctx, tmp_path):
     """P6b（有水利就有人维护、原始地貌与人工地貌分开记）：默认一遍（小世界里已有圩村、挂在村上的圩田、废村旁的废塘）；再强开一遍——
-    一圩一组、走得到放到 3 km、废村放宽、渠首的汇水门槛与灌区下限放低（废村旁出废渠首、废渠、废渠首闸），两个后端的整套产物仍逐字节相同；
+    一圩一组、走得到放到 3 km、废村放宽、渠首的汇水门槛与灌区下限放低（废村旁出废渠首、废渠、废渠首闸），check 的硬项过；
     每处水利都有管它的村、在它走得到的范围内（check 的 SET-works），原始地表与人工改造对得上（SET-nature）。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island.check import _nature_check, _works_manage
@@ -258,18 +251,10 @@ def test_generate_p6b_manage_identical(small_ctx, tmp_path):
     seen = set()
     for extra in (vw, vw + forced):
         for node in _nodes(small_ctx, 2)[:2]:
-            outs = {}
-            for b in ("python", "cpp"):
-                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
-                                      return_state=True, out_root=tmp_path / b)
-                small_ctx.cfg["engine"]["backend"] = "python"
-                outs[b] = (_products(out), g)
-            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
-            assert sorted(pa) == sorted(pb)
-            assert not [k for k in pa if pa[k] != pb[k]], node
-            assert ga["settle"] == gb["settle"]
+            out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
+            assert not _hard_fails(small_ctx, node, gb, out), node
             for k in ("landcover_natural", "landuse"):
-                assert ga[k].dtype == gb[k].dtype == np.uint8 and np.array_equal(ga[k], gb[k]), (node, k)
+                assert gb[k].dtype == np.uint8 and gb[k].shape == gb["island_id"].shape, (node, k)
             S = gb["settle"]
             W = S["waterworks"]
             assert _works_manage(gb, S, gb["polder_id"]) == ([], [], [], [])
@@ -284,9 +269,9 @@ def test_generate_p6b_manage_identical(small_ctx, tmp_path):
     assert {"圩村", "挂圩田", "废塘", "废渠首", "废渠", "改造1", "改造3", "改造4", "改造5"} <= seen, seen
 
 
-def test_generate_bigworks_identical(small_ctx, tmp_path):
+def test_generate_bigworks(small_ctx, tmp_path):
     """水利分级（四点四十，用户 09-30 定）：默认一遍（村级的渠、塘不在岛群层出）；再强开一遍邑级大堰（小世界的河小：汇水、灌区的门槛放低、
-    不看额度占比），两个后端的整套产物仍逐字节相同；大堰在本岛常年河上、邑管，灌区里在种的地 = landuse 的渠灌田、都是已垦，
+    不看额度占比），check 的硬项过；大堰在本岛常年河上、邑管，灌区里在种的地 = landuse 的渠灌田、都是已垦，
     每个用水的村一个分水口，SET-works / SET-nature 过，已垦 = 额度、人口不变。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island.check import _nature_check, _works_check
@@ -295,16 +280,8 @@ def test_generate_bigworks_identical(small_ctx, tmp_path):
     seen = set()
     for extra in ([], forced):
         for node in _nodes(small_ctx, 3):
-            outs = {}
-            for b in ("python", "cpp"):
-                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
-                                      return_state=True, out_root=tmp_path / b)
-                small_ctx.cfg["engine"]["backend"] = "python"
-                outs[b] = (_products(out), g)
-            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
-            assert sorted(pa) == sorted(pb)
-            assert not [k for k in pa if pa[k] != pb[k]], node
-            assert ga["settle"] == gb["settle"]
+            out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
+            assert not _hard_fails(small_ctx, node, gb, out), node
             S = gb["settle"]
             W = S["waterworks"]
             assert W["summary"]["village_works"] is False and not W["heads"] and not W["ponds"]
@@ -329,9 +306,9 @@ def test_generate_bigworks_identical(small_ctx, tmp_path):
     assert {"大堰", "用水的村", "干渠", "支渠"} <= seen, seen
 
 
-def test_generate_p7_market_identical(small_ctx, tmp_path):
+def test_generate_p7_market(small_ctx, tmp_path):
     """P7（大泊场、镇、航船、邑治、群内的烽火台）：小世界到 ④、没有 ⑥ 的航线，只有群内的中转站。默认一遍，再一遍把走路赶集收到 2 km、
-    镇距放到 4 km（多数村搭航船、线多、邑治挑得开），两个后端的整套产物仍逐字节相同；大泊场、镇挨着的泊场、航船线、搭航船的村、烽火台都走到。"""
+    镇距放到 4 km（多数村搭航船、线多、邑治挑得开），check 的硬项过；大泊场、镇挨着的泊场、航船线、搭航船的村、烽火台都走到。"""
     from skyisle_gen import island as isl
     forced = ["island.market.walk_km=2.0", "island.market.walk_max_km=2.0", "island.market.town_spacing_km=4.0", "island.market.line_max_stops=3",
               "island.market.harbor_min_km2=0.2", "island.market.tailwind_factor=0.5", "island.market.headwind_factor=2.5", "island.market.wind_ref_ms=0.5"]
@@ -340,16 +317,8 @@ def test_generate_p7_market_identical(small_ctx, tmp_path):
     seen = set()
     for extra in ([], forced):
         for node in _nodes(small_ctx, 3):                      # 第三群才有烽火台（群边高处的没人住的岛）
-            outs = {}
-            for b in ("python", "cpp"):
-                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
-                                      return_state=True, out_root=tmp_path / b)
-                small_ctx.cfg["engine"]["backend"] = "python"
-                outs[b] = (_products(out), g)
-            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
-            assert sorted(pa) == sorted(pb)
-            assert not [k for k in pa if pa[k] != pb[k]], node
-            assert ga["settle"] == gb["settle"]
+            out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
+            assert not _hard_fails(small_ctx, node, gb, out), node
             S = gb["settle"]
             seen |= {"大泊场"} if S["harbors"] else set()
             seen |= {"镇挨着大泊场"} if any(t["harbor"] is not None for t in S["towns"]) else set()
@@ -363,59 +332,64 @@ def test_generate_p7_market_identical(small_ctx, tmp_path):
 
 def test_generate_cpp_thread_independent(small_ctx, tmp_path):
     node = _nodes(small_ctx, 1)[0]
-    a, _ = _gen(small_ctx, node, "cpp", tmp_path / "t1", threads=1)
-    b, _ = _gen(small_ctx, node, "cpp", tmp_path / "t4", threads=4)
+    a, _ = _gen(small_ctx, node, tmp_path / "t1", threads=1)
+    b, _ = _gen(small_ctx, node, tmp_path / "t4", threads=4)
     assert _products(a) == _products(b)
 
 
-def test_steps_partial_match(small_ctx, tmp_path):
-    """只算到资源 / 四季 / 天气（steps 2–4）时两个后端也相同。"""
+def test_steps_partial(small_ctx, tmp_path):
+    """只算到资源 / 四季 / 天气（steps 2–4）：该有的有、后面的没有；已算的部分与整群 generate 的一样。"""
     node = _nodes(small_ctx, 1)[0]
+    _, gf = _gen(small_ctx, node, tmp_path / "full")
     for steps in (2, 3, 4):
-        a, _ = _gen(small_ctx, node, "python", tmp_path / f"p{steps}", steps=steps)
-        b, _ = _gen(small_ctx, node, "cpp", tmp_path / f"c{steps}", steps=steps)
-        assert _products(a) == _products(b), steps
+        _, g = _gen(small_ctx, node, tmp_path / f"s{steps}", steps=steps)
+        assert ("resources" in g, "climate" in g, "weather" in g, "settle" in g) == (True, steps >= 3, steps >= 4, False), steps
+        assert np.array_equal(g["height"], gf["height"], equal_nan=True) and np.array_equal(g["island_id"], gf["island_id"])
+        if steps >= 3:
+            assert g["climate"] == gf["climate"], steps
+        if steps >= 4:
+            assert g["weather"]["json"] == gf["weather"]["json"], steps
 
 
-def test_lod_block_reduce_matches(small_ctx):
+def test_lod_block_reduce(small_ctx):
+    """粗版：两个分辨率各一份，默认带天气（C++ 的 weather_year），块降采样的数组同形、陆地占比按格加总与原生一样。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island.lod import build_lod
     node = _nodes(small_ctx, 1)[0]
-    outs = {}
-    for b in ("python", "cpp"):
-        c = isl.island_config(small_ctx, [f"engine.backend={b}"])
-        outs[b] = build_lod(small_ctx, node, c, [1600.0, 3200.0], native_res_m=400.0)
-    small_ctx.cfg["engine"]["backend"] = "python"
-    for res in outs["python"]:
-        A, B = outs["python"][res][0], outs["cpp"][res][0]
-        assert sorted(A) == sorted(B) and "weather_type" in A and "weather_meta" in A     # 默认带天气（C++ 的 weather_year）
-        for k in A:
-            assert A[k].dtype == B[k].dtype and np.array_equal(A[k], B[k], equal_nan=A[k].dtype.kind == "f"), (res, k)
+    c = isl.island_config(small_ctx)
+    out = build_lod(small_ctx, node, c, [1600.0, 3200.0], native_res_m=400.0)
+    assert sorted(out) == [1600.0, 3200.0]
+    for res, (A, meta) in out.items():
+        assert "weather_type" in A and "weather_meta" in A, res
+        shape = A["land"].shape
+        for k in ("height", "peak", "island", "landcover", "water"):
+            assert A[k].shape == shape, (res, k)
+        assert meta["raster"]["factor"] == round(res / 400.0)
+    a, b = out[1600.0][0], out[3200.0][0]
+    assert abs(a["land"].astype(np.float64).sum() * 1.6 ** 2 - b["land"].astype(np.float64).sum() * 3.2 ** 2) <= 0.01 * a["land"].astype(np.float64).sum() * 1.6 ** 2
+    for k in a:
+        if k.startswith("weather_"):
+            assert np.array_equal(a[k], b[k]), k                  # 天气与分辨率无关
 
 
-def test_is_daily_and_climate_only_match(small_ctx, tmp_path):
-    """IS-daily 的多年逐日（C++ 的 weather_years）与全量季型（climate_only）与 Python 版同值。"""
+def test_is_daily_and_climate_only(small_ctx, tmp_path):
+    """IS-daily 的多年逐日（C++ 的 weather_years）：多年平均回到气候值、同输入重跑相同；全量季型（climate_only）与整群 generate 的四季同值。"""
     from skyisle_gen import island as isl
-    from skyisle_gen.island.climate import build_climate
     from skyisle_gen.island.engine import climate_only_cpp
     from skyisle_gen.island.weather import multi_year_stats
     node = _nodes(small_ctx, 1)[0]
-    _, g = _gen(small_ctx, node, "python", tmp_path / "d")
+    _, g = _gen(small_ctx, node, tmp_path / "d")
     c = isl.island_config(small_ctx)
-    st_py = multi_year_stats(small_ctx, node, c, g, years=10)
-    c = isl.island_config(small_ctx, ["engine.backend=cpp"])
-    st_cpp = multi_year_stats(small_ctx, node, c, g, years=10)
-    small_ctx.cfg["engine"]["backend"] = "python"
-    assert st_py == st_cpp
+    st = multi_year_stats(small_ctx, node, c, g, years=10)
+    assert st == multi_year_stats(small_ctx, node, c, g, years=10)
+    assert st["years"] == 10 and len(st["precip_mean_mm"]) == len(g["climate"]["seasons"])
+    assert st["annual_rel_err"] < 0.1 or st["annual_z"] < 3.0, st
     isl_npz = small_ctx.load_npz(3, "islands")
     cli = small_ctx.load_npz(4, "climate_islands")
     planet = small_ctx.load_json(1, "planet")
-    for j in range(0, isl_npz["lat"].size, 97):
-        inp = {k: float(isl_npz[k][j]) for k in ("lat", "lon", "height_m")}
-        for k in ("precip", "temp", "storm", "window", "temp_sea", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
-            inp[k] = float(cli[k][j])
-        inp["planet"] = planet
-        inp["keel_clearance_m"] = float(small_ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))
-        g2 = {"inp": inp, "json": {}}
-        build_climate(small_ctx, j, c, g2, log=lambda *a: None)
-        assert climate_only_cpp(small_ctx, inp, c) == g2["climate"], j
+    inp = {k: float(isl_npz[k][node]) for k in ("lat", "lon", "height_m")}
+    for k in ("precip", "temp", "storm", "window", "temp_sea", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
+        inp[k] = float(cli[k][node])
+    inp["planet"] = planet
+    inp["keel_clearance_m"] = float(small_ctx.cfg["s03"]["islands"].get("keel_clearance_m", 300.0))
+    assert climate_only_cpp(small_ctx, inp, c) == g["climate"]

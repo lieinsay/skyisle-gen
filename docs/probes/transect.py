@@ -361,23 +361,10 @@ def nature(J: dict, S: dict, Z, cell_km2: float) -> dict:
 
 
 def market(J: dict, S: dict, Z, res_km: float) -> dict:
-    """P7 的镇、邑治、航船、中转站；P7 之前的产物（没有 harbors）按 market.py 现算大泊场。"""
-    H = S.get("harbors")
-    derived = H is None
-    if derived:
-        import sys as _sys
-        _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-        import tomllib
-        from skyisle_gen.island import market as MK
-        mc = tomllib.load(open(Path(__file__).resolve().parents[2] / "config" / "default.toml", "rb"))["island"]["market"]
-        g = {k: Z[k] for k in Z.files}
-        g["json"] = J
-        x0, y0 = J["raster"]["origin_km"]
-        km = lambda i, j: [round(x0 + (j + 0.5) * res_km, 3), round(y0 - (i + 0.5) * res_km, 3)]
-        _, pad = MK.harbor_pad(g, mc)
-        cells = MK.island_cells(g["island_id"], len(J["islands"]))
-        cnt = MK.harbor_count(pad, g["island_id"], cells, int(round(float(mc["harbor_window_km"]) / res_km)))
-        H = MK.harbor_sites(g, mc, pad, cnt, km, res_km)
+    """P7 的镇、邑治、航船、中转站；P7 之前的产物没有 harbors（大泊场记空、derived_harbors = True；当年按 Python 的 market.py 现算，
+    Python 参考后端 2026-09-30 删了，要看就用新产物）。"""
+    derived = "harbors" not in S
+    H = S.get("harbors") or []
     V = {v["id"]: v for v in S["villages"]}
     T = S.get("towns", [])
     lines = S.get("boat_lines", [])

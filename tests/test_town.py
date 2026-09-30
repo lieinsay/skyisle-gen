@@ -1,5 +1,4 @@
-"""聚落营建器（docs/PLAN-TOWN.md）：静态隔离、合成地形、岛群窗口细化。依赖 C++ 扩展（没编就跳过）。"""
-import re
+"""聚落营建器（docs/PLAN-TOWN.md）：合成地形、岛群窗口细化。依赖 C++ 扩展（没编就跳过）；静态隔离（谁都不 import 它）在 test_core。"""
 import sys
 from pathlib import Path
 
@@ -9,16 +8,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 PKG = Path(__file__).resolve().parent.parent / "skyisle_gen"
-
-
-# ---------------- 独立工具：管线与岛群生成器都不得读它 ----------------
-def test_nothing_imports_town():
-    files = sorted((PKG / "stages").glob("*.py")) + sorted((PKG / "island").glob("*.py"))
-    files += [PKG / n for n in ("check.py", "ninegrid.py", "polity.py", "culture.py", "pipeline.py", "engine.py")]
-    for f in files:
-        text = f.read_text(encoding="utf-8")
-        assert not re.search(r"^\s*(from|import)\s+\.*\s*(skyisle_gen\.)?town\b", text, re.M), f"{f.name} import 了聚落营建器"
-
 
 _core = pytest.importorskip("skyisle_gen._core")
 

@@ -1,7 +1,7 @@
-"""cpp 后端的记录 → 与 Python 版同形的 dict（行星计划 P6b，docs/PLAN-CORE.md 第五节）。
+"""C++ 核心的记录 → 前端的 dict（行星计划 P6b，docs/PLAN-CORE.md 第五节；与删掉的 Python 参考版同形）。
 
 C++ 的记录里数已按 Python 的 round 舍好，字符串是 ASCII 代码（PLAN-CORE：C++ 只用 ASCII，中文在前端）；这里把代码译回中文、
-把带数的备注按 Python 版的 f-string 拼出来。赋存区的长度与走向按 numpy 的 np.cov / np.linalg.eigh 重算（resources._shape：
+把带数的备注用 f-string 拼出来。赋存区的长度与走向按 numpy 的 np.cov / np.linalg.eigh 重算（resources._shape：
 OpenBLAS 的 syrk 与 LAPACK 的结果 C++ 追不上位，对称的小块协方差 ±1e−18 的符号就决定走向是 0° 还是 180°）。
 """
 from __future__ import annotations
@@ -120,13 +120,6 @@ def resources(g: dict, node: int, c: dict, R: dict) -> dict:
                            bool(meta["layered"]), float(R["geo_ore"]), float(R["fs_rate"]), deps, occs, works)
 
 
-def resources_after_settle(Rg: dict, R: dict, W: int, res_km: float) -> None:
-    """聚落之后：开垦改了林木的面积 / 代表格，村的采场加进了 workings、特殊聚落写了 special——按 C++ 的终值整体换掉三张表。"""
-    Rg["deposits"] = [deposit(d) for d in R["deposits"]]
-    Rg["occurrences"] = [occurrence(o, cl, W, res_km) for o, cl in zip(R["occurrences"], R["occ_cells"])]
-    Rg["workings"] = [working(w) for w in R["workings"]]
-
-
 # ---------------------------------------------------------------- 四季
 def climate(Cj: dict, planet: dict) -> dict:
     from .climate import calendar
@@ -243,7 +236,7 @@ def settlements(Sj: dict, climate_zh: dict | None, mc: dict | None = None) -> di
         t["name"] = _name(t["name"])
         towns.append(t)
     S["towns"] = towns
-    # P7：航船线、大泊场、中转站（代码 → 中文，说明两个后端共用 market.relay_note）
+    # P7：航船线、大泊场、中转站（代码 → 中文，说明由 market.relay_note 拼）
     S["boat_lines"] = [dict(x, name=_name(x["name"])) for x in Sj.get("boat_lines", [])]
     S["harbors"] = [dict(x) for x in Sj.get("harbors", [])]
     relays = []

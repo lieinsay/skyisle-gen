@@ -1,7 +1,7 @@
-"""浮高（DESIGN-NOTES 四点二十八，Zhouzhu 浮高计划 G 期）：三个 seed 的小世界里两个后端逐字节对照、平移的语义、关掉时不浮。
+"""浮高（DESIGN-NOTES 四点二十八，Zhouzhu 浮高计划 G 期）：三个 seed 的小世界里平移的语义、关掉时不浮。
 
 扩展没编（python core/build.py）时整个文件跳过。小世界（1600 群）三个 seed 各跑到 ④，每个 seed 挑两三群：
-  两个后端整群 generate 的整套产物逐字节相同（island.json 只差 meta.seconds / engine），且真的有岛浮了；
+  整群 generate 重跑逐字节相同（island.json 只差 meta.seconds），且真的有岛浮了、主岛不动；
   浮高 = 整座平移：地形那一步开关浮高，岛号栅格不变、每座非主岛的高程整体差 δ、主岛不动，岸缘 / 峰 / 台面 / 岛底跟着平移、崖高不变；
   岸缘 + δ ≥ rim_floor_m、δ ∈ [−down_max, +up_max]、IS-float 过；村与资源点的海拔读平移后的高程；关掉（float.enabled = false）时 float_m 全 0。
 """
@@ -55,81 +55,76 @@ def _products(out: Path) -> dict:
     return res
 
 
-def _sets(backend, sets):
+def _sets(sets):
     """island_config 会把 --set 留在 ctx.cfg 里（下一次调用照样生效）：浮高开关每次都显式给，免得上一个用例关掉的一直关着。"""
     sets = list(sets)
     if not any(x.startswith("island.float.enabled=") for x in sets):
         sets.append("island.float.enabled=true")
-    return [f"engine.backend={backend}"] + sets
+    return sets
 
 
-def _gen(ctx, node, backend, root, sets=()):
+def _gen(ctx, node, root, sets=()):
     from skyisle_gen import island as isl
-    out, g = isl.generate(ctx, node, res_m=300.0, sets=_sets(backend, sets), log=QUIET, return_state=True, out_root=root)
-    ctx.cfg["engine"]["backend"] = "python"
-    return out, g
+    return isl.generate(ctx, node, res_m=300.0, sets=_sets(sets), log=QUIET, return_state=True, out_root=root)
 
 
-def _terrain(ctx, node, backend, sets=()):
+def _terrain(ctx, node, sets=()):
     from skyisle_gen import island as isl
-    c = isl.island_config(ctx, _sets(backend, sets))
+    c = isl.island_config(ctx, _sets(sets))
     g = isl.build_terrain(ctx, node, c, isl._node_inputs(ctx, node), res_m=300.0, log=QUIET)
-    ctx.cfg["engine"]["backend"] = "python"
     return c, g
 
 
-def test_float_products_identical_two_backends(world, tmp_path):
-    """整群 generate（地形 → 资源 → 四季 → 天气 → 聚落）：两个后端的整套产物逐字节相同，且群里真的有岛往上、往下浮了。"""
+def test_float_products_deterministic(world, tmp_path):
+    """整群 generate（地形 → 资源 → 四季 → 天气 → 聚落）：重跑整套产物逐字节相同；主岛不动，群里真的有岛往上、往下浮了。"""
     moved = 0
-    for node in _nodes(world):
-        a, ga = _gen(world, node, "python", tmp_path / "py")
-        b, gb = _gen(world, node, "cpp", tmp_path / "cpp")
-        pa, pb = _products(a), _products(b)
-        assert sorted(pa) == sorted(pb), node
-        bad = [k for k in pa if pa[k] != pb[k]]
-        assert not bad, (world.seed, node, bad)
-        assert ga["settle"] == gb["settle"] and ga["resources"] == gb["resources"]
+    for k, node in enumerate(_nodes(world)):
+        b, gb = _gen(world, node, tmp_path / "a")
         fl = [i["float_m"] for i in gb["json"]["islands"]]
         assert fl[0] == 0.0
         moved += sum(1 for x in fl[1:] if x != 0.0)
+        if k == 0:
+            pb = _products(b)
+            c, _ = _gen(world, node, tmp_path / "b")
+            pc = _products(c)
+            assert sorted(pb) == sorted(pc) and not [x for x in pb if pb[x] != pc[x]], (world.seed, node)
     assert moved > 0
 
 
 def test_float_is_a_translation(world):
     """地形那一步开关浮高：岛号栅格不变；每座非主岛整体平移 δ（高程、岸缘、峰、台面、岛底），崖高与起伏不变；主岛一格不动。"""
     node = _nodes(world, 1)[0]
-    for backend in ("python", "cpp"):
-        _, g_on = _terrain(world, node, backend)
-        _, g_off = _terrain(world, node, backend, ["island.float.enabled=false"])
-        assert np.array_equal(g_on["island_id"], g_off["island_id"])
-        iid = g_on["island_id"]
-        I_on, I_off = g_on["json"]["islands"], g_off["json"]["islands"]
-        assert all(i["float_m"] == 0.0 for i in I_off)
-        assert any(i["float_m"] != 0.0 for i in I_on), backend
-        m0 = iid == 0
-        assert np.array_equal(g_on["height"][m0], g_off["height"][m0])
-        for a, b in zip(I_on, I_off):
-            k = a["id"]
-            d = g_on["height"][iid == k] - g_off["height"][iid == k]
-            if not d.size:
-                continue
-            assert np.allclose(d, d[0], atol=1e-6), (backend, k)
-            assert abs(float(d[0]) - a["float_m"]) <= 0.051, (backend, k, float(d[0]), a["float_m"])
-            for key in ("rim_m", "peak_m", "surface_m", "keel_m"):
-                assert abs(a[key] - b[key] - a["float_m"]) <= 0.15, (backend, k, key)
-            assert abs(a["cliff_m"] - b["cliff_m"]) <= 0.1 and abs(a["relief_m"] - b["relief_m"]) <= 0.1
-        # 索桥按平移后的岸缘高差判
-        dh = {(e["a"], e["b"]): e["dh_m"] for e in g_on["json"]["links"]}
-        rims = {i["id"]: i["rim_m"] for i in I_on}
-        for (x, y), v in dh.items():
-            assert abs(v - abs(rims[x] - rims[y])) <= 0.15
+    _, g_on = _terrain(world, node)
+    _, g_off = _terrain(world, node, ["island.float.enabled=false"])
+    assert np.array_equal(g_on["island_id"], g_off["island_id"])
+    iid = g_on["island_id"]
+    I_on, I_off = g_on["json"]["islands"], g_off["json"]["islands"]
+    assert all(i["float_m"] == 0.0 for i in I_off)
+    assert any(i["float_m"] != 0.0 for i in I_on)
+    m0 = iid == 0
+    assert np.array_equal(g_on["height"][m0], g_off["height"][m0])
+    for a, b in zip(I_on, I_off):
+        k = a["id"]
+        d = g_on["height"][iid == k] - g_off["height"][iid == k]
+        if not d.size:
+            continue
+        assert np.allclose(d, d[0], atol=1e-6), k
+        assert abs(float(d[0]) - a["float_m"]) <= 0.051, (k, float(d[0]), a["float_m"])
+        for key in ("rim_m", "peak_m", "surface_m", "keel_m"):
+            assert abs(a[key] - b[key] - a["float_m"]) <= 0.15, (k, key)
+        assert abs(a["cliff_m"] - b["cliff_m"]) <= 0.1 and abs(a["relief_m"] - b["relief_m"]) <= 0.1
+    # 索桥按平移后的岸缘高差判
+    dh = {(e["a"], e["b"]): e["dh_m"] for e in g_on["json"]["links"]}
+    rims = {i["id"]: i["rim_m"] for i in I_on}
+    for (x, y), v in dh.items():
+        assert abs(v - abs(rims[x] - rims[y])) <= 0.15
 
 
 def test_float_bounds_and_is_float(world, tmp_path):
     """δ ∈ [−down_max, +up_max]、岸缘 ≥ rim_floor_m；IS-float 过，改坏了会报；村与资源点的海拔是平移后的高程。"""
     from skyisle_gen.island.check import evaluate
     node = _nodes(world, 1)[0]
-    out, g = _gen(world, node, "cpp", tmp_path / "c")
+    out, g = _gen(world, node, tmp_path / "c")
     c = g["json"]
     from skyisle_gen import island as isl
     fc = isl.island_config(world)["float"]
@@ -155,13 +150,10 @@ def test_float_bounds_and_is_float(world, tmp_path):
 
 
 def test_float_off_means_no_float(world):
-    """float.enabled = false：island.json 的 float_m 全 0，两个后端相同。"""
+    """float.enabled = false：island.json 的 float_m 全 0。"""
     node = _nodes(world, 1)[0]
-    _, ga = _terrain(world, node, "python", ["island.float.enabled=false"])
-    _, gb = _terrain(world, node, "cpp", ["island.float.enabled=false"])
-    assert np.array_equal(ga["height"], gb["height"], equal_nan=True)
-    assert [i["float_m"] for i in ga["json"]["islands"]] == [0.0] * len(ga["json"]["islands"])
-    assert ga["json"]["islands"] == gb["json"]["islands"]
+    _, g = _terrain(world, node, ["island.float.enabled=false"])
+    assert [i["float_m"] for i in g["json"]["islands"]] == [0.0] * len(g["json"]["islands"])
 
 
 def test_float_stats_summary():
@@ -179,15 +171,13 @@ def test_float_stats_summary():
 
 def test_old_bridge_keys_make_no_bridges(world, tmp_path):
     """P5（用户定）去掉了索桥：旧 run 的快照里留着的 bridge_max_km / bridge_max_dh_m 设成旧判据（2 km / 250 m）也不再有索桥、
-    桥头与导水槽，岛对全是短渡且连通；两个后端照样逐字节相同。"""
+    桥头与导水槽，岛对全是短渡且连通；产物与新判据（0.1 km / 30 m）逐字节相同（这两个键已经没人读）。"""
     wide = ["island.layout.bridge_max_km=2.0", "island.layout.bridge_max_dh_m=250"]
     node = _nodes(world, 1)[0]
-    a, ga = _gen(world, node, "python", tmp_path / "py", wide)
-    b, gb = _gen(world, node, "cpp", tmp_path / "cpp", wide)
-    pa, pb = _products(a), _products(b)
-    assert sorted(pa) == sorted(pb) and not [k for k in pa if pa[k] != pb[k]], node
-    for g in (ga, gb):
-        J = g["json"]
-        assert all(e["kind"] == "ferry" for e in J["links"]) and "channels" not in J and "n_bridges" not in J["layout"]
-        assert "bridgeheads" not in g["settle"] and "channels" not in g["settle"]
-    _gen(world, node, "cpp", tmp_path / "n", ["island.layout.bridge_max_km=0.1", "island.layout.bridge_max_dh_m=30"])   # 改回来（--set 会留在 ctx 上）
+    b, gb = _gen(world, node, tmp_path / "wide", wide)
+    J = gb["json"]
+    assert all(e["kind"] == "ferry" for e in J["links"]) and "channels" not in J and "n_bridges" not in J["layout"]
+    assert "bridgeheads" not in gb["settle"] and "channels" not in gb["settle"]
+    n, _ = _gen(world, node, tmp_path / "n", ["island.layout.bridge_max_km=0.1", "island.layout.bridge_max_dh_m=30"])   # 改回来（--set 会留在 ctx 上）
+    pb, pn = _products(b), _products(n)
+    assert sorted(pb) == sorted(pn) and not [k for k in pb if pb[k] != pn[k]], node

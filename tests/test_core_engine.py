@@ -1,8 +1,10 @@
-"""C++ 核心（core/，skyisle_gen._core）与 numpy 版的同输入对照（docs/PLAN-CORE.md 第三、八节）。
+"""C++ 核心（core/，skyisle_gen._core）的公共件与第三层的地形、水系（docs/PLAN-CORE.md 第三、八节）。
 
-扩展没编（python core/build.py）时整个文件跳过。能逐位的逐位比：随机流、噪声、连通分量、形态学、填洼、D8、汇流；
-小世界上的 build_terrain / build_hydro 两个后端的对照、cpp 后端的确定性与线程数无关在文件后半。
+扩展没编（python core/build.py）时整个文件跳过。随机流、幂 / hypot、求和与 round 仍与 numpy / Python 逐位比（那是 numpy 自己，不是删掉的参考后端）；
+噪声、连通分量、形态学、重采样、填洼、D8、汇流、岛形、造形、势力范围按性质验（Python 参考后端 2026-09-30 删了，git tag python-reference-final）；
+小世界上的 build_terrain / build_hydro 验约束、确定性与线程数无关，整群 generate 验 check 的硬项。
 """
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -14,8 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 core = pytest.importorskip("skyisle_gen._core", reason="C++ 扩展没编：python core/build.py")
 
-from skyisle_gen.island import grid as G          # noqa: E402
-from skyisle_gen.island import terrain as T        # noqa: E402
 from skyisle_gen.rng import entity_rng             # noqa: E402
 
 KEYS = ["island:2051:layout", "island:1165:place", "island:7:shape:3", "island:0:terrain:12", "x"]
@@ -24,7 +24,7 @@ KEYS = ["island:2051:layout", "island:1165:place", "island:7:shape:3", "island:0
 def _rand_mask(rng, H, W, p=0.55, blobs=True):
     m = rng.random((H, W)) < p
     if blobs:
-        m = G.binary_dilate(G.binary_erode(m, 1, 4), 1, 4)
+        m = core.binary_dilate(core.binary_erode(m, 1, 4), 1, 4)
     return m
 
 
@@ -62,7 +62,6 @@ def test_rng_distributions_match_numpy(key):
 
 
 def test_math_matches_numpy_and_python():
-    import math
     rng = np.random.default_rng(9)
     x = rng.random(100000) * 10 ** rng.uniform(-4, 4, 100000)
     y = (rng.random(100000) - 0.5) * 10 ** rng.uniform(-4, 4, 100000)
@@ -85,55 +84,77 @@ def test_np_sum_and_pyround():
             assert core.pyround(x, nd) == round(x, nd)
 
 
-# ---------------------------------------------------------------- 噪声与栅格
-def test_fractal_noise_matches():
+# ---------------------------------------------------------------- 噪声与栅格：按性质验
+def test_fractal_noise_deterministic_and_keyed():
     xs = np.linspace(-37.0, 41.0, 90)
     X, Y = np.meshgrid(xs, -xs)
-    fn = G.FractalNoise(entity_rng(42, 21, "island:5:shape:0"), -40, -40, 42, 42, feature_km=9.3, octaves=5, persistence=0.55)
-    got = core.fractal_noise(42, 21, "island:5:shape:0", -40, -40, 42, 42, 9.3, 5, 0.55, X, Y)
-    assert np.array_equal(got, fn.sample(X, Y))
+    a = core.fractal_noise(42, 21, "island:5:shape:0", -40, -40, 42, 42, 9.3, 5, 0.55, X, Y)
+    b = core.fractal_noise(42, 21, "island:5:shape:0", -40, -40, 42, 42, 9.3, 5, 0.55, X, Y)
+    c = core.fractal_noise(42, 21, "island:5:shape:1", -40, -40, 42, 42, 9.3, 5, 0.55, X, Y)
+    assert np.array_equal(a, b) and np.isfinite(a).all()
+    assert np.abs(a).max() <= 1.0 and a.std() > 0.05
+    assert np.abs(a - c).max() > 0.1                             # 随机流按 key 分开
+    assert np.abs(np.diff(a, axis=1)).mean() < a.std()           # 相邻格相关（特征尺度 9.3 km ≫ 格距 0.9 km）
 
 
-def test_label_components_and_morphology_match():
+def test_label_components_and_morphology():
     rng = np.random.default_rng(1)
     for t in range(6):
         H, W = int(rng.integers(5, 90)), int(rng.integers(5, 90))
         m = _rand_mask(rng, H, W, p=float(rng.uniform(0.3, 0.8)), blobs=bool(t % 2))
+        n_by = {}
         for conn in (4, 8):
-            lab, n = G.label_components(m, conn)
-            lab2, n2 = core.label_components(m, conn)
-            assert n == n2 and np.array_equal(lab, lab2)
-        assert np.array_equal(core.largest_component(m), G.largest_component(m))
+            lab, n = core.label_components(m, conn)
+            n_by[conn] = n
+            assert (lab[~m] == 0).all() and set(np.unique(lab[m]).tolist()) == set(range(1, n + 1))
+            if n:                                                  # 每个标号自己是一个连通块
+                one = lab == 1
+                assert core.label_components(one, conn)[1] == 1
+        assert n_by[8] <= n_by[4]
+        big = core.largest_component(m)
+        if m.any():
+            lab, n = core.label_components(m, 4)
+            cnt = np.bincount(lab[m])
+            assert big.sum() == cnt.max() and not (big & ~m).any() and core.label_components(big, 4)[1] == 1
         for conn in (4, 8):
-            assert np.array_equal(core.binary_erode(m, 2, conn), G.binary_erode(m, 2, conn))
-            assert np.array_equal(core.binary_dilate(m, 2, conn), G.binary_dilate(m, 2, conn))
-        assert np.array_equal(core.distance_bands(m, 7), G.distance_bands(m, 7))
+            er, di = core.binary_erode(m, 2, conn), core.binary_dilate(m, 2, conn)
+            assert not (er & ~m).any() and not (m & ~di).any()
+            assert not (core.binary_dilate(er, 2, conn) & ~m).any()   # 开运算 ⊆ 原集
+        db = core.distance_bands(m, 7)
+        assert (db[m] == 0).all() and (db[~m] >= 1).all() and db.max() <= 8
         seed = rng.random((H, W)) < 0.03
-        within = _rand_mask(rng, H, W, 0.7)
-        for w in (None, within):
-            d, s = G.nearest_propagate(seed, 9, 100.0, within=w)
-            d2, s2 = core.nearest_propagate(seed, 9, 100.0, w)
-            assert np.array_equal(d, d2) and np.array_equal(s, s2)
+        if seed.any():
+            d, src = core.nearest_propagate(seed, 9, 100.0)
+            assert (d[seed] == 0).all() and (src[seed] == np.flatnonzero(seed.ravel())).all()
+            got = src >= 0
+            assert seed.ravel()[src[got]].all() and (d[got & ~seed] > 0).all()   # 每格的来源是个种子
 
 
-def test_resample_and_smooth_match():
+def test_resample_and_smooth():
     rng = np.random.default_rng(2)
-    a = rng.random((37, 23)) * 900.0
-    m = _rand_mask(rng, 37, 23, 0.7)
+    H, W = 37, 23
+    const = np.full((H, W), 7.5)
+    m = _rand_mask(rng, H, W, 0.7)
     for f in (2, 3, 5, 8):
-        assert np.array_equal(core.block_mean(a, f), G.block_mean(a, f))
-        assert np.array_equal(core.block_any(m, f), G.block_any(m, f))
-        c = G.block_mean(a, f)
-        assert np.array_equal(core.upsample_bilinear(c, f, 37, 23), G.upsample_bilinear(c, f, 37, 23))
-    assert np.array_equal(core.smooth121(a, m, 2), G.smooth121(a, m, 2))
-    assert np.array_equal(core.laplacian(a, m), G.laplacian(a, m))
-    hh = np.where(m, a, np.nan)
-    assert np.allclose(core.slope_deg(hh, m, 100.0), G.slope_deg(hh, m, 100.0), rtol=0, atol=1e-12)
+        assert np.array_equal(core.block_mean(const, f), np.full((-(-H // f), -(-W // f)), 7.5))
+        pt = np.zeros((H, W), bool)
+        pt[H - 1, W - 1] = True
+        bb = core.block_any(pt, f)
+        assert bb.sum() == 1 and bb[-1, -1]
+        up = core.upsample_bilinear(np.full((-(-H // f), -(-W // f)), 3.0), f, H, W)
+        assert up.shape == (H, W) and np.allclose(up, 3.0)
+    assert np.allclose(core.smooth121(const, m, 2)[m], 7.5)
+    J, I = np.meshgrid(np.arange(W), np.arange(H))
+    full = np.ones((H, W), bool)
+    lap = core.laplacian(2.0 * J + 3.0 * I, full)
+    assert np.abs(lap[1:-1, 1:-1]).max() < 1e-9                  # 平面的拉普拉斯为 0
+    sl = core.slope_deg(10.0 * J.astype(float), full, 100.0)      # 每格高 10 m、格距 100 m
+    assert np.allclose(sl[1:-1, 1:-1], math.degrees(math.atan(0.1)))
 
 
-# ---------------------------------------------------------------- 水文核心
+# ---------------------------------------------------------------- 水文核心：按性质验
 def _terrain(rng, H, W):
-    m = G.largest_component(_rand_mask(rng, H, W, 0.8))
+    m = core.largest_component(_rand_mask(rng, H, W, 0.8))
     xs = np.linspace(-1, 1, W)
     ys = np.linspace(-1, 1, H)
     X, Y = np.meshgrid(xs, ys)
@@ -141,26 +162,31 @@ def _terrain(rng, H, W):
     return np.where(m, h, 0.0), m
 
 
-def test_fill_d8_accumulate_match():
+def test_fill_d8_accumulate():
+    """填洼只抬不降；D8 的下游是八邻域里填平面更低的格（没有下游的是出口）；汇流守恒：出口的汇流之和 = 陆地格数。"""
     rng = np.random.default_rng(3)
     for _ in range(4):
         H, W = int(rng.integers(20, 80)), int(rng.integers(20, 80))
         h, m = _terrain(rng, H, W)
-        pf = T.priority_fill(h, m, eps=1e-3)
-        assert np.array_equal(core.priority_fill(h, m, 1e-3), pf, equal_nan=True)
-        fi = T.fill_iter(h, m, 12)
-        assert np.array_equal(core.fill_iter(h, m, 12, 0.01), fi, equal_nan=True)
-        ri, rj, _s, tv = T.d8(pf, m, 100.0)
-        ri2, rj2, tv2 = core.d8(np.nan_to_num(pf), m, 100.0)
-        assert np.array_equal(ri, ri2) and np.array_equal(rj, rj2) and np.array_equal(tv, tv2)
-        A = T.accumulate(pf, m, ri, rj)
-        assert np.array_equal(core.accumulate(m, ri, rj), A)
-        ri, rj, tv = T.d8_random(pf, m, 100.0, entity_rng(42, 21, "island:1:terrain:0"), 1.5)
-        ri2, rj2, tv2 = core.d8_random(np.nan_to_num(pf), m, 100.0, 42, 21, "island:1:terrain:0", 1.5)
-        assert np.array_equal(ri, ri2) and np.array_equal(rj, rj2) and np.array_equal(tv, tv2)
+        pf = core.priority_fill(h, m, 1e-3)
+        assert np.isnan(pf[~m]).all() and (pf[m] >= h[m]).all()
+        fi = core.fill_iter(h, m, 12, 0.01)
+        assert (fi[m] >= h[m] - 1e-9).all()
+        for ri, rj, _tv in (core.d8(np.nan_to_num(pf), m, 100.0),
+                            core.d8_random(np.nan_to_num(pf), m, 100.0, 42, 21, "island:1:terrain:0", 1.5)):
+            ii, jj = np.nonzero(m & (ri >= 0))
+            r2, c2 = ri[ii, jj], rj[ii, jj]
+            assert (np.maximum(np.abs(r2 - ii), np.abs(c2 - jj)) == 1).all()
+            assert m[r2, c2].all() and (pf[r2, c2] < pf[ii, jj]).all()
+            A = core.accumulate(m, ri, rj)
+            out = m & (ri < 0)
+            assert out.any() and (A[m] >= 1.0).all() and A[out].sum() == pytest.approx(float(m.sum()))
+        r1 = core.d8_random(np.nan_to_num(pf), m, 100.0, 42, 21, "island:1:terrain:0", 1.5)
+        r2 = core.d8_random(np.nan_to_num(pf), m, 100.0, 42, 21, "island:1:terrain:0", 1.5)
+        assert all(np.array_equal(a, b) for a, b in zip(r1, r2))
 
 
-# ---------------------------------------------------------------- 岛形、地形、势力范围：同输入逐位对照
+# ---------------------------------------------------------------- 岛形、造形、势力范围：按性质验
 def _island_cfg(**over):
     import tomllib
     with open(Path(__file__).resolve().parent.parent / "config" / "default.toml", "rb") as fh:
@@ -171,86 +197,96 @@ def _island_cfg(**over):
     return c
 
 
-def test_island_shape_and_profile_match():
+def test_island_shape_and_profile():
+    """面积二分反解到目标（比半格还小的留一格）、一个连通块；角向半径剖面 72 个方向、都在岛内。"""
     from skyisle_gen.island.engine import flat_config
-    from skyisle_gen.island.layout import radial_profile
-    c = _island_cfg()
+    c = flat_config(_island_cfg())
     for key, area, res, el, th in (("island:5:shape:0", 60.0, 0.2, 1.7, 0.4), ("island:9:shape:3", 3.1, 0.1, 1.0, -2.0),
-                                   ("island:1:shape:7", 0.3, 0.4, 2.1, 1.0)):      # 最后一个比半格还小：留一格
-        mask, inside, X, Y = T.island_shape(entity_rng(42, 21, key), area, res, el, th, c["terrain"])
-        m2, in2, xs = core.island_shape(42, key, area, res, el, th, flat_config(c))
-        assert np.array_equal(m2, mask) and np.array_equal(in2, inside) and np.array_equal(xs, X[0])
-        ctr, prof = radial_profile(mask, res)
-        ctr2, prof2 = core.radial_profile(mask, res)
-        assert np.array_equal(prof2, prof) and tuple(ctr2) == tuple(ctr)
+                                   ("island:1:shape:7", 0.3, 0.4, 2.1, 1.0)):
+        mask, inside, xs = core.island_shape(42, key, area, res, el, th, c)
+        assert mask.sum() >= 1 and abs(mask.sum() * res * res - area) <= max(res * res, 0.01 * area)
+        assert core.label_components(mask, 4)[1] == 1
+        assert inside.shape == mask.shape and xs.shape == (mask.shape[1],)
+        m2, in2, xs2 = core.island_shape(42, key, area, res, el, th, c)
+        assert np.array_equal(m2, mask) and np.array_equal(in2, inside) and np.array_equal(xs2, xs)
+        ctr, prof = core.radial_profile(mask, res)
+        assert prof.shape == (72,) and (prof > 0).all() and prof.max() <= math.hypot(*mask.shape) * res
 
 
 @pytest.mark.parametrize("age", [0.1, 0.5, 0.9])
-def test_sculpt_island_matches(age):
-    """三种岛龄基形 + 侵蚀（粗网格 f > 1 与 f = 1 两条路）+ 仿射拟合，与 numpy 版逐位相同。"""
+def test_sculpt_island(age):
+    """三种岛龄基形 + 侵蚀（粗网格 f > 1 与 f = 1 两条路）+ 仿射拟合：陆地中位 = 台面、峰 − 岸缘 = 目标起伏，岛外是 NaN，重跑相同。"""
     from skyisle_gen.island.engine import flat_config
+    kinds = {0.1: "young", 0.5: "mid", 0.9: "old"}
     for emc in (40, 320):
-        c = _island_cfg(terrain__erosion_max_cells=emc)
-        area, res = 40.0, 0.2
-        mask, inside, X, Y = T.island_shape(entity_rng(7, 21, "island:3:shape:1"), area, res, 1.4, 0.3, c["terrain"])
-        h, kind, rim, peak = T.sculpt_island(entity_rng(7, 21, "island:3:terrain:1"), mask, inside, X, Y, age, area, res,
-                                             600.0, 900.0, 180.0, False, c["terrain"])
-        h2, kind2, rim2, peak2 = core.sculpt_island(7, "island:3:shape:1", "island:3:terrain:1", area, res, 1.4, 0.3, age,
-                                                    600.0, 900.0, 180.0, False, flat_config(c))
-        assert kind2 == kind and rim2 == rim and peak2 == peak
-        assert np.array_equal(h2, h, equal_nan=True), (age, emc, np.nanmax(np.abs(h2 - h)))
+        c = flat_config(_island_cfg(terrain__erosion_max_cells=emc))
+        mask, _, _ = core.island_shape(7, "island:3:shape:1", 40.0, 0.2, 1.4, 0.3, c)
+        args = (7, "island:3:shape:1", "island:3:terrain:1", 40.0, 0.2, 1.4, 0.3, age, 600.0, 900.0, 180.0, False, c)
+        h, kind, rim, peak = core.sculpt_island(*args)
+        assert kind == kinds[age]
+        assert np.isfinite(h[mask]).all() and np.isnan(h[~mask]).all()
+        assert float(np.median(h[mask])) == pytest.approx(600.0, abs=1.0)
+        assert peak - rim == pytest.approx(900.0, abs=1.0) and peak == pytest.approx(float(np.nanmax(h)), abs=1e-6)
+        h2, *_ = core.sculpt_island(*args)
+        assert np.array_equal(h2, h, equal_nan=True)
 
 
 @pytest.mark.parametrize("n_seed", [0, 1, 2])
-def test_sculpt_island_multicore_matches(n_seed):
-    """多核嵌合（P4）：multicore_spec 抽的核数 / 主核 / 强度、造形、拟合后各核的载荷与载荷中心，与 numpy 版逐位相同（粗网格 f > 1 与 f = 1 两条路）。"""
+def test_sculpt_island_multicore(n_seed):
+    """多核嵌合（P4）：两三个核、主核强度 1、各核的格数加起来 = 岛；不在汇聚带、新岛不是多核（粗网格 f > 1 与 f = 1 两条路）。"""
     from skyisle_gen.island.engine import flat_config
     for emc in (40, 320):
-        c = _island_cfg(terrain__erosion_max_cells=emc, terrain__multicore_frac=1.0, terrain__multicore_three_frac=0.5)
-        area, res = 700.0, 0.8
+        c = flat_config(_island_cfg(terrain__erosion_max_cells=emc, terrain__multicore_frac=1.0, terrain__multicore_three_frac=0.5))
         key = f"island:{n_seed}:cores:0"
-        mask, inside, X, Y = T.island_shape(entity_rng(7, 21, "island:3:shape:0"), area, res, 1.6, 0.3, c["terrain"])
-        sp = T.multicore_spec(entity_rng(7, 21, key), area, 0.45, 0.9, 0, c["terrain"])
-        assert sp is not None
-        cores = []
-        h, kind, rim, peak = T.sculpt_island(entity_rng(7, 21, "island:3:terrain:0"), mask, inside, X, Y, 0.45, area, res,
-                                             900.0, 1500.0, 320.0, True, c["terrain"], sp, cores)
-        h2, kind2, rim2, peak2, cores2 = core.sculpt_island_cores(7, "island:3:shape:0", "island:3:terrain:0", key, area, res, 1.6, 0.3, 0.45,
-                                                                  900.0, 1500.0, 320.0, True, 0.9, 0, flat_config(c))
-        assert kind2 == kind and rim2 == rim and peak2 == peak
-        assert np.array_equal(h2, h, equal_nan=True), (emc, np.nanmax(np.abs(h2 - h)))
-        assert len(cores) == len(cores2) == sp["n"]
-        for a, b in zip(cores, cores2):
-            assert (a["seed"][0], a["seed"][1], a["strength"], a["cells"], a["peak"], a["load"], a["load_xy"][0], a["load_xy"][1],
-                    a["mean_above"]) == tuple(b)
-        assert sum(a["cells"] for a in cores) == int(mask.sum())
-    # 不在汇聚带、太小、新岛：不是多核（也不多抽随机数以外的东西）
-    c = _island_cfg(terrain__multicore_frac=1.0)
-    assert T.multicore_spec(entity_rng(7, 21, "k"), 700.0, 0.45, 0.9, 1, c["terrain"]) is None
-    assert T.multicore_spec(entity_rng(7, 21, "k"), 100.0, 0.45, 0.9, 0, c["terrain"]) is None
-    assert T.multicore_spec(entity_rng(7, 21, "k"), 700.0, 0.1, 0.9, 0, c["terrain"]) is None
+        mask, _, _ = core.island_shape(7, "island:3:shape:0", 700.0, 0.8, 1.6, 0.3, c)
+        h, kind, rim, peak, cores = core.sculpt_island_cores(7, "island:3:shape:0", "island:3:terrain:0", key, 700.0, 0.8, 1.6, 0.3, 0.45,
+                                                             900.0, 1500.0, 320.0, True, 0.9, 0, c)
+        assert 2 <= len(cores) <= 3 and max(x[2] for x in cores) == 1.0
+        assert sum(x[3] for x in cores) == int(mask.sum())
+        assert peak - rim == pytest.approx(1500.0, abs=1.0) and np.isfinite(h[mask]).all()
+    c = flat_config(_island_cfg(terrain__multicore_frac=1.0))
+    base = (7, "island:3:shape:0", "island:3:terrain:0", "k", 700.0, 0.8, 1.6, 0.3)
+    assert not core.sculpt_island_cores(*base, 0.45, 900.0, 1500.0, 320.0, True, 0.9, 1, c)[4]   # 不在汇聚带
+    assert not core.sculpt_island_cores(*base, 0.1, 900.0, 1500.0, 320.0, True, 0.9, 0, c)[4]    # 新岛
 
 
-def test_territory_limits_match():
-    from skyisle_gen.island.territory import limits
+def test_territory_limits_split():
+    """势力范围：两群各自画的分界线是同一条（t_k + t_j + 缝 = 群心距）、法向相反。"""
     rng = np.random.default_rng(4)
     n = 400
     lat, lon = rng.uniform(-60, 60, n), rng.uniform(-180, 180, n)
-    area = rng.uniform(50, 5000, n).astype(np.float32)
-
-    class Ctx:
-        def load_npz(self, k, name):
-            return {"lat": lat, "lon": lon, "area_km2": area}
-    planet = {"radius_km": 6371.0, "year_s": 1.0, "islands": {"lat": lat, "lon": lon, "area": area.astype(np.float64)}}
+    area = rng.uniform(50, 5000, n)
+    planet = {"radius_km": 6371.0, "year_s": 1.0, "islands": {"lat": lat, "lon": lon, "area": area}}
     for node in (0, 17, 399):
-        ref = limits(Ctx(), node, {"planet": {"radius_km": 6371.0}}, {"gap_km": 3.0, "reach": 30.0, "reach_km": 2000.0})
-        got = core.territory_limits(planet, node, 3.0, 30.0, 2000.0)
-        assert [L["node"] for L in ref] == [L["node"] for L in got]
-        for a, b in zip(ref, got):
-            assert a["dist_km"] == round(b["dist_km"], 3) and tuple(a["u"]) == tuple(b["u"]) and a["limit_km"] == b["limit_km"]
+        lk = core.territory_limits(planet, node, 3.0, 30.0, 2000.0)
+        assert lk and all(L["dist_km"] > 0 and L["node"] != node for L in lk)
+        L0 = lk[0]
+        lj = {L["node"]: L for L in core.territory_limits(planet, L0["node"], 3.0, 30.0, 2000.0)}
+        assert node in lj
+        assert L0["limit_km"] + lj[node]["limit_km"] + 3.0 == pytest.approx(L0["dist_km"], abs=1e-6)
+        u1, u2 = np.array(L0["u"]), np.array(lj[node]["u"])
+        assert np.hypot(*u1) == pytest.approx(1.0) and u1 @ -u2 > 0.9
 
 
-# ---------------------------------------------------------------- 小世界：两个后端的 build_terrain / build_hydro
+def test_nearest_fit():
+    """Dykstra：放得下时越界量 ≤ 0 且偏移后每条线都守住；放不下时越界量 > 0。"""
+    rng = np.random.default_rng(6)
+    n_fit = 0
+    for t in range(300):
+        m = int(rng.integers(1, 12))
+        az = rng.uniform(-np.pi, np.pi, m)
+        lim = [[float(np.sin(a)), float(np.cos(a)), float(rng.uniform(5, 60))] for a in az]
+        sup = rng.uniform(0, 70, m).tolist()
+        ox, oy, v = core.nearest_fit(sup, lim)
+        worst = max(s + ux * ox + uy * oy - L for s, (ux, uy, L) in zip(sup, lim))
+        if v <= 1e-9:
+            n_fit += 1
+            assert worst <= 1e-6, t
+        assert (ox, oy, v) == core.nearest_fit(sup, lim)
+    assert n_fit > 0
+
+
+# ---------------------------------------------------------------- 小世界：build_terrain / build_hydro
 SMALL = ["s03.islands.n_islands=1600"]
 
 
@@ -271,10 +307,10 @@ def _nodes(ctx, k=3):
     return [int(x) for x in ok[:k]]
 
 
-def _build(ctx, node, backend, res_m=300.0, threads=4):
+def _build(ctx, node, res_m=300.0, threads=4, sets=()):
     from skyisle_gen import island as isl
     from skyisle_gen.island.hydro import build_hydro
-    c = isl.island_config(ctx, [f"engine.backend={backend}", f"engine.threads={threads}"])
+    c = isl.island_config(ctx, list(sets) + [f"engine.threads={threads}"])
     inp = isl._node_inputs(ctx, node)
     g = isl.build_terrain(ctx, node, c, inp, res_m=res_m, log=lambda *a: None)
     build_hydro(ctx, node, c, g, log=lambda *a: None)
@@ -285,91 +321,67 @@ GRIDS = ("island_id", "cliff", "height", "river", "stream", "lake", "landcover",
          "river_width_m", "river_depth_m", "cut_m", "slope_deg", "filled", "recv_i", "recv_j", "route_h")
 
 
-def test_small_world_backends_agree(small_ctx):
-    """同一个群两个后端：栅格同形同 dtype；陆地 / 主岛按目标、岛数、可耕率一致（这几个群实测逐位相同）。"""
+def test_small_world_constraints(small_ctx):
+    """地形 + 水系：陆地 / 主岛按目标、可耕率、主岛有没有河与行星层对得上；栅格齐全同形。"""
     for node in _nodes(small_ctx):
-        a, b = _build(small_ctx, node, "python"), _build(small_ctx, node, "cpp")
-        Ja, Jb = a["json"], b["json"]
-        assert Jb["meta"]["engine"] == "cpp" and "engine" not in Ja["meta"]
+        g = _build(small_ctx, node)
+        J = g["json"]
+        assert J["meta"]["engine"] == "cpp"
+        shape = g["island_id"].shape
         for k in GRIDS:
-            assert a[k].dtype == b[k].dtype and a[k].shape == b[k].shape, k
-        ca, cb = Ja["constraints"], Jb["constraints"]
+            assert g[k].shape == shape, k
+        cb = J["constraints"]
         for k in ("area_km2", "main_area_km2"):
             assert abs(cb[k]["actual"] - cb[k]["target"]) <= 0.02 * cb[k]["target"]
-        assert len(Ja["islands"]) == len(Jb["islands"])
         assert abs(cb["arable_frac"]["actual"] - cb["arable_frac"]["target"]) < 0.005
         assert cb["has_river"]["actual"] == cb["has_river"]["target"]
-        assert abs(cb["peak_m"]["actual"] - ca["peak_m"]["actual"]) <= 0.1 * ca["peak_m"]["actual"]
-        same = all(np.array_equal(a[k], b[k], equal_nan=True) for k in GRIDS)
-        Ja["meta"].pop("engine", None), Jb["meta"].pop("engine", None)
-        assert same == (Ja == Jb), node                       # 栅格全同则 island.json 也全同（拼装与 Python 版同式）
+        assert cb["peak_m"]["actual"] > cb["height_m"]["actual"]
 
 
-def test_p4_terrain_hydro_backends_identical(small_ctx):
-    """地貌 P4（新岛成拱、多核嵌合、谷收拢、局地雨、湿地）：强开多核之后两个后端的地形与水系逐位相同；局地雨的全群均值 = 行星层的年降水。"""
+def test_p4_terrain_hydro(small_ctx):
+    """地貌 P4（新岛成拱、多核嵌合、谷收拢、局地雨、湿地）：强开多核之后汇聚带上有多核岛、有谷收拢；局地雨的全群均值 = 行星层的年降水。"""
     from skyisle_gen import island as isl
-    from skyisle_gen.island.hydro import build_hydro
-    from skyisle_gen.island.layout import boundary_axis
+    keys = ("multicore_frac", "multicore_kernel_full", "multicore_min_km2")
+    orig = {k: isl.island_config(small_ctx)["terrain"][k] for k in keys}
     sets = ["island.terrain.multicore_frac=1.0", "island.terrain.multicore_kernel_full=0.01", "island.terrain.multicore_min_km2=30.0"]
     isl3, plates = small_ctx.load_npz(3, "islands"), small_ctx.load_npz(3, "plates")
-    conv = [n for n in _nodes(small_ctx, 40) if boundary_axis(plates, float(isl3["lat"][n]), float(isl3["lon"][n]))[2] == 0]
+
+    def btype(n):                               # 板块边界类型（0 = 汇聚），取最近的板块网格格
+        lat, lon = float(isl3["lat"][n]), float(isl3["lon"][n])
+        ii = int(np.clip(np.searchsorted(plates["lats"], lat), 0, plates["lats"].size - 1))
+        jj = int(np.clip(np.searchsorted(plates["lons"], ((lon + 180.0) % 360.0) - 180.0), 0, plates["lons"].size - 1))
+        return int(plates["btype"][ii, jj])
+    conv = [n for n in _nodes(small_ctx, 40) if btype(n) == 0]
     seen_cores = seen_cap = False
     for node in _nodes(small_ctx, 2) + conv[:2]:
-        gs = {}
-        for be in ("python", "cpp"):
-            c = isl.island_config(small_ctx, sets + [f"engine.backend={be}", "engine.threads=4"])
-            inp = isl._node_inputs(small_ctx, node)
-            g = isl.build_terrain(small_ctx, node, c, inp, res_m=300.0, log=lambda *a: None)
-            build_hydro(small_ctx, node, c, g, log=lambda *a: None)
-            gs[be] = g
-        a, b = gs["python"], gs["cpp"]
-        for k in GRIDS + ("rain_mm",):
-            assert np.array_equal(a[k], b[k], equal_nan=True), (node, k)
-        Ja, Jb = a["json"], b["json"]
-        Jb["meta"].pop("engine", None)
-        assert Ja == Jb, node
-        seen_cores |= any(i.get("cores") for i in Ja["islands"])
-        seen_cap |= sum(i.get("captures", 0) for i in Ja["islands"]) > 0
-        land = a["island_id"] >= 0
-        assert abs(float(a["rain_mm"][land].astype(np.float64).mean()) - Ja["hydro"]["precip_mm"]) <= 1.0
-    small_ctx.cfg["engine"]["backend"] = "python"
+        g = _build(small_ctx, node, sets=sets)
+        J = g["json"]
+        seen_cores |= any(i.get("cores") for i in J["islands"])
+        seen_cap |= sum(i.get("captures", 0) for i in J["islands"]) > 0
+        land = g["island_id"] >= 0
+        assert abs(float(g["rain_mm"][land].astype(np.float64).mean()) - J["hydro"]["precip_mm"]) <= 1.0
+    isl.island_config(small_ctx, [f"island.terrain.{k}={v}" for k, v in orig.items()])   # --set 会留在 ctx 上：改回默认
     assert seen_cores and seen_cap
 
 
 def test_cpp_deterministic_and_thread_independent(small_ctx):
     node = _nodes(small_ctx, 1)[0]
-    g1 = _build(small_ctx, node, "cpp", threads=1)
-    g4 = _build(small_ctx, node, "cpp", threads=4)
-    g4b = _build(small_ctx, node, "cpp", threads=4)
+    g1 = _build(small_ctx, node, threads=1)
+    g4 = _build(small_ctx, node, threads=4)
+    g4b = _build(small_ctx, node, threads=4)
     for k in GRIDS:
         assert np.array_equal(g1[k], g4[k], equal_nan=True) and np.array_equal(g4[k], g4b[k], equal_nan=True), k
     assert g1["json"] == g4["json"] and g1["river_lines"] == g4["river_lines"]
 
 
 def test_cpp_generate_passes_checks(small_ctx):
-    """cpp 后端下整条 generate（资源、气候、天气、聚落照旧 Python）的产物照常写出、硬项全过、重跑哈希一致。"""
+    """整条 generate（地形 → 资源 → 四季 → 天气 → 聚落）的产物照常写出、硬项全过、重跑哈希一致。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island.check import evaluate, hash_products
     node = _nodes(small_ctx, 1)[0]
-    s = ["engine.backend=cpp"]
-    out, g = isl.generate(small_ctx, node, res_m=300.0, sets=s, log=lambda *a: None, return_state=True)
+    out, g = isl.generate(small_ctx, node, res_m=300.0, log=lambda *a: None, return_state=True)
     h1 = hash_products(out)
-    isl.generate(small_ctx, node, res_m=300.0, sets=s, log=lambda *a: None)
+    isl.generate(small_ctx, node, res_m=300.0, log=lambda *a: None)
     items = evaluate(g, out, ctx=small_ctx, node=node, c=small_ctx.cfg["island"], det_hashes=(h1, hash_products(out)), daily_years=10)
     bad = [i["id"] for i in items if not i["pass"] and i["hard"]]
     assert not bad, bad
-    small_ctx.cfg["engine"]["backend"] = "python"
-
-
-def test_nearest_fit_matches_numpy():
-    """Dykstra 的越界量在贴线时是 ±1e−15 量级：乘加次序要与 numpy（BLAS 的 ddot / dgemv）一样，否则 v ≤ 0 的判断会翻。"""
-    from skyisle_gen.island.territory import nearest_fit
-    rng = np.random.default_rng(6)
-    for t in range(300):
-        m = int(rng.integers(1, 12))
-        az = rng.uniform(-np.pi, np.pi, m)
-        lim = [{"u": (float(np.sin(a)), float(np.cos(a))), "limit_km": float(rng.uniform(5, 60))} for a in az]
-        sup = rng.uniform(0, 70, m)
-        o, v = nearest_fit(sup, lim)
-        ox, oy, v2 = core.nearest_fit(sup.tolist(), [[L["u"][0], L["u"][1], L["limit_km"]] for L in lim])
-        assert (ox, oy, v2) == (float(o[0]), float(o[1]), float(v)), t

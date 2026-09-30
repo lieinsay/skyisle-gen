@@ -23,11 +23,6 @@ def neg_log_perm(perm_d: np.ndarray) -> np.ndarray:
         return np.where(perm_d > 0, -np.log(np.maximum(perm_d, 1e-300)), np.inf)
 
 
-def mode_weight(cost_m: np.ndarray, L: np.ndarray, mode: str, lam: float) -> np.ndarray:
-    mi = MODES.index(mode)
-    return lam * cost_m[:, mi] + L[:, mi]
-
-
 def load_directed(ctx):
     """读 ⑤⑥ 产物，拼出有向图数组。返回 dict。"""
     pm = ctx.load_npz(5, "perm")

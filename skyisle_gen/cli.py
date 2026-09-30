@@ -1,6 +1,6 @@
 """命令行入口。
 
-skyisle run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 10] [--out out] [--explain] [--backend python|cpp]
+skyisle run   --seed 42 [--config F]... [--set a.b.c=v]... [--upto 10] [--out out] [--explain]   # ①–⑨ 由 C++ 核心算（先 python core/build.py）
 skyisle stage K --seed 42        # 强制从第 K 阶段重算（之前阶段用缓存）
 skyisle viz   <layer> --run out/seed42 [...]
 skyisle probe <node|path|edge|trait> ...
@@ -8,7 +8,6 @@ skyisle check --run out/seed42 [--calibrate]
 skyisle ninegrid --run out/seed42 [--region K]
 skyisle island <节点> --run out/seed42 [--year 0] [--res 100] [--export DIR]   # 第三层岛群生成器（不进管线）
 skyisle island check <节点> | batch --sample 30 | stats | lod [--lod-res 1000,500] [--nodes a,b | --near 节点 --radius km] [--jobs N] [--no-weather]
-skyisle island compare --sample 30 [--jobs N] [--timing [--no-python]]   # 两个后端（python / cpp）的对照；各命令默认 cpp（C++ 核心），加 --backend python 走冻结的参考后端
 skyisle island floats [--jobs N] [--nodes a,b]   # 浮高的全行星统计（只跑布局 + 地形）→ islands/float_stats.json / .npz；不在标定区间退出码 1
 skyisle town site <节点> --site 村037 | synth --terrain 河谷   # 聚落营建器（独立工具，docs/PLAN-TOWN.md）：地形 + 规模 + 风格 → 建筑群
 """
@@ -27,9 +26,6 @@ def _add_common(p):
     p.add_argument("--config", action="append", default=[], help="额外配置文件（可多次）")
     p.add_argument("--set", action="append", default=[], dest="sets", help="a.b.c=value 覆盖")
     p.add_argument("--out", default="out")
-    p.add_argument("--backend", choices=["python", "cpp"], default=None,
-                   help="生成器后端（= --set engine.backend=…）：默认 cpp（①–⑨ 由 C++ 核心算，要先 python core/build.py）；"
-                        "python 是冻结的参考后端（对照用）。两个后端的阶段缓存 key 分开，切后端建议配 --set run.id=… 另放一个目录")
 
 
 def _ctx_from_run(run_dir: str) -> Context:
@@ -85,7 +81,7 @@ def main(argv=None):
     p_pol.add_argument("--top", type=int, default=15)
 
     p_isl = sub.add_parser("island", help="岛群生成器（第三层）：生成 / check / batch")
-    p_isl.add_argument("what", help="节点号，或 check / batch / stats（全量季型统计）/ lod / compare（两个后端对照）/ floats（浮高统计）")
+    p_isl.add_argument("what", help="节点号，或 check / batch / stats（全量季型统计）/ lod / floats（浮高统计）")
     p_isl.add_argument("node", nargs="?", type=int, default=None, help="check 时的节点号")
     p_isl.add_argument("--run", default="out/seed42")
     p_isl.add_argument("--year", type=int, default=0)
@@ -95,17 +91,13 @@ def main(argv=None):
     p_isl.add_argument("--sample", type=int, default=30, help="batch：抽样岛群数")
     p_isl.add_argument("--steps", type=int, default=9, help="只做到第几步（开发用）")
     p_isl.add_argument("--lod-res", default="1000", help="lod：粗版分辨率 m，逗号分隔可多个（按原生分辨率生成再降采样）")
-    p_isl.add_argument("--nodes", default=None, help="lod：只跑这些节点（逗号分隔）")
+    p_isl.add_argument("--nodes", default=None, help="lod / floats：只跑这些节点（逗号分隔）")
     p_isl.add_argument("--near", type=int, default=None, help="lod：只跑这个节点周围 --radius km 内的群")
     p_isl.add_argument("--radius", type=float, default=600.0)
-    p_isl.add_argument("--jobs", type=int, default=0, help="lod：进程数（0 = CPU 数 − 2）")
+    p_isl.add_argument("--jobs", type=int, default=0, help="lod / floats：进程数（0 = CPU 数 − 2）")
     p_isl.add_argument("--force", action="store_true", help="lod：已有的也重跑")
     p_isl.add_argument("--weather", action=argparse.BooleanOptionalAction, default=True,
                        help="lod：顺带出第 --year 年的逐日天气，存进同一个 npz 的 weather_<列> 与 weather_meta（默认开；已有但不带天气或不是这一年的粗版会重跑）")
-    p_isl.add_argument("--backend", choices=["python", "cpp"], default=None,
-                       help="生成器后端（= --set engine.backend=…；默认 cpp，要先 python core/build.py；python = 冻结的参考后端）")
-    p_isl.add_argument("--timing", action="store_true", help="compare：只量整群 generate 的用时（顺序跑，不写产物；python / cpp 1 线程 / cpp 4 线程）")
-    p_isl.add_argument("--no-python", action="store_true", help="compare --timing：不跑 python 后端（它慢）")
 
     from .town.cli import add_parser as _add_town
     _add_town(sub)
@@ -129,8 +121,6 @@ def main(argv=None):
         return run_town(a)
 
     if a.cmd in ("run", "stage"):
-        if a.backend:
-            a.sets = list(a.sets) + [f"engine.backend={a.backend}"]
         cfg = load_config([Path(x) for x in a.config], a.sets)
         force_from = a.k if a.cmd == "stage" else None
         out = pipeline_run(cfg, a.seed, Path(a.out), upto=a.upto,
@@ -165,14 +155,6 @@ def main(argv=None):
         return 0
     if a.cmd == "island":
         from . import island as isl
-        if a.backend:
-            a.sets = list(a.sets) + [f"engine.backend={a.backend}"]
-        if a.what == "compare":
-            from .island.compare import run_compare, run_timing
-            nodes = [int(x) for x in a.nodes.split(",") if x.strip()] if a.nodes else None
-            if a.timing:
-                return run_timing(ctx, sample=a.sample, nodes=nodes, sets=a.sets, python=not a.no_python)
-            return run_compare(ctx, sample=a.sample, jobs=max(1, a.jobs), sets=a.sets, nodes=nodes)
         if a.what == "check":
             from .island.check import run_island_check
             return run_island_check(ctx, a.node, year=a.year, sets=a.sets)
@@ -197,7 +179,7 @@ def main(argv=None):
             res_list = [float(x) for x in a.lod_res.split(",") if x.strip()]
             jobs = a.jobs if a.jobs > 0 else max(1, (os.cpu_count() or 4) - 2)
             if jobs > 1 and not any(s.startswith("engine.threads=") for s in a.sets):
-                a.sets = list(a.sets) + ["engine.threads=1"]      # 多进程时 cpp 后端群内不再开线程
+                a.sets = list(a.sets) + ["engine.threads=1"]      # 多进程时群内不再开线程
             return run_lod(ctx, res_list, select_nodes(ctx, a.nodes, a.near, a.radius), jobs, force=a.force, sets=a.sets, weather=a.weather,
                            year=a.year)
         isl.generate(ctx, int(a.what), year=a.year, res_m=a.res, export=a.export, sets=a.sets, steps=a.steps)

@@ -2,9 +2,8 @@
 
 缓存规则：key_k = sha256(key_{k-1} ‖ config[s0k] ‖ config[shared] ‖ config[skeleton] ‖ seed ‖ STAGE_VERSION[‖ "+cpp"])。
 命中（_meta.json 的 stage_key 相同）则跳过；任一 miss，其后全部重算。
-后端（[engine] backend，行星计划 P6c）：有 C++ 实现的阶段（engine.CPP_STAGES，现为 ①–④）在 cpp 后端下 key 另混入 "+cpp"，
-python 后端的 key 与以前一字不差（旧 run 照旧命中）。两个后端的产物现在逐位相同，仍分开缓存：逐位只在本机验过（换平台可能差一位），
-切后端时要真的重算一遍，也免得拿另一个后端的产物去验 cpp 后端（DESIGN-NOTES 四点二十五）。
+①–⑨ 的 key 固定混入 "+cpp"（engine.CPP_STAGES；沿用 P6c / P6d 时 cpp 后端的 key，Python 参考后端 2026-09-30 删掉以后，
+之前用 cpp 跑的 run 照旧命中；当年 python 后端跑的 run 会重算）。
 """
 from __future__ import annotations
 
@@ -18,7 +17,7 @@ import numpy as np
 
 from . import __version__
 from .config import canonical, dump_toml, section_hash
-from .engine import backend, cpp_key_suffix
+from .engine import cpp_key_suffix
 
 STAGES = [
     (1, "s01_planet"),
@@ -54,7 +53,7 @@ class Context:
         self.seed = seed
         self.out_dir = Path(out_dir)
         self.summaries: dict[str, dict] = {}
-        self.stage_keys: list[str] | None = None   # 管线里由 run() 填：cpp 后端按 key 缓存各步的 C++ 对象（engine.part）
+        self.stage_keys: list[str] | None = None   # 管线里由 run() 填：按 key 缓存各步的 C++ 对象（engine.part）
 
     def stage_dir(self, idx: int) -> Path:
         name = dict(STAGES)[idx]
@@ -149,7 +148,7 @@ def run(cfg: dict, seed: int, out_root: Path, upto: int = 10,
             "summary": summary,
         }
         if cpp_key_suffix(cfg, idx):
-            meta["engine"] = backend(cfg)
+            meta["engine"] = "cpp"
         meta_p.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True, indent=1),
                           encoding="utf-8")
         line = "; ".join(f"{k}={v}" for k, v in summary.items() if not isinstance(v, (dict, list)))

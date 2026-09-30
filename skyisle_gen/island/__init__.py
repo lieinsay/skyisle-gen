@@ -1,19 +1,18 @@
 """岛群生成器（第三层，docs/PLAN-ISLAND.md）：给一个节点号，按行星产物做约束，生成群内布局、岛内地形、水系、四季气候与逐日天气。
 
 按需生成、不进十步管线、不回灌：stages/ 不得 import 本包（tests 有静态断言）。
-随机数只从 rng.entity_rng(seed, ISLAND_STREAM, f"island:{node}:{部件}") 取；天气另加年份键。
+算法全在 C++ 核心里（core/src/island/，行星计划 P6a / P6b；Python 参考版删于 2026-09-30，tag python-reference-final）：
+generate 一次调 _core.generate 算完（island/engine.py 拼回 g 与 island.json），这里读输入、写产物。
+随机数（C++ 的 rng.hpp，与 numpy 逐位一致）按 entity_rng(seed, ISLAND_STREAM, f"island:{node}:{部件}") 派生；天气另加年份键。
 """
 from __future__ import annotations
 
-import math
 import time
 from pathlib import Path
 
 import numpy as np
 
 from ..config import CONFIG_DIR, _deep_merge, apply_sets
-from ..rng import entity_rng
-from ..stages.s03_islands import CLASS_NAMES, CLASS_ZH
 
 ISLAND_STREAM = 21   # 与十步管线的流号 1–10 错开
 
@@ -30,7 +29,7 @@ def island_config(ctx, sets: list[str] | None = None) -> dict:
         apply_sets(tmp, [s for s in sets if s.startswith("island.")])
         cfg = tmp["island"]
     ctx.cfg["island"] = cfg
-    # [engine]（后端开关，engine.py）：同样是 default.toml ← run 的快照 ← --set engine.x=v，不进缓存 key
+    # [engine]（C++ 的线程数）：同样是 default.toml ← run 的快照 ← --set engine.x=v，不进缓存 key
     eng = _deep_merge(full.get("engine", {}), ctx.cfg.get("engine", {}))
     if sets:
         tmp = {"engine": eng}
@@ -38,10 +37,6 @@ def island_config(ctx, sets: list[str] | None = None) -> dict:
         eng = tmp["engine"]
     ctx.cfg["engine"] = eng
     return cfg
-
-
-def _rng(ctx, node: int, part: str):
-    return entity_rng(ctx.seed, ISLAND_STREAM, f"island:{node}:{part}")
 
 
 def _node_inputs(ctx, node: int) -> dict:
@@ -66,246 +61,10 @@ def _node_inputs(ctx, node: int) -> dict:
     return d
 
 
-def _fit_territory(ctx, node: int, c: dict, inp: dict, shapes: list, profiles: list, offsets: list, centers: np.ndarray,
-                   sizes: np.ndarray, elong: np.ndarray, thetas: np.ndarray, res_km: float, axis: float, kernel: float, btype: int) -> dict:
-    """势力范围（territory.py）：照旧摆好的布局若越过与邻群的分界线，就把主岛挪进来（放不下就转走向）、其余岛带约束重摆。
-    没越界时什么都不动（产物逐字节不变）。会就地改 shapes / profiles / offsets 的主岛那一项；返回记录（constrained 时带 centers）。"""
-    from .layout import place_islands, radial_profile
-    from .terrain import island_shape
-    from . import territory as T
-    tc = c.get("territory") or {}
-    lim = T.limits(ctx, node, inp, tc) if tc.get("enabled", True) else []
-    rec = {"neighbours": len(lim), "gap_km": float(tc.get("gap_km", 3.0)), "constrained": False, "lim": lim}
-    if not lim:
-        return rec
-
-    def support(k):
-        mask, _inside, X, Y = shapes[k]
-        return T.mask_support(mask, X - offsets[k][0], Y - offsets[k][1], lim, res_km)   # 相对岛的质心
-
-    sup = [support(k) for k in range(len(shapes))]
-    before = max(T.violation(centers[k], sup[k], lim) for k in range(len(shapes)))
-    if before <= 0.0:
-        return rec
-    # 主岛：原样先试，放得下就只挪；放不下再按 π/turns 转；还不行就一档档拉长（更窄）再转。
-    # 同一档里挑放得下且挪得最少的；哪档都放不下就挑越界最少的（IS-terr 会报出来）
-    turns = max(1, int(tc.get("turns", 8)))
-    stretches = [float(s) for s in tc.get("stretch", [1.0, 1.6, 2.4])]
-    cands = []
-    chosen = None
-    for f in stretches:
-        tier = []
-        for m in range(turns):
-            if f == 1.0 and m == 0:
-                shp, off, prof = shapes[0], offsets[0], profiles[0]
-            else:
-                th = float(thetas[0]) + m * math.pi / turns
-                shp = island_shape(_rng(ctx, node, "shape:0"), float(sizes[0]), res_km, float(elong[0]) * f, th, c["terrain"])
-                off, prof = radial_profile(shp[0], res_km)
-            s0 = T.mask_support(shp[0], shp[2] - off[0], shp[3] - off[1], lim, res_km)
-            o, v = T.nearest_fit(s0, lim)
-            tier.append((f, m, shp, off, prof, s0, o, v))
-            if f == 1.0 and m == 0 and v <= 0.0:
-                break
-        cands += tier
-        ok = [x for x in tier if x[7] <= 0.0]
-        if ok:
-            chosen = min(ok, key=lambda x: float(np.hypot(*x[6])))
-            break
-    if chosen is None:
-        chosen = min(cands, key=lambda x: x[7])
-    f, m, shp, off, prof, s0, o, v = chosen
-    shapes[0], offsets[0], profiles[0] = shp, off, prof
-    sup[0] = s0
-    psup = [T.profile_support(p, lim, res_km) for p in profiles]
-    new_centers, _ = place_islands(_rng(ctx, node, "place"), profiles, sizes, axis, kernel, btype, c["layout"],
-                                   territory={"lim": lim, "support": psup, "main": o,
-                                              "gap_min_km": float(tc.get("inner_gap_min_km", 0.3))})
-    after = max(T.violation(new_centers[k], sup[k], lim) for k in range(len(shapes)))
-    rec.update({"constrained": True, "main_offset_km": [round(float(o[0]), 3), round(float(o[1]), 3)],
-                "main_turn_deg": round(m * 180.0 / turns, 1), "main_stretch": f, "before_km": round(before, 3),
-                "after_km": round(after, 3), "centers": new_centers})
-    return rec
-
-
 def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None, log=print) -> dict:
-    """第 1 步：布局 + 岛形 + 高程。返回群栅格字典 g（height / island_id / cliff / json / islands 列表）。"""
-    from .engine import backend
-    if backend(ctx) == "cpp":
-        from .engine import build_terrain_cpp
-        return build_terrain_cpp(ctx, node, c, inp, res_m=res_m, log=log)
-    from .layout import (boundary_axis, float_offsets, island_count, links, place_islands, radial_profile, relief_targets,
-                         shoreline_gaps, surface_heights, zipf_sizes)
-    from .terrain import age_class, cores_json, island_shape, multicore_spec, sculpt_island
-    from .grid import binary_erode
-
-    lay, ter = c["layout"], c["terrain"]
-    plates = ctx.load_npz(3, "plates")
-    axis, kernel, btype = boundary_axis(plates, inp["lat"], inp["lon"])
-    rng_l = _rng(ctx, node, "layout")
-    n = island_count(rng_l, inp["area_km2"], inp["area_median_km2"], lay)
-    sizes = zipf_sizes(inp["area_km2"], inp["main_area_km2"], n, lay)
-    n = sizes.size
-    surfs = surface_heights(rng_l, n, inp["height_m"], inp["layered"], lay)
-    ages = np.clip(inp["age"] + rng_l.normal(0.0, float(lay["age_jitter"]), n), 0.0, 1.0)
-    ages[0] = inp["age"]
-    elong = rng_l.uniform(1.0, float(ter["elongation_max"]), n)
-    thetas = axis + rng_l.normal(0.0, 0.35 if kernel > 0.3 else 1.2, n)
-    reliefs = relief_targets(_rng(ctx, node, "relief"), sizes, ages, ter)   # 独立随机流：不打乱布局的抽样次序
-    # 浮高（四点二十八）：其余岛整座上下平移 δ（主岛 0），另一条随机流；岸缘下限等地形拟合完再夹
-    fc = c.get("float") or {}
-    float_on = bool(fc.get("enabled", False))
-    floats = float_offsets(_rng(ctx, node, "float"), ages, fc) if float_on else np.zeros(n)
-    keel = inp["keel_clearance_m"]
-
-    res0 = float(res_m or c["res_m"])
-    grid_max = int(c["grid_max"])
-    # 先用圆形剖面粗放一遍估算群外框，选定分辨率（超过 grid_max 就加倍），再按该分辨率生成岛形与正式布局
-    r_eff = 1.2 * np.sqrt(sizes / math.pi)
-    pre_prof = [np.full(72, r) for r in r_eff]
-    pre_c, _ = place_islands(_rng(ctx, node, "place"), pre_prof, sizes, axis, kernel, btype, lay)
-    ext_km = max(float((pre_c[:, 0] + r_eff).max() - (pre_c[:, 0] - r_eff).min()),
-                 float((pre_c[:, 1] + r_eff).max() - (pre_c[:, 1] - r_eff).min())) + 2.0 * float(c["margin_km"])
-    res_km = res0 / 1000.0
-    while ext_km / res_km > 0.95 * grid_max:
-        res_km *= 2.0
-    if res_km * 1000.0 > res0:
-        log(f"  群外框约 {ext_km:.0f} km，超过 {grid_max} 格上限，分辨率取 {res_km * 1000:.0f} m")
-    shapes = []
-    profiles, offsets = [], []
-    for k in range(n):
-        rng_s = _rng(ctx, node, f"shape:{k}")
-        mask, inside, X, Y = island_shape(rng_s, float(sizes[k]), res_km, float(elong[k]), float(thetas[k]), ter)
-        shapes.append((mask, inside, X, Y))
-        ctr, prof = radial_profile(mask, res_km)
-        profiles.append(prof)
-        offsets.append(ctr)
-    centers, pstats = place_islands(_rng(ctx, node, "place"), profiles, sizes, axis, kernel, btype, lay)
-    terr = _fit_territory(ctx, node, c, inp, shapes, profiles, offsets, centers, sizes, elong, thetas, res_km, axis, kernel, btype)
-    terr_lim = terr.pop("lim")
-    if terr["constrained"]:
-        centers = terr.pop("centers")
-    halves = np.array([s[0].shape[0] * res_km / 2.0 for s in shapes])
-    gc = centers - np.array(offsets)          # 各岛局部栅格中心（岛心 = 质心 + 偏移）
-    xmin, xmax = float((gc[:, 0] - halves).min()), float((gc[:, 0] + halves).max())
-    ymin, ymax = float((gc[:, 1] - halves).min()), float((gc[:, 1] + halves).max())
-    res_m_eff = res_km * 1000.0
-
-    # 贴图
-    x0 = math.floor(xmin / res_km) * res_km
-    y0 = math.ceil(ymax / res_km) * res_km
-    W = int(math.ceil((xmax - x0) / res_km)) + 1
-    H = int(math.ceil((y0 - ymin) / res_km)) + 1
-    height = np.full((H, W), np.nan, dtype=np.float64)
-    island_id = np.full((H, W), -1, dtype=np.int16)
-    islands_json = []
-    rims = np.zeros(n)
-    masks_pos = []
-    t0 = time.perf_counter()
-    # 多核嵌合（P4）：每座岛一条随机流 island:<节点>:cores:<岛号>，按面积、岛龄、板块边界定（别的抽样次序不动）
-    specs = [multicore_spec(_rng(ctx, node, f"cores:{k}"), float(sizes[k]), float(ages[k]), kernel, btype, ter) for k in range(n)]
-    for k in range(n):
-        mask, inside, X, Y = shapes[k]
-        m = mask.shape[0]
-        # 局部栅格中心 gc[k] 落到群栅格：左上角格
-        c0 = int(round((gc[k, 0] - (m - 1) / 2.0 * res_km - x0) / res_km))
-        r0 = int(round((y0 - (gc[k, 1] + (m - 1) / 2.0 * res_km)) / res_km))
-        surf = float(surfs[k])
-        keel_k = min(keel, float(ter["keel_surface_frac"]) * surf)
-        rng_t = _rng(ctx, node, f"terrain:{k}")
-        core_out = []
-        h, kind, rim, peak = sculpt_island(rng_t, mask, inside, X, Y, float(ages[k]), float(sizes[k]), res_km, surf,
-                                           float(reliefs[k]), keel_k + float(ter["cliff_min_m"]), k == 0, ter, specs[k], core_out)
-        # 浮高：整座平移（高程、岸缘、峰、台面、岛底一起），在水系、地表、资源、气温、聚落之前——后面按高度算的都读平移后的
-        fl = 0.0
-        if float_on and k > 0:
-            fl, floor = float(floats[k]), float(fc["rim_floor_m"])
-            if fl < 0.0:
-                # 往下的按岸缘离下限的余量缩（余量 ≥ down_max_m 不缩）：低台面的群往下挪得少，岸缘不到下限、也不在下限上堆一摞
-                fl *= min(1.0, max(0.0, (rim - floor) / float(fc["down_max_m"])))
-            fl = max(fl, floor - rim)                                           # 岸缘 + δ ≥ rim_floor_m（兜底）
-            h = h + fl
-            rim, peak, surf, keel_k = rim + fl, peak + fl, surf + fl, keel_k + fl
-        rims[k] = rim
-        # 写入（不覆盖已有岛：布局保证不重叠）
-        sl = (slice(r0, r0 + m), slice(c0, c0 + m))
-        tgt = height[sl]
-        put = mask & np.isnan(tgt)
-        tgt[put] = h[put]
-        island_id[sl][put] = k
-        masks_pos.append((mask & put, r0, c0))
-        ii, jj = np.where(island_id == k)
-        islands_json.append({
-            "id": k, "is_main": k == 0, "area_km2": round(float(put.sum()) * res_km * res_km, 3),
-            "area_target_km2": round(float(sizes[k]), 3),
-            "center_km": [round(float(centers[k, 0]), 3), round(float(centers[k, 1]), 3)],
-            "surface_m": round(surf, 1), "relief_m": round(peak - rim, 1), "relief_target_m": round(float(reliefs[k]), 1),
-            "peak_m": round(peak, 1), "rim_m": round(rim, 1), "keel_m": round(keel_k, 1), "cliff_m": round(rim - keel_k, 1),
-            "float_m": round(fl, 1),
-            "age": round(float(ages[k]), 3), "age_zh": {"young": "新岛", "mid": "中年", "old": "老岛"}[kind],
-            "bbox_cells": [r0, c0, m, m],
-        })
-        if core_out:
-            islands_json[-1]["cores"] = cores_json(core_out, (float(gc[k, 0]), float(gc[k, 1])), fl, res_km, ter)
-    # 裁到陆地外框 + 边距（局部栅格有很大的空白外框）
-    land = island_id >= 0
-    rows, cols = np.where(land.any(axis=1))[0], np.where(land.any(axis=0))[0]
-    mg = int(math.ceil(float(c["margin_km"]) / res_km))
-    r_lo, r_hi = int(max(0, rows[0] - mg)), int(min(H, rows[-1] + mg + 1))
-    c_lo, c_hi = int(max(0, cols[0] - mg)), int(min(W, cols[-1] + mg + 1))
-    height = height[r_lo:r_hi, c_lo:c_hi]
-    island_id = island_id[r_lo:r_hi, c_lo:c_hi]
-    land = island_id >= 0
-    H, W = height.shape
-    x0 += c_lo * res_km
-    y0 -= r_lo * res_km
-    masks_pos = [(m, r0 - r_lo, c0 - c_lo) for m, r0, c0 in masks_pos]
-    for i in islands_json:
-        i["bbox_cells"][0] -= r_lo
-        i["bbox_cells"][1] -= c_lo
-    # 岸线间距 → 短渡（P5 起没有索桥与导水槽）
-    ctr_cells = np.array([[(i["center_km"][0] - x0) / res_km, -(i["center_km"][1] - y0) / res_km] for i in islands_json])
-    radii = np.array([p.max() for p in profiles])
-    gaps = shoreline_gaps(masks_pos, res_km, ctr_cells, radii, float(lay["ferry_max_km"]))
-    lk = links(gaps, rims, n, lay)
-    cliff = land & ~binary_erode(land, int(ter["cliff_cells"]))
-    i0 = islands_json[0]
-    log(f"  地形 {n} 岛 {H}×{W} @ {res_m_eff:.0f} m，{time.perf_counter() - t0:.1f} s；主岛 岸缘 {i0['rim_m']:.0f} → 峰 {i0['peak_m']:.0f} m"
-        f"（起伏 {i0['relief_m']:.0f} / 目标 {i0['relief_target_m']:.0f}）")
-
-    meta = {"node": node, "seed": ctx.seed, "run": ctx.out_dir.name, "lat": inp["lat"], "lon": inp["lon"],
-            "cls": CLASS_NAMES[inp["cls"]], "cls_zh": CLASS_ZH[CLASS_NAMES[inp["cls"]]],
-            "age": inp["age"], "age_zh": {"young": "新岛", "mid": "中年", "old": "老岛"}[age_class(inp["age"], ter)],
-            "layered": inp["layered"], "plate": inp["plate"], "boundary_type": ["汇聚", "离散", "走滑"][btype],
-            "boundary_kernel": round(kernel, 3), "boundary_axis_deg": round(math.degrees(axis), 1), "res_m": res_m_eff,
-            "generator": "skyisle_gen.island", "layer": "第三层（按需生成，不回灌）"}
-    km_per_deg = 2 * math.pi * float(inp["planet"]["radius_km"]) / 360.0
-    raster = {"res_m": res_m_eff, "rows": H, "cols": W, "origin_km": [round(x0, 3), round(y0, 3)],
-              "origin_note": "origin_km = 栅格左上角相对群心（节点经纬度）的平面坐标（km，x 东 y 北）；行 r 列 c 的格心 = origin + ((c+0.5)·res, −(r+0.5)·res)",
-              "km_per_deg_lat": round(km_per_deg, 3), "km_per_deg_lon": round(km_per_deg * math.cos(math.radians(inp["lat"])), 3),
-              "height_note": "height.png 16 位灰度 = 云带顶以上高度 / height_png_scale_m_per_unit；0 = 虚空",
-              "void_value": 0}
-    constraints = {
-        "area_km2": {"target": round(inp["area_km2"], 2), "actual": round(float(land.sum()) * res_km * res_km, 2)},
-        "main_area_km2": {"target": round(inp["main_area_km2"], 2), "actual": islands_json[0]["area_km2"]},
-        "height_m": {"target": round(inp["height_m"], 1), "actual": round(float(np.nanmedian(height[island_id == 0])), 1),
-                     "note": "③ 的 height_m = 主岛台面高度 = 陆地高程中位数（④ 的岛上气温在这个高度）；峰高见 peak_m"},
-        "peak_m": {"actual": round(float(np.nanmax(height[island_id == 0])), 1), "relief_m": islands_json[0]["relief_m"],
-                   "relief_target_m": islands_json[0]["relief_target_m"]},
-        "arable_frac": {"target": round(inp["arable_frac"], 4)},
-        "has_river": {"target": inp["has_river"]},
-        "n_islands": n,
-    }
-    if terr_lim:
-        from .territory import raster_violation
-        terr["violation_km"] = round(raster_violation(height, island_id, raster, terr_lim), 3)
-        terr["note"] = "势力范围（territory.py）：与每个邻群按等效半径分界、各退 gap/2；violation_km ≤ 0 = 没越界（负值是最小余量）"
-    constraints["territory"] = terr
-    J = {"meta": meta, "raster": raster, "constraints": constraints, "islands": islands_json, "links": lk,
-         "layout": {"n_ferries": sum(1 for e in lk if e["kind"] == "ferry"),
-                    "gap_median_km": round(float(np.median([e["gap_km"] for e in lk])), 2) if lk else None}}
-    return {"height": height, "island_id": island_id, "cliff": cliff, "json": J, "rims": rims, "res_km": res_km,
-            "masks_pos": masks_pos, "inp": inp}
+    """第 1 步：布局 + 岛形 + 高程（C++）。返回群栅格字典 g（height / island_id / cliff / json / islands 列表）。只跑地形的工具（floats、粗版）用。"""
+    from .engine import build_terrain_cpp
+    return build_terrain_cpp(ctx, node, c, inp, res_m=res_m, log=log)
 
 
 def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: str | None = None,
@@ -319,31 +78,8 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     t0 = time.perf_counter()
     log(f"[island {node}] 陆地 {inp['area_km2']:.0f} km²（主岛 {inp['main_area_km2']:.0f}）台面 {inp['height_m']:.0f} m 可耕 {inp['arable_frac']:.3f} "
         f"河 {'有' if inp['has_river'] else '无'} 岛龄 {inp['age']:.2f} 降水 {inp['precip']:.2f} 温差 {inp['season_range']:.1f} °C")
-    from .engine import backend
-    if backend(ctx) == "cpp":                  # 行星计划 P6b：整群在 C++ 里算，g 拼回同形；写产物照旧在下面
-        from .engine import generate_cpp
-        g = generate_cpp(ctx, node, c, inp, year=year, res_m=res_m, steps=steps, log=log)
-    else:
-        g = build_terrain(ctx, node, c, inp, res_m=res_m, log=log)
-        timing = {"terrain": time.perf_counter() - t0}
-        if steps >= 2:
-            from .hydro import build_hydro
-            from .resources import build_resources
-            t1 = time.perf_counter()
-            build_hydro(ctx, node, c, g, log=log)
-            timing["hydro"] = time.perf_counter() - t1
-            build_resources(ctx, node, c, g, log=log)
-        g["timing"] = timing
-        if steps >= 3:
-            from .climate import build_climate, daily_curves
-            build_climate(ctx, node, c, g, log=log)
-            g["daily"] = daily_curves(g["climate"], inp, ctx.cfg["s04"]["climate"])
-        if steps >= 4:
-            from .weather import build_weather
-            build_weather(ctx, node, c, g, year=year, log=log)
-        if steps >= 5:
-            from .settle import build_settlements
-            build_settlements(ctx, node, c, g, log=log)
+    from .engine import generate_cpp            # 行星计划 P6b：整群在 C++ 里算，g 拼回同形；写产物在下面
+    g = generate_cpp(ctx, node, c, inp, year=year, res_m=res_m, steps=steps, log=log)
     g["timing"]["generate"] = time.perf_counter() - t0      # 不含写产物（png / 预览图）
     if not write:
         return g

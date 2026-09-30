@@ -90,6 +90,9 @@ def _check_perm_table(name: str, tab: dict) -> None:
 
 
 def validate(cfg: dict) -> None:
+    be = cfg.get("engine", {}).get("backend")
+    if be not in (None, "cpp"):
+        raise ValueError(f"engine.backend = {be!r}：Python 参考后端 2026-09-30 删了（git tag python-reference-final），算法只在 C++ 核心里")
     for bid, b in cfg.get("s05", {}).get("barriers", {}).items():
         if "permeability" in b:
             _check_perm_table(f"s05.barriers.{bid}", b["permeability"])

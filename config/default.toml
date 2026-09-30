@@ -7,10 +7,9 @@
 [run]
 # id = "my-run"        # 缺省为 seed<N>
 
-[engine]               # 生成器后端（docs/PLAN-CORE.md；行星计划 P6）：python 不进缓存 key，cpp 给 ①–⑨ 的阶段 key 加 "+cpp"
-backend = "cpp"        # "cpp"（默认，P6d 起）| "python"（冻结的参考后端，只作对照）；C++ 核心：第三层全部、管线 ①–⑨；⑩ 输出只在 Python。
-                       # 扩展没编（python core/build.py）时 cpp 会报错；那台机器上先用 --backend python。没有 [engine] 段的旧 run 快照按 python 算 key
-threads = 4            # cpp 后端群内各岛并行、⑥ 抽样介数按源并行的线程数（结果与线程数无关）；批跑多进程时设 1
+[engine]               # C++ 核心（docs/PLAN-CORE.md；行星计划 P6）：管线 ①–⑨ 与第三层全部在 C++ 里，⑩ 输出只在 Python；本段不进缓存 key
+threads = 4            # 群内各岛并行、⑥ 抽样介数按源并行的线程数（结果与线程数无关）；批跑多进程时设 1
+                       # 扩展没编（python core/build.py）时报错。Python 参考后端 2026-09-30 删了（tag python-reference-final），backend 键跟着作废
 
 [shared]
 day_range_km = 500.0   # 1 天 = 中性风因子下的航程
@@ -56,7 +55,7 @@ insolation_rel = 1.0
 radius_km = 6371.0
 held_hou_scaling = false      # true：带界随自转率缩放（快转→窄哈德莱圈）
 
-[s01.calendar]                # 历法 ↔ 行星尺度双向自洽（BACKLOG R1；almanac.py；只写 planet.json，不改任何场）
+[s01.calendar]                # 历法 ↔ 行星尺度双向自洽（BACKLOG R1；C++ 的 stage12.cpp derive_calendar；只写 planet.json，不改任何场）
 mode = "calendar_to_orbit"    # calendar_to_orbit：由 季数 × 季长 推公转周期 → 恒星质量 / 光度 / 轨道半径（日照取 insolation_rel）
                               # orbit_to_calendar：由 stellar_mass_msun + semi_major_axis_au 推一年的太阳日数与每季天数（报残差；④ 仍用 insolation_rel）
 seasons = 4                   # 一年四季
@@ -125,7 +124,7 @@ keel_clearance_m = 300.0
 expedition_pairs = 6          # 跨赤道远征边数
 expedition_min_lon_sep_deg = 30.0
 
-[s03.plates]                  # 浮石板块（第三批第 2 步，docs/PLAN-BATCH3.md 5.2；实现在 tectonics.py）
+[s03.plates]                  # 浮石板块（第三批第 2 步，docs/PLAN-BATCH3.md 5.2；实现在 C++ 的 stage3.cpp）
 # docs/02 §九：浮石骨架随洋流汇聚嵌合 → 汇聚边界堆出密度脊与叠层，离散边界拉出空域，走滑错断岛链；
 # 热点链是固定点拖出的线性岛链（年龄单调）。只产出静态格局，不违反原则甲。
 n_plates = 28
@@ -167,7 +166,7 @@ river_capacity_bonus = 0.0
 temp_eq_c = 28.0
 temp_pole_c = -10.0           # 骨架第二版：倾角 34° 下极地年均日照比 20° 时高约七成，极地年均温相应上调（33° 海面年均 ≈ 16.7 °C，地球纬向平均约 17）
 lapse_c_per_km = 6.0
-# 降水 = 上风水汽追踪（第三批第 4 步，moisture.py；决定 2、4）：∂q/∂t + ∇·(q u) = E − P，P = q·ε/τ。
+# 降水 = 上风水汽追踪（第三批第 4 步，C++ 的 stage4.cpp；决定 2、4）：∂q/∂t + ∇·(q u) = E − P，P = q·ε/τ。
 # 雨影与赤道湿 / 副热带干 / 中纬湿 / 极地干都从扰动后的风场算出，原来手画的四个高斯项已退役。
 moisture_res_deg = 2.0        # 求解网格（须为 shared.grid_res_deg 的整数倍；2° 约 3 s，1° 约 8 倍）
 moisture_days = 40.0          # 推进天数（τ 的十倍即接近稳态）
@@ -195,7 +194,7 @@ season_tau_ocean_days = 110.0 # 海洋混合层
 season_alt_continentality = 0.5  # 岛在云带之上、隔着云海与洋面脱耦（类比高原）：陆地性 +k × (峰高 − 岛底间隙)/2000 m（只进岛群产物与 C5，不进 ⑦）
 storm_g_amp = 1.0
 
-[s04.localwind]               # ②b 岛对风的扰动（第三批第 3 步，localwind.py；决定 3：岛是从云带顶立到山顶的浮山）
+[s04.localwind]               # ②b 岛对风的扰动（第三批第 3 步，C++ 的 stage4.cpp；决定 3：岛是从云带顶立到山顶的浮山）
 boundary_layer_m = 3000.0     # 障碍场 O = gain × 墙高/此厚度 × 陆地占比 × 势力范围覆盖，夹 [0,1]
 obstacle_gain = 4.0           # 增益：截面份额本身只有百分之几，乘 4 后密集群岛上空 O ≈ 0.5–0.9（一排悬空的山）
 smooth_deg = 1.5              # 障碍场与陆地覆盖场的高斯抹开 σ
@@ -505,7 +504,7 @@ age_jitter = 0.08             # 群内各岛岛龄围绕节点岛龄的抖动（
 # 旧键 bridge_max_km / bridge_max_dh_m 删掉（旧 run 的快照里留着无害）；岛上跨溪涧的短桥在营建器里，不受影响
 ferry_max_km = 20.0           # 只给岸距 ≤ 此值的岛对连短渡（飞船航线；连通性回退另补）
 
-[island.territory]            # 势力范围（territory.py，DESIGN-NOTES 四点二十二）：邻群的陆地不许叠——与每个邻群按等效半径 √(陆地/π) 分界
+[island.territory]            # 势力范围（C++ 的 territory.cpp，DESIGN-NOTES 四点二十二）：邻群的陆地不许叠——与每个邻群按等效半径 √(陆地/π) 分界
 enabled = true                # 布局照旧摆，越界了才带约束重摆（主岛挪进来、放不下再转走向；其余岛带约束），没越界的群产物不变
 gap_km = 3.0                  # 两群陆地之间至少隔这么远（各退一半）
 reach = 3.0                   # 只看群心距 ≤ reach × (两群等效半径之和) + reach_km 的邻群（更远的碰不上）
@@ -620,7 +619,7 @@ river_big_size = 1500.0
 basin_mouth_km2 = 5.0         # 主岛集水盆地：汇流 ≥ max(此值, basin_mouth_frac × 岛面积) 的出口算河口，其集水区为一个盆地
 basin_mouth_frac = 0.02
 basin_large_frac = 0.10       # 「大盆地」= 集水区 ≥ 岛面积的此比例（R9 推论 2 的素材，≥ 2 个时标出；0.15 时三 seed 没有一个群达标，0.10 约两成）
-# 河道成形（river.py）：水力几何 w = a·Q^b × width_scale、d = c·Q^f × depth_scale，Q = 汇流 × 年降水 × 径流系数 / 一年
+# 河道成形（C++ 的 river.cpp）：水力几何 w = a·Q^b × width_scale、d = c·Q^f × depth_scale，Q = 汇流 × 年降水 × 径流系数 / 一年
 meander_m = 6.0               # 汇流路由面的弯曲噪声幅度（m）与特征尺度（km）：河在缓坡上蜿蜒，不走网格直线；0 = 关
 meander_km = 0.8
 edge_tilt_m_per_km = 1.5      # 路由面朝岸缘的微倾（m/km，最远算到 edge_tilt_km）：岸缘夹平的台面向外排水

@@ -15,13 +15,6 @@ def latlon_to_xyz(lat_deg: np.ndarray, lon_deg: np.ndarray) -> np.ndarray:
     return np.stack([cl * np.cos(lon), cl * np.sin(lon), np.sin(lat)], axis=-1)
 
 
-def xyz_to_latlon(xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    xyz = np.asarray(xyz, dtype=np.float64)
-    lat = np.degrees(np.arcsin(np.clip(xyz[..., 2], -1.0, 1.0)))
-    lon = np.degrees(np.arctan2(xyz[..., 1], xyz[..., 0]))
-    return lat, lon
-
-
 def angdist(a_xyz: np.ndarray, b_xyz: np.ndarray) -> np.ndarray:
     """大圆角距（弧度）。数值稳定（用 arctan2 而非 arccos）。"""
     a = np.asarray(a_xyz, dtype=np.float64)
@@ -30,53 +23,6 @@ def angdist(a_xyz: np.ndarray, b_xyz: np.ndarray) -> np.ndarray:
     sin_d = np.sqrt(np.sum(cross * cross, axis=-1))
     cos_d = np.sum(a * b, axis=-1)
     return np.arctan2(sin_d, cos_d)
-
-
-def initial_bearing(lat1, lon1, lat2, lon2) -> np.ndarray:
-    """从点 1 到点 2 的初始方位角（弧度，0 = 正北，顺时针）。"""
-    p1, l1 = np.radians(lat1), np.radians(lon1)
-    p2, l2 = np.radians(lat2), np.radians(lon2)
-    dl = l2 - l1
-    y = np.sin(dl) * np.cos(p2)
-    x = np.cos(p1) * np.sin(p2) - np.sin(p1) * np.cos(p2) * np.cos(dl)
-    return np.arctan2(y, x)
-
-
-def slerp_points(a_xyz: np.ndarray, b_xyz: np.ndarray, n: int) -> np.ndarray:
-    """大圆插值：a→b 之间 n 个采样点（含端点）。a, b: [E, 3] → [E, n, 3]。"""
-    a = np.asarray(a_xyz, dtype=np.float64)
-    b = np.asarray(b_xyz, dtype=np.float64)
-    omega = angdist(a, b)[..., None]  # [E, 1]
-    t = np.linspace(0.0, 1.0, n)[None, :]  # [1, n]
-    so = np.sin(omega)
-    # 退化（同点）时线性
-    with np.errstate(invalid="ignore", divide="ignore"):
-        wa = np.where(so > 1e-12, np.sin((1 - t) * omega) / so, 1 - t)
-        wb = np.where(so > 1e-12, np.sin(t * omega) / so, t)
-    pts = wa[..., None] * a[:, None, :] + wb[..., None] * b[:, None, :]
-    pts /= np.linalg.norm(pts, axis=-1, keepdims=True)
-    return pts
-
-
-def knn(xyz: np.ndarray, k: int, block: int = 512) -> tuple[np.ndarray, np.ndarray]:
-    """球面 kNN，分块暴力点积。返回 (idx[N,k], ang[N,k])，按 (角距, 索引) 排序（平局取小索引）。"""
-    n = xyz.shape[0]
-    k = min(k, n - 1)
-    idx = np.empty((n, k), dtype=np.int64)
-    ang = np.empty((n, k), dtype=np.float64)
-    for s in range(0, n, block):
-        e = min(s + block, n)
-        dots = xyz[s:e] @ xyz.T  # [b, N]
-        rows = np.arange(s, e)
-        dots[np.arange(e - s), rows] = -2.0  # 排除自身
-        # 取前 k：先 argpartition 再稳定排序（键 = (-dot, index)）
-        part = np.argpartition(-dots, kth=k - 1, axis=1)[:, :k]
-        pd = np.take_along_axis(dots, part, axis=1)
-        order = np.lexsort((part, -pd), axis=1)
-        top = np.take_along_axis(part, order, axis=1)
-        idx[s:e] = top
-        ang[s:e] = np.arccos(np.clip(np.take_along_axis(dots, top, axis=1), -1.0, 1.0))
-    return idx, ang
 
 
 def grid_axes(res_deg: float) -> tuple[np.ndarray, np.ndarray]:

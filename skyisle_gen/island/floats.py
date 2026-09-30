@@ -3,7 +3,7 @@
 每群只跑布局 + 地形（build_terrain：浮高在这一步定，往下的要等地形拟合出岸缘才按余量缩），收全部非主岛的
 浮高 δ、岛龄差（岛龄 − 主岛岛龄）、面积、平移后的岸缘 / 台面（P5 起没有索桥与导水槽，原来每群的索桥数一栏删掉）。
 写 islands/float_stats.json（摘要 + 与标定区间的对照）与 islands/float_stats.npz（逐岛数组）；不在标定区间 → 退出码 1。
-cpp 后端 8000 群 30 进程约一两分钟；python 后端慢十来倍。
+C++ 核心下 8000 群多进程几分钟。
 """
 from __future__ import annotations
 

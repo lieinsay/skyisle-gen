@@ -1,14 +1,11 @@
-"""后端开关与 C++ 桥（docs/PLAN-CORE.md 第六节；行星计划 P6a / P6b）。
+"""第三层的 C++ 桥（docs/PLAN-CORE.md 第六节；行星计划 P6a–P6d）。
 
-`[engine] backend = "python" | "cpp"`：读法与 `[island]` 同（default.toml ← run 的快照 ← `--set engine.backend=cpp`，`--backend` 是简写），
-不进任何阶段的缓存 key。分派点：`island.generate`（P6b：整群进 C++）、`island.build_terrain` 与 `hydro.build_hydro`（粗版、对照、用时仍单独调）、
-`weather.multi_year_stats`（IS-daily 的逐年模拟）、`lod.build_lod` 的块降采样与天气（`--weather`：四季 + 一年逐日天气）、`climate.classify_all`（全量季型）。
-cpp 后端调 `skyisle_gen._core`（core/，`python core/build.py` 编），这里把输入备好、把结果拼回与 Python 版同形的 g：
-数组同 dtype，island.json 同键序、同 round 位数（C++ 只给原始的双精度数与 ASCII 代码，中文由 decode.py 译回）；写产物仍在 Python。
-P6c：cpp 后端下行星层（PlanetView、本群的 NodeInputs）由 C++ 从 ①③④ 的产物对象直接给（_core.planet_view / node_inputs）：
-同一进程里刚用 cpp 后端跑过 ①–④ 就直接用内存里的对象，否则从 npz 读回成 C++ 对象（skyisle_gen/engine.py 的 part）；
-P6d：⑨ 的人口与邦都也由 C++ 从 ⑨ 的产物对象给（_core.node_polity：同进程跑过 cpp 的 ⑨ 就用内存里的，否则从 polity.npz 读回）；
-旧 run 缺字段 / 没有 ⑨ 时退回按 npz 拼 dict 的 P6b 路径（值相同）。
+岛群生成器的算法全在 `skyisle_gen._core`（core/，`python core/build.py` 编；Python 参考版删于 2026-09-30，tag python-reference-final）。
+这里把输入备好、把结果拼回 g：数组定 dtype，island.json 定键序与 round 位数（C++ 只给原始的双精度数与 ASCII 代码，中文由 decode.py 译回）；
+写产物在 Python。入口：`island.generate`（整群）、`island.build_terrain` 与 `hydro.build_hydro`（粗版、浮高统计只跑前两步）、
+`weather.multi_year_stats`（IS-daily 的逐年模拟）、`lod.build_lod` 的块降采样与天气、`climate.classify_all`（全量季型）。
+行星层（PlanetView、本群的 NodeInputs）由 C++ 从 ①③④ 的产物对象直接给（_core.planet_view / node_inputs：同一进程里刚跑过 ①–④ 就用内存里的对象，
+否则从 npz 读回，skyisle_gen/engine.py 的 part）；⑨ 的人口与邦都（_core.node_polity）、⑥ 的邻边（_core.node_routes）同样，没有 ⑨ / ⑥ 的 run 给 None。
 """
 from __future__ import annotations
 
@@ -19,13 +16,7 @@ import numpy as np
 
 AGE_ZH = {"young": "新岛", "mid": "中年", "old": "老岛"}
 KEY_ASCII = {"汇聚": "convergent", "离散": "divergent", "走滑": "transform"}   # [island.resources] ore_gain 的键
-_PLANET_CACHE: dict = {}
 _PLANET_OBJ: dict = {}
-
-
-def backend(ctx) -> str:
-    from ..engine import backend as _backend
-    return _backend(ctx.cfg)
 
 
 def threads(ctx) -> int:
@@ -57,192 +48,67 @@ def flat_config(c: dict) -> dict:
     return {"num": num, "vec": vec}
 
 
-def _grid_spec(lats: np.ndarray, lons: np.ndarray) -> dict:
-    # 与 sphere.grid_interp 同：dlat = lats[1] − lats[0] 按原数组的 dtype 算
-    return {"lat0": float(lats[0]), "dlat": float(lats[1] - lats[0]), "lon0": float(lons[0]), "dlon": float(lons[1] - lons[0]),
-            "nlat": int(lats.size), "nlon": int(lons.size)}
-
-
-def planet_view(ctx) -> dict:
-    """行星层的网格与全体群：板块走向（boundary_axis）、势力范围（territory.limits）、局地风（hydro 的迎风 / 背风）、一年的秒数。按 run 缓存。"""
-    key = str(ctx.out_dir.resolve())
-    pv = _PLANET_CACHE.get(key)
-    if pv is not None:
-        return pv
-    plates = ctx.load_npz(3, "plates")
-    isl = ctx.load_npz(3, "islands")
-    wl = ctx.load_npz(4, "wind_local")
-    planet = ctx.load_json(1, "planet")
-    cal = planet.get("calendar", {})
-    cg = ctx.load_npz(4, "climate_grid")
-    bl = ctx.load_npz(4, "band_local")
-    c4 = ctx.cfg["s04"]["climate"]
-    keys = [str(k) for k in bl["keys"]]
-    from .climate import calendar
-    cal2 = calendar(planet)
-
-    def f64(a):
-        return np.ascontiguousarray(a, dtype=np.float64)
-    pv = {
-        "radius_km": float(planet["radius_km"]),
-        "year_s": float(cal.get("year_days_solar", 336.0)) * float(cal.get("solar_day_hr", 24.0)) * 3600.0,
-        "plates": {**_grid_spec(plates["lats"], plates["lons"]),
-                   "K": np.ascontiguousarray(plates["boundary_kernel"], dtype=np.float64),
-                   "btype": np.ascontiguousarray(plates["btype"], dtype=np.int32),
-                   "lats": np.ascontiguousarray(plates["lats"], dtype=np.float64),
-                   "lons": np.ascontiguousarray(plates["lons"], dtype=np.float64)},
-        "islands": {"lat": np.ascontiguousarray(isl["lat"], dtype=np.float64), "lon": np.ascontiguousarray(isl["lon"], dtype=np.float64),
-                    "area": np.ascontiguousarray(isl["area_km2"], dtype=np.float64)},
-        "wind": {**_grid_spec(wl["lats"], wl["lons"]), "u": np.ascontiguousarray(wl["u"], dtype=np.float64),
-                 "v": np.ascontiguousarray(wl["v"], dtype=np.float64)},
-        # 5.4 四季：④ 的网格（grid_interp 同口径）、局部带界（local_edges 按 float64 插值）、倾角、热惯性常数、历法
-        "climate": {**_grid_spec(cg["lats"], cg["lons"]), "precip": f64(cg["precip"]), "storm": f64(cg["storm"]), "window": f64(cg["window"]),
-                    "continentality": f64(cg["continentality"]) if "continentality" in cg else None,
-                    "band_lons": f64(bl["lons"]), "band_eq_n": f64(bl["edges"][keys.index("eq_n")]), "band_eq_s": f64(bl["edges"][keys.index("eq_s")]),
-                    "tilt_deg": float(planet["axial_tilt_deg"]), "tau_land": float(c4["season_tau_land_days"]),
-                    "tau_ocean": float(c4["season_tau_ocean_days"]), "alt_cont": float(c4.get("season_alt_continentality", 0.0)),
-                    "calendar": {k: cal2[k] for k in ("seasons", "months_per_season", "days_per_month", "days_per_season", "year_days",
-                                                      "day_offset_solstice_n")}},
-    }
-    _PLANET_CACHE.clear()
-    _PLANET_CACHE[key] = pv
-    return pv
-
-
 def _run_key(ctx) -> tuple:
     from ..engine import _stage_key
     return (str(ctx.out_dir.resolve()),) + tuple(_stage_key(ctx, k) for k in (1, 2, 3, 4))
 
 
 def _parts(ctx):
-    """(① PlanetParams, ③ Islands, ④ Climate, 行星层配置对象) 或 None（扩展太旧 / 旧 run 缺字段）。按 run 与 ①–④ 的 key 缓存。"""
-    if not hasattr(core(), "planet_view"):
-        return None
+    """(① PlanetParams, ③ Islands, ④ Climate, 行星层配置对象)，按 run 与 ①–④ 的 key 缓存。"""
     key = ("parts",) + _run_key(ctx)
-    o = _PLANET_OBJ.get(key, False)
-    if o is False:
+    o = _PLANET_OBJ.get(key)
+    if o is None:
         from .. import engine as E
-        try:
-            P, I, C = E.planet_parts(ctx)
-            o = (P, I, C, core().make_config(E.planet_config(ctx.cfg)))
-        except (KeyError, FileNotFoundError, ValueError, TypeError):
-            o = None
+        P, I, C = E.planet_parts(ctx)
+        o = (P, I, C, core().make_config(E.planet_config(ctx.cfg)))
         _PLANET_OBJ[key] = o
     return o
 
 
 def planet_obj(ctx):
-    """第三层的 PlanetView（C++ 对象，按 run 与 ①–④ 的 key 缓存）：P6c 起由 C++ 从 ①③④ 的产物对象直接给（_core.planet_view）；
-    扩展太旧或旧 run 缺字段时退回按 npz 拼 dict（planet_view）再转。各步每次调用不再把行星层网格重新拷进 C++（全量季型要调 8000 次）。"""
-    if not hasattr(core(), "make_planet"):        # 更旧的扩展：各步也收 dict
-        return planet_view(ctx)
+    """第三层的 PlanetView（C++ 对象，由 C++ 从 ①③④ 的产物对象直接给：_core.planet_view；按 run 与 ①–④ 的 key 缓存，
+    全量季型要调 8000 次，不每次把行星层网格重新拷进 C++）。"""
     key = ("view",) + _run_key(ctx)
     o = _PLANET_OBJ.get(key)
     if o is None:
-        parts = _parts(ctx)
-        if parts is not None:
-            P, I, C, pc = parts
-            o = core().planet_view(P, I, C, pc)
-        else:
-            o = core().make_planet(planet_view(ctx))
+        P, I, C, pc = _parts(ctx)
+        o = core().planet_view(P, I, C, pc)
         for k in [k for k in _PLANET_OBJ if k[0] == "view"]:
             del _PLANET_OBJ[k]
         _PLANET_OBJ[key] = o
     return o
 
 
-def _polity_part(ctx):
-    """⑨ 的 C++ 对象（Polity）或 None（扩展太旧 / 这个 run 没有 ⑨）。按 run 与 ⑨ 的 key 缓存；同进程跑过 cpp 的 ⑨ 就是内存里那个。"""
-    if not hasattr(core(), "node_polity"):
-        return None
+def _stage_part(ctx, idx: int, tag: str):
+    """第 idx 步的 C++ 对象，这个 run 没有那一步的产物（只跑到 ④ 的小世界）给 None。按 run 与该步的 key 缓存。"""
     from .. import engine as E
-    key = ("polity",) + _run_key(ctx) + (E._stage_key(ctx, 9),)
+    key = (tag,) + _run_key(ctx) + (E._stage_key(ctx, idx),)
     o = _PLANET_OBJ.get(key, False)
     if o is False:
         try:
-            o = E.part(ctx, 9)
-        except (KeyError, FileNotFoundError, ValueError, TypeError):
+            o = E.part(ctx, idx)
+        except FileNotFoundError:
             o = None
-        for k in [k for k in _PLANET_OBJ if k[0] == "polity"]:
-            del _PLANET_OBJ[k]
-        _PLANET_OBJ[key] = o
-    return o
-
-
-def _routes_part(ctx):
-    """⑥ 的 C++ 对象（Routes）或 None（扩展太旧 / 这个 run 没有 ⑥）。按 run 与 ⑥ 的 key 缓存。"""
-    if not hasattr(core(), "node_routes"):
-        return None
-    from .. import engine as E
-    key = ("routes",) + _run_key(ctx) + (E._stage_key(ctx, 6),)
-    o = _PLANET_OBJ.get(key, False)
-    if o is False:
-        try:
-            o = E.part(ctx, 6)
-        except (KeyError, FileNotFoundError, ValueError, TypeError):
-            o = None
-        for k in [k for k in _PLANET_OBJ if k[0] == "routes"]:
+        for k in [k for k in _PLANET_OBJ if k[0] == tag]:
             del _PLANET_OBJ[k]
         _PLANET_OBJ[key] = o
     return o
 
 
 def inputs(ctx, node: int, inp: dict, full: bool = False) -> dict:
-    """本群的 NodeInputs（dict）：P6c 起由 C++ 从 ③④ 的产物对象直接给（_core.node_inputs，与 _node_inputs 同值）；
-    退回路径按 Python 的 inp 拼。full：再加 ⑨ 的人口与邦都（P6d 起由 C++ 从 ⑨ 的对象给：_core.node_polity，与 polity.npz 的读法同值）
-    与 ⑥ 的邻边（P7 的中转站：_core.node_routes，与 market.node_routes 从 npz 读的同值；没有 ⑥ 给 None）。"""
-    parts = _parts(ctx)
-    if parts is not None:
-        _P, I, C, pc = parts
-        d = core().node_inputs(I, C, int(node), int(ctx.seed), pc)
-    else:
-        d = inputs_py(ctx, node, inp)
+    """本群的 NodeInputs（dict，由 C++ 从 ③④ 的产物对象给：_core.node_inputs，与 _node_inputs 同值）。
+    full：再加 ⑨ 的人口与邦都（_core.node_polity；没有 ⑨ 给 None，C++ 按可耕地 × 人口密度）与 ⑥ 的邻边（P7 的中转站：_core.node_routes；没有 ⑥ 给 None）。"""
+    _P, I, C, pc = _parts(ctx)
+    d = core().node_inputs(I, C, int(node), int(ctx.seed), pc)
     if full:
-        # 聚落：人口只读 ⑨（没有 ⑨ 给 None，C++ 按可耕地 × 人口密度）；本群是不是某邦的都（settle._polity_role）
-        pol = _polity_part(ctx) if parts is not None else None
+        pol = _stage_part(ctx, 9, "polity")
         if pol is not None:
-            d.update(core().node_polity(pol, int(node), parts[3]))
+            d.update(core().node_polity(pol, int(node), pc))
         else:
-            from .settle import _polity_role
-            d["pop"] = _polity_pop(ctx, node)
-            d["people_per_arable_km2"] = float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"])
-            d["capital"] = _polity_role(ctx, node)
-        r6 = _routes_part(ctx) if parts is not None else None
-        if r6 is not None:
-            d["routes"] = core().node_routes(parts[1], r6, int(node))
-        else:
-            from .market import node_routes
-            d["routes"] = node_routes(ctx, node)
+            d.update({"pop": None, "people_per_arable_km2": float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"]), "capital": None})
+        r6 = _stage_part(ctx, 6, "routes")
+        d["routes"] = core().node_routes(I, r6, int(node)) if r6 is not None else None
     return d
-
-
-def inputs_polity_py(ctx, node: int) -> dict:
-    """⑨ 的人口与邦都的 Python 读法（P6b 的路径；测试拿它与 _core.node_polity 对照）。"""
-    from .settle import _polity_role
-    return {"pop": _polity_pop(ctx, node), "people_per_arable_km2": float(ctx.cfg["shared"]["scale"]["people_per_arable_km2"]),
-            "capital": _polity_role(ctx, node)}
-
-
-def inputs_py(ctx, node: int, inp: dict) -> dict:
-    """P6b 的拼法：从 Python 版 _node_inputs 的 inp 拼（退回路径；测试拿它与 C++ 的 node_inputs 对照）。"""
-    d = {"node": int(node), "seed": int(ctx.seed), "lat": inp["lat"], "lon": inp["lon"], "area_km2": inp["area_km2"],
-         "main_area_km2": inp["main_area_km2"], "height_m": inp["height_m"], "age": inp["age"], "layered": bool(inp["layered"]),
-         "keel_clearance_m": inp["keel_clearance_m"], "area_median_km2": inp["area_median_km2"],
-         "precip": inp["precip"], "temp_sea": inp["temp_sea"], "lapse_c_per_km": inp["lapse_c_per_km"],
-         "arable_frac": inp["arable_frac"], "river_size": inp["river_size"], "has_river": bool(inp["has_river"])}
-    for k in ("temp", "storm", "window", "season_range", "season_range_sea", "temp_winter", "temp_summer"):
-        if k in inp:
-            d[k] = float(inp[k])
-    return d
-
-
-def _polity_pop(ctx, node: int):
-    p = ctx.stage_dir(9) / "polity.npz"
-    if p.exists():
-        with np.load(p) as z:
-            if "pop" in z.files and node < z["pop"].size:
-                return float(z["pop"][node])
-    return None
 
 
 # ---------------------------------------------------------------- 第 1 步：布局 + 岛形 + 高程
@@ -450,7 +316,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
 
 # ---------------------------------------------------------------- P6b：整群 generate（地形 → 水系 → 资源 → 四季 → 天气 → 聚落）
 def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float | None = None, steps: int = 9, log=print) -> dict:
-    """整群在 C++ 里算完，拼回与 Python 版同形的 g（写产物照旧由 island.generate 做）。"""
+    """整群在 C++ 里算完，拼回前端要的 g（与删掉的 Python 参考版同形；写产物由 island.generate 做）。"""
     from . import decode
     from .climate import set_climate
     from .resources import resource_summary
@@ -510,14 +376,14 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
 
 
 def _daily_from(D: dict) -> dict:
-    """C++ 的逐日曲线 → 与 climate.daily_curves 同形的 dict。"""
+    """C++ 的逐日曲线 → g["daily"]（day / temp_c / season / 降水 / 风暴 / 窗口 / 风的逐日数组；总览图没有天气时画它）。"""
     return {"day": D["day"].astype(np.int64), "temp_c": D["temp_c"], "season": D["season"].astype(np.int64),
             "precip_rel": D["precip_rel"], "precip_mm": D["precip_mm"], "storm": D["storm"], "window": D["window"],
             "wind_u": D["wind_u"], "wind_v": D["wind_v"]}
 
 
 def _weather_from(Y: dict) -> dict:
-    """C++ 的一年逐日天气 → 与 weather.simulate_year 同形的数组 dict。"""
+    """C++ 的一年逐日天气 → weather.set_weather 要的逐日数组 dict。"""
     return {"day": Y["day"].astype(np.int64), "season": Y["season"].astype(np.int64), "month": Y["month"].astype(np.int64),
             "day_of_month": Y["day_of_month"].astype(np.int64), "type": Y["type"], "precip_mm": Y["precip_mm"], "temp_c": Y["temp_c"],
             "wind_from_deg": Y["wind_from_deg"], "wind_ms": Y["wind_ms"], "sailable": Y["sailable"], "storm_event": Y["storm_event"],
@@ -538,21 +404,21 @@ def weather_year_cpp(ctx, node: int, c: dict, g: dict, year: int = 0, log=print)
 
 
 def weather_years_cpp(ctx, node: int, c: dict, g: dict, years: int):
-    """IS-daily 的多年逐日模拟（weather.multi_year_stats 的 cpp 分支）：返回 P[年, 季]（季降水和）与 F[年, 季]（季雨日比例）。"""
+    """IS-daily 的多年逐日模拟（weather.multi_year_stats 调）：返回 P[年, 季]（季降水和）与 F[年, 季]（季雨日比例）。"""
     P, F, _frd = core().weather_years(inputs(ctx, node, g["inp"]), planet_obj(ctx), flat_config(c), float(g["json"]["islands"][0]["rim_m"]),
                                       int(years))
     return P, F
 
 
 def block_reduce_cpp(g: dict, f: int) -> dict:
-    """粗版的块降采样（lod._block_reduce 的 cpp 分支）。"""
+    """粗版的块降采样（lod.build_lod 调；块怎么归并见 lod 的模块说明）。"""
     return core().block_reduce(np.ascontiguousarray(g["island_id"], dtype=np.int16), np.ascontiguousarray(g["height"], dtype=np.float64),
                                np.ascontiguousarray(g["landcover"], dtype=np.uint8), np.ascontiguousarray(g["river"], dtype=np.uint8),
                                np.ascontiguousarray(g["lake"], dtype=bool), int(f))
 
 
 def climate_only_cpp(ctx, node_inp: dict, c: dict, cfg_obj=None) -> dict:
-    """只算四季（climate.classify_all 的 cpp 分支）。node_inp：classify_all 拼的 inp（lat / lon / height_m / 气候标量 / planet / keel）；
+    """只算四季（climate.classify_all 调）。node_inp：classify_all 拼的 inp（lat / lon / height_m / 气候标量 / planet / keel）；
     cfg_obj：core().make_config(flat_config(c)) 预先转好的（逐群调用时省掉每次展平）。"""
     from . import decode
     d = {"node": 0, "seed": int(ctx.seed), "area_km2": 0.0, "main_area_km2": 0.0, "age": 0.0, "layered": False, "area_median_km2": 1.0,

@@ -155,7 +155,7 @@ def _auto_exag(h: np.ndarray, res_m: float) -> float:
 
 
 def _h32(g: dict) -> np.ndarray:
-    """出图用的高程：float32 口径（与 terrain.npz 同）。两个后端的 float64 高程末位（1e-12 m）有时不同，晕渲的 8 位颜色在渠、河的半透明叠色下偶尔差一个灰度（四点四十）。"""
+    """出图用的高程：float32 口径（与 terrain.npz 同）。C++ 与当年的 Python 参考版、Windows 与 Linux 的 float64 高程末位（1e-12 m）有时不同，晕渲的 8 位颜色在渠、河的半透明叠色下偶尔差一个灰度（四点四十）。"""
     return g["height"].astype(np.float32).astype(np.float64)
 
 

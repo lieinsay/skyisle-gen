@@ -1,13 +1,13 @@
-"""生成器后端开关与行星层的 C++ 桥（docs/PLAN-CORE.md 第六节；行星计划 P6c）。
+"""行星层的 C++ 桥（docs/PLAN-CORE.md 第六节；行星计划 P6c / P6d）。
 
-`[engine] backend = "python" | "cpp"`（P6d 起默认 cpp；python 是冻结的参考后端，只作对照）。管线里有 C++ 实现的阶段
-（P6c：①–④，P6d：⑤–⑨）在 run(ctx) 第一行按它分派；第三层（island/engine.py）的分派也读这里的 backend()。
+①–⑨ 与第三层的算法只在 C++ 核心（skyisle_gen._core）里；Python 参考后端 2026-09-30 删了（git tag python-reference-final，
+DESIGN-NOTES 四点四十二）。各步的 run(ctx) 调 C++、再由共用的 _write 写 npz / json 与摘要；⑩ 输出（九格表、出图）只在 Python。
 
-cpp 后端下各步的产物是 C++ 的不透明对象（_core.PlanetParams / Winds / Islands / Climate / Barriers / Routes / Centers / Diffusion / Polity），
+各步的产物是 C++ 的不透明对象（_core.PlanetParams / Winds / Islands / Climate / Barriers / Routes / Centers / Diffusion / Polity），
 按（run 目录, 阶段, 阶段 key）缓存在进程内：
 下一步直接吃上一步的对象（不经 npz）；缓存里没有（上游命中了磁盘缓存、或换了进程）就从该步的 npz / json 读回（_core.*_from）。
-阶段 key 覆盖了配置、seed、上游与后端，key 相同的对象与磁盘上的产物是同一份，不会拿到旧的。
-第三层（岛群生成器）在 cpp 后端下同样从这里取行星层（planet_parts → _core.planet_view / node_inputs；⑨ 的人口与邦都 → _core.node_polity），
+阶段 key 覆盖了配置、seed 与上游，key 相同的对象与磁盘上的产物是同一份，不会拿到旧的。
+第三层（岛群生成器）同样从这里取行星层（planet_parts → _core.planet_view / node_inputs；⑨ 的人口与邦都 → _core.node_polity），
 不再在 Python 里拼网格、也不再读 polity.npz。
 
 本模块不 import island（stages/ 会 import 它；第三层不回灌的静态断言照旧）。
@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-BACKENDS = ("python", "cpp")
 CPP_STAGES = (1, 2, 3, 4, 5, 6, 7, 8, 9)   # 有 C++ 实现的管线阶段（P6c：①–④，P6d：⑤–⑨）；⑩ 输出（九格表、出图）只在 Python
 PLANET_SECTIONS = ("shared", "skeleton", "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08", "s09",
                    "slots", "traits_manual")   # ⑧ 的槽位表（slots.toml）与手工特征表（traits.toml，可缺）也进 C++
@@ -25,18 +24,11 @@ PLANET_SECTIONS = ("shared", "skeleton", "s01", "s02", "s03", "s04", "s05", "s06
 _PARTS: dict = {}                  # (run 目录, 阶段, 阶段 key) → C++ 对象
 
 
-def backend(cfg: dict) -> str:
-    b = str((cfg.get("engine") or {}).get("backend", "python")).lower()
-    if b not in BACKENDS:
-        raise ValueError(f"[engine] backend 只能是 python 或 cpp，得到 {b!r}")
-    return b
-
-
 def core():
     try:
         from . import _core
-    except ImportError as e:            # 不静默退回 Python：免得以为跑的是 C++
-        raise RuntimeError("[engine] backend = \"cpp\"，但 C++ 扩展 skyisle_gen._core 没编：在仓库根下运行 "
+    except ImportError as e:            # 算法只在 C++ 里（Python 参考后端已删），没编就跑不了
+        raise RuntimeError("C++ 扩展 skyisle_gen._core 没编：在仓库根下运行 "
                            "`python core/build.py`（见 README「C++ 核心库」）") from e
     return _core
 
@@ -74,8 +66,8 @@ def planet_config(cfg: dict) -> dict:
 
 
 def cpp_key_suffix(cfg: dict, idx: int) -> str:
-    """阶段缓存 key 的后端分量：python 后端为空（key 与 P6c 之前一字不差，旧 run 的缓存照旧命中）；cpp 后端下有 C++ 实现的阶段加 "+cpp"。"""
-    return "+cpp" if idx in CPP_STAGES and backend(cfg) == "cpp" else ""
+    """阶段缓存 key 的后端分量：①–⑨ 固定加 "+cpp"（沿用 P6c / P6d 的 cpp 后端 key，删 Python 参考后端前的 cpp run 照旧命中）。"""
+    return "+cpp" if idx in CPP_STAGES else ""
 
 
 # ---------------------------------------------------------------- 各步产物的 C++ 对象：进程内缓存 + 从磁盘读回

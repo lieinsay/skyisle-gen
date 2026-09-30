@@ -1,11 +1,11 @@
-"""行星计划 P6d：行星层 ⑤–⑨ 的 C++ 核心与 numpy 版对照。
+"""行星计划 P6d：行星层 ⑤–⑨ 的 C++ 核心。
 
-扩展没编（python core/build.py）时整个文件跳过。公共件逐位比：Dijkstra（多源、有界、带 inf 的边、平局）、沿树累加、
-Brandes 抽样介数（线程数无关）、弱连通分量、choice(n, size, replace=False, p)；
-小世界上两个后端各跑 ①–⑨，⑤–⑨ 的产物（npz 的全部数组、json、history.md、摘要）逐位相同、缓存 key 分开；
-改几组开关（fast 参考树、lat_band → band 障碍 + 政治性障碍、起源指定中心 + 指定变法之国、手工特征表）再比一次；
-planet_run(upto=9) 一次跑完与逐步相同；从产物读回的 ⑤⑥⑦ 对象接着算 ⑧⑨ 与内存里的同值；
-第三层的人口与邦都由 C++ 从 ⑨ 的对象给，与读 polity.npz 的 Python 版同值，内存里的 ①–⑨ 生成岛群与 python 后端产物逐字节相同。
+扩展没编（python core/build.py）时整个文件跳过。公共件：Dijkstra（多源、有界、带 inf 的边、平局）、Brandes 抽样介数（线程数无关）、
+弱连通分量与前端的 graph.py（探针的路径还用它）逐位比，choice(n, size, replace=False, p) 与 numpy 逐位比；
+小世界上跑 ①–⑨：缓存 key、附庸、planet_run(upto=9) 一次跑完与逐步相同、从产物读回的 ⑤⑥⑦ 对象接着算 ⑧⑨ 与内存里的同值；
+改几组开关（fast 参考树、lat_band → band 障碍 + 政治性障碍、起源指定中心 + 指定变法之国、手工特征表）照样跑通且只动 ⑤ 以后；
+第三层的人口与邦都、⑥ 的邻边由 C++ 从 ⑨ / ⑥ 的对象给（与 npz 对得上），中转站各功能走到，内存里的 ①–⑨ 与 npz 读回的生成岛群逐字节相同。
+Python 参考后端 2026-09-30 删了（git tag python-reference-final），两个后端逐位的对照随之删掉。
 """
 import copy
 import json
@@ -18,8 +18,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 core = pytest.importorskip("skyisle_gen._core", reason="C++ 扩展没编：python core/build.py")
-if not hasattr(core, "planet_stage9"):
-    pytest.skip("C++ 扩展是 P6d 之前编的：python core/build.py", allow_module_level=True)
 
 from skyisle_gen import engine as E                       # noqa: E402
 from skyisle_gen import graph as G                        # noqa: E402
@@ -32,7 +30,7 @@ SMALL = ["s03.islands.n_islands=1600", "s07.regions.n_regions=12", "s07.regions.
 CIV = ("s05_barriers", "s06_routes", "s07_centers", "s08_diffusion", "s09_polity")
 
 
-# ---------------------------------------------------------------- 公共件
+# ---------------------------------------------------------------- 公共件（C++ 的 ⑥ 与前端 graph.py 同值）
 def _graph(seed, n=300, m=1500, inf_frac=0.05, ties=False):
     rng = np.random.default_rng(seed)
     src = rng.integers(0, n, m)
@@ -71,7 +69,7 @@ def test_weak_components_matches():
 
 
 def test_choice_noreplace_p_matches():
-    from skyisle_gen.rng import stage_rng
+    """与 numpy 的 Generator.choice(n, size, replace=False, p) 逐位相同（阶段随机流 = SeedSequence([seed, 阶段])）。"""
     for seed in range(8):
         r = np.random.default_rng(seed)
         n = int(r.integers(20, 3000))
@@ -80,20 +78,20 @@ def test_choice_noreplace_p_matches():
         p /= p.sum()
         size = int(r.integers(1, min(int((p > 0).sum()), 300)))
         a = core.rng_choice_noreplace_p(seed, 6, p, size)
-        b = stage_rng(seed, 6).choice(n, size=size, replace=False, p=p)
+        b = np.random.Generator(np.random.PCG64(np.random.SeedSequence([seed, 6]))).choice(n, size=size, replace=False, p=p)
         assert np.array_equal(a, b), seed
 
 
-# ---------------------------------------------------------------- 小世界：两个后端的 ①–⑨
-def _cfg(backend, sets=(), run_id=None, mutate=None):
-    cfg = load_config(sets=SMALL + list(sets) + [f"run.id={run_id or backend}", f"engine.backend={backend}"])
+# ---------------------------------------------------------------- 小世界：①–⑨
+def _cfg(sets=(), run_id="cpp", mutate=None):
+    cfg = load_config(sets=SMALL + list(sets) + [f"run.id={run_id}"])
     if mutate:
         mutate(cfg)
     return cfg
 
 
-def _run(root, backend, sets=(), run_id=None, mutate=None, upto=9):
-    cfg = _cfg(backend, sets, run_id, mutate)
+def _run(root, sets=(), run_id="cpp", mutate=None, upto=9):
+    cfg = _cfg(sets, run_id, mutate)
     return cfg, run(cfg, 7, root, upto=upto, log=lambda *a: None)
 
 
@@ -120,61 +118,59 @@ def _meta(out: Path, st: str) -> dict:
 
 
 @pytest.fixture(scope="module")
-def two_backends(tmp_path_factory):
+def world(tmp_path_factory):
     root = tmp_path_factory.mktemp("p6d")
     E.clear_cache()
-    cfg_py, out_py = _run(root, "python")
-    cfg_c, out_c = _run(root, "cpp")          # 各步的 C++ 对象留在内存里（engine._PARTS）
-    return cfg_py, out_py, cfg_c, out_c
+    return _run(root)                  # 各步的 C++ 对象留在内存里（engine._PARTS）
 
 
-def test_stage_products_identical(two_backends):
-    _, out_py, _, out_c = two_backends
-    a, b = _products(out_py), _products(out_c)
-    assert a.keys() == b.keys() and len(a) > 30
-    diff = [k for k in a if a[k] != b[k]]
-    assert not diff, diff
+def test_products_present(world):
+    _, out = world
+    a = _products(out)
+    assert len(a) > 30
+    for f in ("s09_polity/polity.npz/state", "s09_polity/polities.json", "s09_polity/history.md", "s08_diffusion/fields.npz/share"):
+        assert f in a, f
 
 
-def test_vassals_found(two_backends):
+def test_vassals_found(world):
     """附庸判定按邦号查都城间距离（原先拿都城节点号查，附庸几乎为零）；overlord 与 vassals 互相对得上。"""
-    _, out_py, _, out_c = two_backends
-    for out in (out_py, out_c):
-        pol = json.loads((out / "s09_polity" / "polities.json").read_text(encoding="utf-8"))["polities"]
-        vassal = {x["id"]: x["overlord"] for x in pol if x.get("overlord", -1) >= 0}
-        assert len(vassal) >= 3, len(vassal)
-        by_id = {x["id"]: x for x in pol}
-        for s, t in vassal.items():
-            assert s in by_id[t]["vassals"]
+    _, out = world
+    pol = json.loads((out / "s09_polity" / "polities.json").read_text(encoding="utf-8"))["polities"]
+    vassal = {x["id"]: x["overlord"] for x in pol if x.get("overlord", -1) >= 0}
+    assert len(vassal) >= 3, len(vassal)
+    by_id = {x["id"]: x for x in pol}
+    for s, t in vassal.items():
+        assert s in by_id[t]["vassals"]
 
 
-def test_cache_keys_split_by_backend(two_backends):
-    cfg_py, out_py, _, out_c = two_backends
+def test_cache_keys(world):
+    """①–⑨ 的 key 固定混入 "+cpp"、与 [engine] 段无关（没有 [engine] 段、旧的 backend = "cpp" 都一样）。"""
+    cfg, out = world
     for _idx, st in STAGES[:9]:
-        mp, mc = _meta(out_py, st), _meta(out_c, st)
-        assert mp["stage_key"] != mc["stage_key"], st
-        assert "engine" not in mp and mc["engine"] == "cpp"
-    cfg0 = copy.deepcopy(cfg_py)
-    cfg0.pop("engine", None)                   # 没有 [engine] 段的旧配置 = python：key 一字不差
-    assert _stage_key_chain(cfg0, 7) == _stage_key_chain(cfg_py, 7)
+        assert _meta(out, st)["engine"] == "cpp", st
+    keys = _stage_key_chain(cfg, 7)
+    cfg0 = copy.deepcopy(cfg)
+    cfg0.pop("engine", None)
+    assert _stage_key_chain(cfg0, 7) == keys
+    assert [_meta(out, st)["stage_key"] for _i, st in STAGES[:9]] == keys[:9]
 
 
-def test_planet_run_upto9_equals_stagewise(two_backends):
-    cfg_py, _, _, out_c = two_backends
-    pc = core.make_config(E.planet_config(cfg_py))
+def test_planet_run_upto9_equals_stagewise(world):
+    cfg, out = world
+    pc = core.make_config(E.planet_config(cfg))
     objs = core.planet_run(pc, 7, upto=9, threads=3)
     assert len(objs) == 9
     B, R, Ce, D, Pol = objs[4:]
-    with np.load(out_c / "s05_barriers" / "perm.npz") as z:
+    with np.load(out / "s05_barriers" / "perm.npz") as z:
         assert np.array_equal(core.barriers_arrays(B)["perm"], z["perm"])
-    with np.load(out_c / "s06_routes" / "routes.npz") as z:
+    with np.load(out / "s06_routes" / "routes.npz") as z:
         ra = core.routes_arrays(R)
         assert np.array_equal(ra["cost_m"], z["cost_m"]) and np.array_equal(ra["flow"].astype(np.float32), z["flow"])
-    with np.load(out_c / "s07_centers" / "prehist.npz") as z:
+    with np.load(out / "s07_centers" / "prehist.npz") as z:
         assert np.array_equal(core.centers_arrays(Ce)["dist_pre"], z["dist_pre"])
-    with np.load(out_c / "s08_diffusion" / "fields.npz") as z:
+    with np.load(out / "s08_diffusion" / "fields.npz") as z:
         assert np.array_equal(core.diffusion_arrays(D)["share"].astype(np.float32), z["share"])
-    with np.load(out_c / "s09_polity" / "polity.npz") as z:
+    with np.load(out / "s09_polity" / "polity.npz") as z:
         pa = core.polity_arrays(Pol)
         for k in ("state", "polity", "fief", "realm", "capital"):
             assert np.array_equal(pa[k], z[k]), k
@@ -185,20 +181,20 @@ def test_planet_run_upto9_equals_stagewise(two_backends):
     assert core.planet_run(pc, 7)[3] is not None and len(core.planet_run(pc, 7)) == 4   # 默认仍是 P6c 的 ①–④
 
 
-def test_loaded_parts_equal_memory(two_backends):
+def test_loaded_parts_equal_memory(world):
     """⑤⑥⑦ 从 npz / json 读回的 C++ 对象接着算 ⑧⑨，与一路在内存里算的同值（缓存命中后换进程的路径）。"""
-    _, _, cfg_c, out_c = two_backends
-    ctx = Context(cfg_c, 7, out_c)
-    pc = core.make_config(E.planet_config(cfg_c))
+    cfg, out = world
+    ctx = Context(cfg, 7, out)
+    pc = core.make_config(E.planet_config(cfg))
     E.clear_cache()
     P, I, C = E.part(ctx, 1), E.part(ctx, 3), E.part(ctx, 4)
     B, R, Ce = E.part(ctx, 5), E.part(ctx, 6), E.part(ctx, 7)
     d = core.diffusion_arrays(core.planet_stage8(pc, 7, I, B, R, Ce))
-    with np.load(out_c / "s08_diffusion" / "fields.npz") as z:
+    with np.load(out / "s08_diffusion" / "fields.npz") as z:
         for k in ("reach", "share", "strength"):
             assert np.array_equal(d[k].astype(np.float32), z[k]), k
     pa = core.polity_arrays(core.planet_stage9(pc, I, C, B, R, Ce))
-    with np.load(out_c / "s09_polity" / "polity.npz") as z:
+    with np.load(out / "s09_polity" / "polity.npz") as z:
         for k in ("state", "polity", "kind", "fief", "realm", "circle", "capital"):
             assert np.array_equal(pa[k], z[k]), k
         for k in ("pop", "control", "dist_cap", "pop_state"):
@@ -227,107 +223,115 @@ def _manual_traits(cfg):
         {"id": "m4", "slot": "white_hemp", "origin": 100, "d_half_days": 7.5, "resistance": 0.3}]}
 
 
-@pytest.mark.parametrize("name,sets,mutate", [
-    ("fast", ["s08.fast=true"], None),
-    ("band_political", [], _band_and_political),
-    ("origin_reformer", ["s07.centers.origin=north_west", "s09.polity.reformer_capital=5", "s09.polity.active_fronts=3"], None),
-    ("manual_traits", [], _manual_traits),
+@pytest.mark.parametrize("name,sets,mutate,first", [
+    ("fast", ["s08.fast=true"], None, "s08_diffusion"),
+    ("band_political", [], _band_and_political, "s05_barriers"),
+    ("origin_reformer", ["s07.centers.origin=north_west", "s09.polity.reformer_capital=5", "s09.polity.active_fronts=3"], None, "s07_centers"),
+    ("manual_traits", [], _manual_traits, "s08_diffusion"),
 ])
-def test_variants_identical(tmp_path, name, sets, mutate):
-    _, a = _run(tmp_path, "python", sets, "py", mutate)
-    _, b = _run(tmp_path, "cpp", sets, "cc", mutate)
-    pa, pb = _products(a), _products(b)
-    assert pa.keys() == pb.keys()
-    diff = [k for k in pa if pa[k] != pb[k]]
-    assert not diff, (name, diff)
+def test_variants(world, tmp_path, name, sets, mutate, first):
+    """改开关：照样跑通到 ⑨，改动从该改的那一步起才出现（前面的步产物不变）。"""
+    _, base = world
+    _, out = _run(tmp_path, sets, "var", mutate)
+    pa, pb = _products(base), _products(out)
+    assert pa.keys() - pb.keys() <= {"s08_diffusion/reflect.json"} and pb.keys() <= pa.keys()
+    diff = sorted({k.split("/")[0] for k in pa if pa[k] != pb.get(k)})
+    assert diff and diff[0] == first, (name, diff)
     if name == "manual_traits":
-        assert not (a / "s08_diffusion" / "reflect.json").exists() and not (b / "s08_diffusion" / "reflect.json").exists()
+        assert not (out / "s08_diffusion" / "reflect.json").exists()
+        tr = json.loads((out / "s08_diffusion" / "traits.resolved.json").read_text(encoding="utf-8"))
+        ids = [t["id"] for t in (tr["traits"] if isinstance(tr, dict) else tr)]
+        assert ids == ["m1", "m2", "m3", "m4"], ids
 
 
-# ---------------------------------------------------------------- 第三层：人口与邦都从 C++ 的 ⑨ 给
-def test_island_polity_inputs_from_cpp(two_backends):
+# ---------------------------------------------------------------- 第三层：人口与邦都、⑥ 的邻边从 C++ 的对象给
+def test_island_polity_inputs_from_cpp(world):
+    """⑨ 的人口与邦都（_core.node_polity）与 polity.npz 对得上：人口 = pop[节点]；是邦都才有 capital，邦人口 = 本邦各节点之和。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island import engine as IE
-    _, out_py, _, _ = two_backends
-    cfg = _cfg("python")
-    ctx = Context(cfg, 7, out_py)
-    isl.island_config(ctx, ["engine.backend=cpp"])
+    cfg, out = world
+    ctx = Context(copy.deepcopy(cfg), 7, out)
+    isl.island_config(ctx)
     E.clear_cache()
     IE._PLANET_OBJ.clear()
-    assert IE._polity_part(ctx) is not None
-    with np.load(out_py / "s09_polity" / "polity.npz") as z:
-        caps, n = z["capital"], z["pop"].size
+    with np.load(out / "s09_polity" / "polity.npz") as z:
+        caps, pop, state = z["capital"], z["pop"].astype(np.float64), z["state"]
+    reformer = (json.loads((out / "s09_polity" / "polities.json").read_text(encoding="utf-8")).get("reformer") or {})
+    n = pop.size
     nodes = sorted(set(caps.tolist()) | set(range(0, n, 53)) | {n - 1})
+    seen_cap = 0
     for node in nodes:
-        inp = isl._node_inputs(ctx, node)
-        a = IE.inputs(ctx, node, inp, full=True)
-        b = IE.inputs_polity_py(ctx, node)
-        assert {k: a[k] for k in b} == b, node
+        d = IE.inputs(ctx, node, isl._node_inputs(ctx, node), full=True)
+        assert d["pop"] == pytest.approx(float(pop[node]), rel=1e-6), node
+        st = int(state[node])
+        is_cap = st >= 0 and int(caps[st]) == node
+        assert (d["capital"] is not None) == is_cap, node
+        if is_cap:
+            seen_cap += 1
+            assert d["capital"]["state"] == st
+            assert d["capital"]["state_pop"] == pytest.approx(float(pop[state == st].sum()), rel=1e-5)
+            assert isinstance(d["capital"]["reformer"], bool)
+    assert seen_cap >= 3
+    assert any(IE.inputs(ctx, int(c), isl._node_inputs(ctx, int(c)), full=True)["capital"]["reformer"] for c in caps) == bool(reformer)
 
 
-def test_island_routes_inputs_from_cpp(two_backends):
-    """P7：第三层的 ⑥ 邻边（中转站读它）由 C++ 从 ⑥ 的对象给（_core.node_routes），与 market.node_routes 从 routes.npz / hubs.json / cand_edges.npz 读的同值。"""
+def test_island_routes_inputs_from_cpp(world):
+    """P7：第三层的 ⑥ 邻边（中转站读它，_core.node_routes）：邻群 = ③ 的候选边上的邻居，枢纽的标记与 hubs.json 对得上，成本、流量为正。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island import engine as IE
-    from skyisle_gen.island.market import node_routes
-    _, out_py, _, _ = two_backends
-    cfg = _cfg("python")
-    ctx = Context(cfg, 7, out_py)
-    isl.island_config(ctx, ["engine.backend=cpp"])
+    cfg, out = world
+    ctx = Context(copy.deepcopy(cfg), 7, out)
+    isl.island_config(ctx)
     E.clear_cache()
     IE._PLANET_OBJ.clear()
-    assert IE._routes_part(ctx) is not None
-    hubs = [h["node"] for h in json.loads((out_py / "s06_routes" / "hubs.json").read_text(encoding="utf-8"))["hubs"]]
+    hubs = {h["node"] for h in json.loads((out / "s06_routes" / "hubs.json").read_text(encoding="utf-8"))["hubs"]}
+    with np.load(out / "s03_islands" / "cand_edges.npz") as ce:
+        src, dst = ce["src"], ce["dst"]
     n = ctx.load_npz(3, "islands")["lat"].size
-    nodes = sorted(set(hubs[:10]) | set(range(0, n, 97)) | {n - 1})
+    nodes = sorted(set(sorted(hubs)[:10]) | set(range(0, n, 97)) | {n - 1})
     seen_hub = False
     for node in nodes:
-        inp = isl._node_inputs(ctx, node)
-        a = IE.inputs(ctx, node, inp, full=True)["routes"]
-        b = node_routes(ctx, node)
-        assert a == b, node
-        seen_hub |= b["hub"]
-        assert b["edges"] and all(e["flow_in"] >= 0 and e["cost_out"] > 0 for e in b["edges"])
+        r = IE.inputs(ctx, node, isl._node_inputs(ctx, node), full=True)["routes"]
+        nb = sorted(int(b) if a == node else int(a) for a, b in zip(src.tolist(), dst.tolist()) if node in (a, b))
+        assert sorted(e["node"] for e in r["edges"]) == nb, node
+        assert r["hub"] == (node in hubs) and all(e["hub"] == (e["node"] in hubs) for e in r["edges"])
+        seen_hub |= r["hub"]
+        assert r["edges"] and all(e["flow_in"] >= 0 and e["cost_out"] > 0 and -np.pi <= e["bearing"] <= np.pi for e in r["edges"])
     assert seen_hub
 
 
-def test_island_generate_relays_identical(two_backends, tmp_path):
-    """P7：⑥ 的枢纽群（群间的换船）与邻边的口子（关卡、过夜、候风、避风）：放低门槛让各种功能都出来，两个后端的整套产物逐字节相同，
-    中转站的户从非农户里出（SET-pop 照旧）。"""
+def _island_products(d: Path) -> dict:
+    res = {}
+    for p in sorted(d.iterdir()):
+        if p.name == "island.json":
+            J = json.loads(p.read_text(encoding="utf-8"))
+            J["meta"].pop("seconds", None)
+            res[p.name] = json.dumps(J, sort_keys=True, ensure_ascii=False)
+        elif p.suffix in (".npz", ".png", ".csv", ".json"):
+            res[p.name] = p.read_bytes()
+    return res
+
+
+def test_island_generate_relays(world, tmp_path):
+    """P7：⑥ 的枢纽群（群间的换船）与邻边的口子（关卡、过夜、候风、避风）：放低门槛让各种功能都出来，
+    中转站的户从非农户里出（户数各项加起来 = 总户数）。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island import engine as IE
-    _, out_py, _, _ = two_backends
-    cfg = _cfg("python")
-    ctx = Context(cfg, 7, out_py)
+    cfg, out = world
+    ctx = Context(copy.deepcopy(cfg), 7, out)
     E.clear_cache()
     IE._PLANET_OBJ.clear()
-    hubs = [h["node"] for h in json.loads((out_py / "s06_routes" / "hubs.json").read_text(encoding="utf-8"))["hubs"]]
+    hubs = [h["node"] for h in json.loads((out / "s06_routes" / "hubs.json").read_text(encoding="utf-8"))["hubs"]]
     area = ctx.load_npz(3, "islands")["area_km2"]
     ok = [h for h in hubs if 300.0 < float(area[h]) < 4000.0]
     node = ok[len(ok) // 2] if ok else hubs[0]
+    keys = ("relay_flow_min", "relay_storm_min", "relay_overnight_days", "relay_headwind_ratio")
+    orig = {k: isl.island_config(ctx)["market"][k] for k in keys}
     sets = ["island.market.relay_flow_min=1.0", "island.market.relay_storm_min=0.0", "island.market.relay_overnight_days=0.0",
             "island.market.relay_headwind_ratio=0.5"]
-
-    def products(d):
-        res = {}
-        for p in sorted(d.iterdir()):
-            if p.name == "island.json":
-                J = json.loads(p.read_text(encoding="utf-8"))
-                J["meta"].pop("seconds", None)
-                J["meta"].pop("engine", None)
-                res[p.name] = json.dumps(J, sort_keys=True, ensure_ascii=False)
-            elif p.suffix in (".npz", ".png", ".csv", ".json"):
-                res[p.name] = p.read_bytes()
-        return res
-    outs = {}
-    for b in ("python", "cpp"):
-        o = isl.generate(ctx, node, res_m=300.0, sets=[f"engine.backend={b}"] + sets, log=lambda *a: None, out_root=tmp_path / b)
-        outs[b] = products(o)
-    isl.island_config(ctx, ["island.market.relay_flow_min=100.0", "island.market.relay_storm_min=0.15", "island.market.relay_overnight_days=0.4",
-                            "island.market.relay_headwind_ratio=1.5"])
-    assert outs["python"].keys() == outs["cpp"].keys()
-    assert [k for k in outs["python"] if outs["python"][k] != outs["cpp"][k]] == []
-    S = json.loads(outs["cpp"]["settlements.json"])
+    P = _island_products(isl.generate(ctx, node, res_m=300.0, sets=sets, log=lambda *a: None, out_root=tmp_path / "a"))
+    isl.island_config(ctx, [f"island.market.{k}={v}" for k, v in orig.items()])   # --set 会留在 ctx 上：改回默认
+    S = json.loads(P["settlements.json"])
     funcs = {f for r in S["relays"] for f in r["functions"]}
     assert {"关卡", "过夜", "候风", "避风", "换船"} <= funcs, funcs
     assert S["households_in_relays"] == sum(r["households"] for r in S["relays"]) > 0
@@ -335,40 +339,28 @@ def test_island_generate_relays_identical(two_backends, tmp_path):
             + S["households_in_relays"] == S["households"])
 
 
-def test_island_generate_in_memory_world(two_backends, tmp_path):
-    """同一进程里 cpp 后端跑过 ①–⑨：第三层直接用内存里的 C++ 对象（含 ⑨ 的人口与邦都），整群产物与 python 后端逐字节相同。"""
+def test_island_generate_in_memory_world(world, tmp_path):
+    """同一进程里跑过 ①–⑨：第三层直接用内存里的 C++ 对象（含 ⑨ 的人口与邦都）；清掉进程内缓存后从 npz 读回，生成的岛群逐字节相同。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island import engine as IE
-    _, _, cfg_c, out_c = two_backends
+    _, out = world
     E.clear_cache()
     IE._PLANET_OBJ.clear()
-    cfg = _cfg("cpp")
-    run(cfg, 7, out_c.parent, upto=9, force_from=1, log=lambda *a: None)
-    run_dir = str(out_c.resolve())
-    keys = {i: _meta(out_c, st)["stage_key"] for i, st in STAGES[:9]}
+    cfg = _cfg()
+    run(cfg, 7, out.parent, upto=9, force_from=1, log=lambda *a: None)
+    run_dir = str(out.resolve())
+    keys = {i: _meta(out, st)["stage_key"] for i, st in STAGES[:9]}
     assert all((run_dir, i, keys[i]) in E._PARTS for i in range(1, 10))
-    ctx = Context(cfg, 7, out_c)
-    with np.load(out_c / "s09_polity" / "polity.npz") as z:
+    ctx = Context(cfg, 7, out)
+    with np.load(out / "s09_polity" / "polity.npz") as z:
         caps = z["capital"]
     area = ctx.load_npz(3, "islands")["area_km2"]
     node = int(caps[np.argsort(area[caps])[len(caps) // 2]])      # 中等大小的邦都（有城、主家候选）
-
-    def products(d):
-        res = {}
-        for p in sorted(d.iterdir()):
-            if p.name == "island.json":
-                J = json.loads(p.read_text(encoding="utf-8"))
-                J["meta"].pop("seconds", None)
-                J["meta"].pop("engine", None)
-                res[p.name] = json.dumps(J, sort_keys=True, ensure_ascii=False)
-            elif p.suffix in (".npz", ".png", ".csv", ".json"):
-                res[p.name] = p.read_bytes()
-        return res
-    outs = {}
-    for b in ("python", "cpp"):
-        o = isl.generate(ctx, node, res_m=300.0, sets=[f"engine.backend={b}"], log=lambda *a: None, out_root=tmp_path / b)
-        outs[b] = products(o)
-    assert outs["python"].keys() == outs["cpp"].keys()
-    assert [k for k in outs["python"] if outs["python"][k] != outs["cpp"][k]] == []
-    J = json.loads(outs["cpp"]["island.json"])
+    a = _island_products(isl.generate(ctx, node, res_m=300.0, log=lambda *a: None, out_root=tmp_path / "mem"))
+    E.clear_cache()
+    IE._PLANET_OBJ.clear()
+    b = _island_products(isl.generate(Context(_cfg(), 7, out), node, res_m=300.0, log=lambda *a: None, out_root=tmp_path / "disk"))
+    assert a.keys() == b.keys()
+    assert [k for k in a if a[k] != b[k]] == []
+    J = json.loads(a["island.json"])
     assert J["settlements"]["city"] is not None          # 邦都：人口与邦都确实从 ⑨ 来了（有都与城）

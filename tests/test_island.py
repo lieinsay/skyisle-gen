@@ -1,7 +1,10 @@
-"""岛群生成器（第三层，docs/PLAN-ISLAND.md）：静态隔离断言、确定性、约束一致性。小世界只跑到 ④。"""
+"""岛群生成器（第三层，docs/PLAN-ISLAND.md）：确定性、约束一致性。小世界只跑到 ④。
+
+算法只在 C++ 核心里（Python 参考后端 2026-09-30 删了），扩展没编（python core/build.py）时整个文件跳过；
+静态隔离断言（管线不得 import 岛群生成器）在 test_core，没编也跑。
+"""
 import hashlib
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -10,25 +13,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from skyisle_gen.config import load_config
-from skyisle_gen.pipeline import Context, run
+core = pytest.importorskip("skyisle_gen._core", reason="C++ 扩展没编：python core/build.py")
 
-PKG = Path(__file__).resolve().parent.parent / "skyisle_gen"
+from skyisle_gen.config import load_config          # noqa: E402
+from skyisle_gen.pipeline import Context, run        # noqa: E402
+
 SMALL = ["s03.islands.n_islands=1600"]
 STEPS = 5   # 开发中：已实现到第几步
-
-
-# ---------------- IS-iso：管线不得读岛群生成器（第三层不回灌） ----------------
-def test_stages_do_not_import_island():
-    for f in sorted((PKG / "stages").glob("*.py")) + [PKG / "check.py", PKG / "ninegrid.py", PKG / "polity.py", PKG / "culture.py"]:
-        text = f.read_text(encoding="utf-8")
-        assert not re.search(r"^\s*(from|import)\s+\.*\s*(skyisle_gen\.)?island\b", text, re.M), f"{f.name} import 了岛群生成器"
-        assert "island_config" not in text and "build_terrain" not in text, f"{f.name} 用了岛群生成器"
-
-
-def test_island_config_section_present():
-    cfg = load_config()
-    assert "island" in cfg and "layout" in cfg["island"] and "terrain" in cfg["island"]
 
 
 @pytest.fixture(scope="module")
@@ -360,27 +351,25 @@ def test_resources_from_the_seafloor(small_ctx, tmp_path):
 
 
 def test_shape_area_and_single_component():
-    from skyisle_gen.island.terrain import island_shape
-    from skyisle_gen.island.grid import label_components
-    cfg = load_config()["island"]["terrain"]
-    rng = np.random.default_rng(3)
+    """岛形（C++ 的 island_shape）：面积二分反解到目标，一座岛一个连通块。"""
+    from skyisle_gen.island.engine import flat_config
+    c = flat_config(load_config()["island"])
     for area in (0.5, 12.0, 400.0):
-        mask, inside, X, Y = island_shape(rng, area, 0.1, 1.6, 0.4, cfg)
+        mask, inside, xs = core.island_shape(3, f"island:3:shape:{int(area)}", area, 0.1, 1.6, 0.4, c)
         cells = mask.sum() * 0.01
         assert abs(cells - area) <= max(0.01, 0.01 * area) + 0.01
-        _, n = label_components(mask)
+        _, n = core.label_components(mask, 4)
         assert n == 1
 
 
 def test_label_components_runs():
-    from skyisle_gen.island.grid import label_components
     m = np.zeros((6, 6), dtype=bool)
     m[0, 0:3] = True
     m[1, 2] = True
     m[3, 4] = True
     m[4, 5] = True
-    lab4, n4 = label_components(m, 4)
-    lab8, n8 = label_components(m, 8)
+    lab4, n4 = core.label_components(m, 4)
+    lab8, n8 = core.label_components(m, 8)
     assert n4 == 3 and n8 == 2
     assert lab4[0, 0] == lab4[1, 2]
     assert lab8[3, 4] == lab8[4, 5] and lab4[3, 4] != lab4[4, 5]
@@ -388,26 +377,14 @@ def test_label_components_runs():
 
 def test_label_by_island_does_not_cross_islands():
     """两岛斜对角贴着（布局允许一格的岸距）：8 邻域的田块 / 林场不能并到别的岛上（seed 2026 #5246、seed 7 #418）。"""
-    from skyisle_gen.island.grid import label_by_island, label_components
     iid = np.full((4, 4), -1, dtype=np.int16)
     iid[0:2, 0:2] = 0
     iid[2:4, 2:4] = 1
     m = iid >= 0
-    _, n_plain = label_components(m, 8)
-    lab, n = label_by_island(m, iid, 8)
+    _, n_plain = core.label_components(m, 8)
+    lab, n = core.label_by_island(m, iid, 8)
     assert n_plain == 1 and n == 2
     assert lab[0, 0] == lab[1, 1] != lab[2, 2] == lab[3, 3]
-
-
-def test_season_type_table():
-    """5.4 的季型表：温差 ≥ 20 → 四季分明；雨季 ≥ 旱季 × 2.5 → 雨旱季；都不达标 → 常夏。"""
-    from skyisle_gen.island.climate import _season_names
-    n = _season_names("four", [5, 20, 25, 10], [1, 1, 1, 1], [0] * 4, [1] * 4, 4)
-    assert n == ["冷季", "暖季", "热季", "凉季"]
-    n = _season_names("rain", [20] * 4, [0.1, 0.5, 0.2, 0.15], [0] * 4, [1] * 4, 4)
-    assert n == ["旱季", "雨季", "转季", "转季"]
-    n = _season_names("storm", [20] * 4, [1] * 4, [0.9, 0.2, 0.1, 0.3], [0.2, 0.8, 0.9, 0.7], 4)
-    assert n[0] == "风暴季" and n[2] == "平静季"
 
 
 def test_daily_weather_returns_to_climate(small_ctx):
@@ -418,9 +395,8 @@ def test_daily_weather_returns_to_climate(small_ctx):
     c = isl.island_config(small_ctx)
     inp = isl._node_inputs(small_ctx, node)
     g = isl.build_terrain(small_ctx, node, c, inp, res_m=400.0, log=lambda *a: None)
-    from skyisle_gen.island.climate import build_climate, daily_curves
-    build_climate(small_ctx, node, c, g, log=lambda *a: None)
-    g["daily"] = daily_curves(g["climate"], inp, small_ctx.cfg["s04"]["climate"])
+    from skyisle_gen.island.engine import weather_year_cpp
+    weather_year_cpp(small_ctx, node, c, g, log=lambda *a: None)          # 四季（g["climate"]）在 C++ 里
     st = multi_year_stats(small_ctx, node, c, g, years=60)
     assert st["annual_rel_err"] < 0.05 or st["annual_z"] < 3.0, st
     assert max(st["wet_frac_err"]) <= 0.05, st
@@ -437,33 +413,36 @@ def test_classify_all_small_world(small_ctx):
     assert west and west[0]["四季分明"] >= 0.9
 
 
-# ---------------- 势力范围（territory.py，DESIGN-NOTES 四点二十二）与粗版（lod.py） ----------------
+# ---------------- 势力范围（C++ 的 territory，DESIGN-NOTES 四点二十二）与粗版（lod.py） ----------------
 def test_territory_split_is_consistent(small_ctx):
     """邻群两边各画的分界线是同一条（k 离线 t_k、j 离线 t_j，t_k + t_j = 群心距），各退半道缝后两群之间正好隔 gap_km。"""
     from skyisle_gen import island as isl
-    from skyisle_gen.island.territory import limits
     c = isl.island_config(small_ctx)
-    tc = dict(c["territory"], reach=50.0, reach_km=5000.0)   # 小世界稀：放宽只为找到一对邻群
+    gap = float(c["territory"]["gap_km"])
+    I3 = small_ctx.load_npz(3, "islands")
+    radius = float(small_ctx.load_json(1, "planet")["radius_km"])
+    planet = {"radius_km": radius, "year_s": 1.0,
+              "islands": {"lat": I3["lat"].astype(np.float64), "lon": I3["lon"].astype(np.float64), "area": I3["area_km2"].astype(np.float64)}}
     k = _pick_node(small_ctx)
-    lk = limits(small_ctx, k, isl._node_inputs(small_ctx, k), tc)
+    lk = core.territory_limits(planet, k, gap, 50.0, 5000.0)          # 小世界稀：放宽只为找到一对邻群
     assert lk
     j = lk[0]["node"]
-    lj = {L["node"]: L for L in limits(small_ctx, j, isl._node_inputs(small_ctx, j), tc)}
+    lj = {L["node"]: L for L in core.territory_limits(planet, j, gap, 50.0, 5000.0)}
     assert k in lj
-    gap = float(tc["gap_km"])
-    assert abs(lk[0]["limit_km"] + lj[k]["limit_km"] + gap - lk[0]["dist_km"]) < 1e-3      # dist_km 记到米
+    assert abs(lk[0]["limit_km"] + lj[k]["limit_km"] + gap - lk[0]["dist_km"]) < 1e-3
+    assert lj[k]["dist_km"] == pytest.approx(lk[0]["dist_km"], abs=1e-9)
     u1, u2 = np.array(lk[0]["u"]), np.array(lj[k]["u"])
     assert np.hypot(*u1) == pytest.approx(1.0) and u1 @ -u2 > 0.99     # 两边的法向相反（几百 km 内近似平面）
 
 
 def test_territory_nearest_fit():
     """Dykstra：放得下时给离原点最近的偏移，放不下时越界量 > 0。"""
-    from skyisle_gen.island.territory import nearest_fit, violation
-    lim = [{"u": (1.0, 0.0), "limit_km": 10.0}, {"u": (0.0, 1.0), "limit_km": 10.0}, {"u": (-1.0, 0.0), "limit_km": 10.0}]
-    o, v = nearest_fit(np.array([15.0, 4.0, 4.0]), lim)          # 向东伸 15 km：要往西挪 5 km
-    assert v <= 1e-6 and o[0] == pytest.approx(-5.0, abs=1e-3) and abs(o[1]) < 1e-3
-    assert violation(o, np.array([15.0, 4.0, 4.0]), lim) <= 1e-6
-    o, v = nearest_fit(np.array([15.0, 4.0, 15.0]), lim)         # 东西都伸 15，只有 20 km 宽：放不下
+    lim = [[1.0, 0.0, 10.0], [0.0, 1.0, 10.0], [-1.0, 0.0, 10.0]]      # (ux, uy, limit_km)
+    ox, oy, v = core.nearest_fit([15.0, 4.0, 4.0], lim)               # 向东伸 15 km：要往西挪 5 km
+    assert v <= 1e-6 and ox == pytest.approx(-5.0, abs=1e-3) and abs(oy) < 1e-3
+    sup = [15.0, 4.0, 4.0]
+    assert max(s + ux * ox + uy * oy - L for s, (ux, uy, L) in zip(sup, lim)) <= 1e-6
+    _, _, v = core.nearest_fit([15.0, 4.0, 15.0], lim)                # 东西都伸 15，只有 20 km 宽：放不下
     assert v > 4.0
 
 
@@ -485,8 +464,8 @@ def test_territory_off_leaves_unconstrained_groups_identical(small_ctx):
 
 
 def test_lod_block_reduce():
-    """粗版降采样：陆地占比、块内平均高 / 最高、岛号与地表取众数。"""
-    from skyisle_gen.island.lod import _block_reduce
+    """粗版降采样（C++ 的 block_reduce）：陆地占比、块内平均高 / 最高、岛号与地表取众数。"""
+    from skyisle_gen.island.engine import block_reduce_cpp
     iid = np.full((4, 4), -1, dtype=np.int16)
     iid[0:2, 0:2] = 0
     iid[0, 2] = 1
@@ -495,7 +474,7 @@ def test_lod_block_reduce():
     lc = np.where(iid >= 0, 4, 0).astype(np.uint8)
     lc[1, 1] = 6
     g = {"island_id": iid, "height": h, "landcover": lc, "river": np.zeros((4, 4), np.uint8), "lake": np.zeros((4, 4), bool)}
-    r = _block_reduce(g, 2)
+    r = block_reduce_cpp(g, 2)
     assert r["land"][0, 0] == 255 and r["land"][0, 1] == 64 and r["land"][1, 1] == 0
     assert r["height"][0, 0] == pytest.approx(150.0) and r["peak"][0, 0] == pytest.approx(300.0)
     assert np.isnan(r["height"][1, 1])

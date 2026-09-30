@@ -8,6 +8,7 @@
     island    块内陆地最多的岛号（−1 = 虚空）
     landcover 块内陆地最多的地表类（output.LANDCOVER_CLASSES 的下标）
     water     块内河道与湖的占比（0–255）
+（栅格右 / 下边补虚空到 f 的整数倍；块降采样在 C++ 里，core/src/island/generate.cpp）
 每群一个 `out/<run>/islands_lod/<分辨率>/<节点>.npz`（外加 meta：栅格头、各岛的岸缘 / 岛底 / 峰 / 浮高 float_m / 岛龄、势力范围记录），`index.json` 汇总。
 浮高（四点二十八）之前做的粗版 meta 里没有 float_m，算没做（要重跑）。
 
@@ -18,7 +19,6 @@
 from __future__ import annotations
 
 import json
-import math
 import time
 from pathlib import Path
 
@@ -38,61 +38,11 @@ WEATHER_NOTE = ("weather_<列>：第 year 年逐日一行，与 skyisle island <
                 "precip_mm 是 island.json hydro.precip_mm（栅格年降水，weather.tsv 头的那个），summary 是 island.json 的 weather 摘要。")
 
 
-def _block_reduce(g: dict, f: int) -> dict:
-    """按 f × f 块降采样（栅格右 / 下边补虚空到 f 的整数倍）。"""
-    island = g["island_id"]
-    H, W = island.shape
-    Hb, Wb = -(-H // f), -(-W // f)
-
-    def pad(a, fill):
-        out = np.full((Hb * f, Wb * f), fill, dtype=a.dtype)
-        out[:H, :W] = a
-        return out.reshape(Hb, f, Wb, f).transpose(0, 2, 1, 3).reshape(Hb, Wb, f * f)
-
-    isl = pad(island.astype(np.int16), np.int16(-1))
-    land = isl >= 0
-    n_land = land.sum(-1)
-    h = pad(np.where(island >= 0, g["height"], np.nan).astype(np.float32), np.float32(np.nan))
-    with np.errstate(invalid="ignore"):
-        hmean = np.where(n_land > 0, np.nansum(h, -1) / np.maximum(n_land, 1), np.nan).astype(np.float32)
-    hpeak = np.where(n_land > 0, np.nanmax(np.where(land, h, -np.inf), -1), np.nan).astype(np.float32)
-    water = pad((((g["river"] > 0) | g["lake"]) & (island >= 0)).astype(np.uint8), np.uint8(0))
-
-    def mode(vals, nclass, offset=0):
-        """块内陆地格的众数（vals 已按块排好；非陆地不计）。"""
-        out = np.full(vals.shape[:2], -1, dtype=np.int16)
-        v = vals.astype(np.int32) + offset
-        counts = np.zeros(vals.shape[:2] + (nclass,), dtype=np.int32)
-        for k in range(nclass):
-            counts[..., k] = ((v == k) & land).sum(-1)
-        best = counts.argmax(-1)
-        return np.where(n_land > 0, best - offset, out).astype(np.int16)
-
-    n_isl = int(island.max()) + 1 if (island >= 0).any() else 0
-    return {
-        "land": np.round(255.0 * n_land / (f * f)).astype(np.uint8),
-        "height": hmean,
-        "peak": hpeak,
-        "island": mode(isl, max(1, n_isl)),
-        "landcover": mode(pad(g["landcover"].astype(np.uint8), np.uint8(0)), 12).astype(np.uint8),
-        "water": np.round(255.0 * water.sum(-1) / (f * f)).astype(np.uint8),
-    }
-
-
 def build_weather_year(ctx, node: int, c: dict, g: dict, year: int = 0) -> None:
     """地形 + 水系之后接着算四季 → 逐日曲线 → 一年的逐日天气（generate 的第 3、4 步；天气只依赖本群的行星层输入与主岛岸缘，
     资源不影响它）。结果进 g["climate"] / g["daily"] / g["weather"]，与 island generate 同形同值。"""
-    from .engine import backend
-    quiet = lambda *a, **k: None
-    if backend(ctx) == "cpp":
-        from .engine import weather_year_cpp
-        weather_year_cpp(ctx, node, c, g, year=year, log=quiet)
-    else:
-        from .climate import build_climate, daily_curves
-        from .weather import build_weather
-        build_climate(ctx, node, c, g, log=quiet)
-        g["daily"] = daily_curves(g["climate"], g["inp"], ctx.cfg["s04"]["climate"])
-        build_weather(ctx, node, c, g, year=year, log=quiet)
+    from .engine import weather_year_cpp
+    weather_year_cpp(ctx, node, c, g, year=year, log=lambda *a, **k: None)
 
 
 def weather_arrays(g: dict, c: dict, year: int = 0) -> dict:
@@ -148,14 +98,10 @@ def build_lod(ctx, node: int, c: dict, res_list: list[float], native_res_m: floa
     J = g["json"]
     native = float(J["raster"]["res_m"])
     out = {}
-    from .engine import backend
+    from .engine import block_reduce_cpp
     for res in res_list:
         f = max(1, int(round(float(res) / native)))
-        if backend(ctx) == "cpp":              # 行星计划 P6b：块降采样也在 C++（同式，逐位相同）
-            from .engine import block_reduce_cpp
-            arr = block_reduce_cpp(g, f)
-        else:
-            arr = _block_reduce(g, f)
+        arr = block_reduce_cpp(g, f)             # 块降采样在 C++（行星计划 P6b）
         arr.update(wx)
         Hb, Wb = arr["land"].shape
         meta = {

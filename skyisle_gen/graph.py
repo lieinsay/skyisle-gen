@@ -77,27 +77,6 @@ def dijkstra(csr: CSR, weights: np.ndarray, sources, source_dist=None, max_dist=
     return dist, pred_node, pred_edge
 
 
-def accumulate_along_tree(pred_node: np.ndarray, pred_edge: np.ndarray, dist: np.ndarray,
-                          *edge_values: np.ndarray):
-    """沿最短路树把每条边上的量累加到节点（如 C = Σcost、L = Σ(-ln perm)）。
-    按 dist 升序处理，parent 必先于 child。返回与 edge_values 数目相同的节点数组。
-    """
-    n = pred_node.shape[0]
-    outs = [np.zeros(n, dtype=np.float64) for _ in edge_values]
-    order = np.argsort(dist, kind="stable")
-    for u in order:
-        if not np.isfinite(dist[u]):
-            for o in outs:
-                o[u] = np.nan
-            continue
-        p, e = pred_node[u], pred_edge[u]
-        if p < 0:
-            continue
-        for o, ev in zip(outs, edge_values):
-            o[u] = o[p] + ev[e]
-    return outs
-
-
 def betweenness_sampled(csr: CSR, weights: np.ndarray, n_edges: int,
                         sources: np.ndarray, c_min: float = 0.0,
                         rel_tol: float = 1e-9):
