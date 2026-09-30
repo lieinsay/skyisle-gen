@@ -154,6 +154,11 @@ def _auto_exag(h: np.ndarray, res_m: float) -> float:
     return float(np.clip(0.577 / max(np.quantile(s, 0.9), 1e-6), 1.0, 40.0))
 
 
+def _h32(g: dict) -> np.ndarray:
+    """出图用的高程：float32 口径（与 terrain.npz 同）。两个后端的 float64 高程末位（1e-12 m）有时不同，晕渲的 8 位颜色在渠、河的半透明叠色下偶尔差一个灰度（四点四十）。"""
+    return g["height"].astype(np.float32).astype(np.float64)
+
+
 def _hillshade_rgb(h: np.ndarray, res_m: float, vmin: float, vmax: float, cmap_name: str = "gist_earth"):
     hv = np.where(np.isnan(h), np.nanmin(h) if np.isfinite(np.nanmin(h)) else 0.0, h)
     ls = LightSource(azdeg=315, altdeg=45)
@@ -173,7 +178,7 @@ def _lens_panel(ax, g: dict):
     H, W = g["height"].shape
     x0, y0 = r["origin_km"]
     extent = [x0, x0 + W * res_m / 1000.0, y0 - H * res_m / 1000.0, y0]
-    h = g["height"]
+    h = _h32(g)
     vmin, vmax = float(np.nanmin(h)), float(np.nanmax(h))
     ax.imshow(_hillshade_rgb(h, res_m, vmin, vmax), extent=extent, origin="upper", interpolation="nearest")
     fm = _fields_mask(g)
@@ -257,7 +262,7 @@ def write_preview(out: Path, g: dict) -> Path:
     res_m = J["raster"]["res_m"]
     if "landcover" not in J:
         r0, c0, mm, _ = J["islands"][0]["bbox_cells"]
-        sub = g["height"][max(0, r0):r0 + mm, max(0, c0):c0 + mm]
+        sub = _h32(g)[max(0, r0):r0 + mm, max(0, c0):c0 + mm]
         sub_id = g["island_id"][max(0, r0):r0 + mm, max(0, c0):c0 + mm]
         sub = np.where(sub_id == 0, sub, np.nan)
         rr, cc = np.where(~np.isnan(sub))
@@ -295,7 +300,7 @@ def write_preview_main(out: Path, g: dict) -> Path:
     m0 = ids == 0
     rr, cc = np.where(m0)
     sub = (slice(rr.min(), rr.max() + 1), slice(cc.min(), cc.max() + 1))
-    h = np.where(m0, g["height"][sl], np.nan)[sub]
+    h = np.where(m0, _h32(g)[sl], np.nan)[sub]
     m = m0[sub]
     fig, ax = plt.subplots(figsize=(11, 9))
     shaded = _hillshade_rgb(h, res_m, float(np.nanmin(h)), float(np.nanmax(h)), "terrain")

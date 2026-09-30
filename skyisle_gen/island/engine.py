@@ -496,7 +496,10 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
             f"航船 {MS['n_lines']} 线 {MS['line_km']:.0f} km、送 {MS['boat_villages']} 村；中转站 {MS['n_relays']}（常住 {MS['relay_households']} 户）")
         if "waterworks" in S:
             ws = S["waterworks"]["summary"]
-            log(f"  水利（C++）：渠首 {ws['n_heads']}（季节性 {ws['n_heads_seasonal']}），渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2']:.0f} km²；"
+            bw = ws.get("big") or {"n": 0}
+            log(f"  水利（C++）：大堰 {bw['n']}" + (f"（灌区 {bw['planned_km2']:.0f} km²、在种 {bw['served_km2']:.0f}（已垦的 {bw['share']:.0%}），渠 {bw['canal_km']:.0f} km、"
+                f"用水的村 {bw['villages']}）" if bw["n"] else "") + (f"；村的渠首 {ws['n_heads']}，渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2'] - bw.get('served_km2', 0.0):.0f} km²；"
+                if ws.get("village_works", True) else "；村级的渠、塘不在岛群层出（归营建器）；") +
                 f"塘 {ws['n_ponds']}，闸 {ws['n_sluices']}；圩田 {ws['polder_km2']:.1f} km²（湿地 {ws['wetland_km2']:.1f} 的 {ws['polder_share']:.0%}，{ws['n_polders']} 圩）")
     if steps >= 2:
         resource_summary(g)

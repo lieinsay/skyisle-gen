@@ -289,10 +289,17 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
         std::vector<std::vector<int32_t>> cl(static_cast<size_t>(n_lab) + 1);
         for (size_t k = 0; k < N; ++k)
             if (lab.v[k]) cl[lab.v[k]].push_back(static_cast<int32_t>(k));
+        // 主岛最大的田块可以撑到邑治规模；四点四十：大半在邑级大堰灌区里的连通块不算（照 80 户切，settle.py 同式）
+        std::vector<uint8_t> bigm(N, 0);
+        for (const BigWork& B : FL.big.works)
+            for (int32_t q : B.rc) bigm[static_cast<size_t>(q)] = 1;
         int main_biggest = -1;
         size_t best_cnt = 0;
         for (int L = 1; L <= n_lab; ++L) {
             if (g.island_id.v[cl[L][0]] != 0) continue;
+            size_t nb = 0;
+            for (int32_t q : cl[L]) nb += bigm[static_cast<size_t>(q)];
+            if (2 * nb > cl[L].size()) continue;
             if (main_biggest < 0 || cl[L].size() > best_cnt || (cl[L].size() == best_cnt && L > main_biggest)) {
                 best_cnt = cl[L].size();
                 main_biggest = L;
@@ -1397,7 +1404,7 @@ void build_settlements(Group& g, const PlanetView& pv, const Config& c) {
                 if (rt.tract == r.tract) x.cells = rt.cells;
             wr.push_back(std::move(x));
         }
-        works = build_waterworks(g, c, wf, fields_raster, wv, sr, FL.polders, wr, cmd_cells);
+        works = build_waterworks(g, c, wf, fields_raster, wv, sr, FL.polders, wr, FL.big, cmd_cells);
     }
 
     // ---------- 没人常住的岛有人用（P5，island_uses）：放牧 / 夏牧、庙、墓岛（烽火台 P7 起归中转站）；各岛的住法 ----------

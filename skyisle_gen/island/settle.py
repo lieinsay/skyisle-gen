@@ -132,10 +132,15 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     ord_l = nz_l[np.argsort(flat_l[nz_l], kind="stable")]
     bnd_l = np.searchsorted(flat_l[ord_l], np.arange(1, n_lab + 2))
     first_isl = island_id.ravel()[ord_l[bnd_l[:-1]]] if n_lab else np.zeros(0, dtype=int)
-    # 主岛最大的田块可以撑到邑治规模
+    # 主岛最大的田块可以撑到邑治规模。四点四十：大半在邑级大堰灌区里的连通块不算（照 80 户切）——灌区成片以后它往往是主岛最大的一块，
+    # 按 300 户切会切成十几 km² 一块、一村三四百户、田离村三四公里（#6615 村 224 → 170、散户 1331 → 884）
+    bigm = np.zeros(H * W, dtype=bool)
+    for B in FL["big"]:
+        bigm[np.asarray(B["rc"], dtype=np.int64)] = True
     main_biggest = -1
     if n_lab:
-        main_lab = [(counts[L], L) for L in range(1, n_lab + 1) if first_isl[L - 1] == 0]
+        main_lab = [(counts[L], L) for L in range(1, n_lab + 1)
+                    if first_isl[L - 1] == 0 and not 2 * int(bigm[ord_l[bnd_l[L - 1]:bnd_l[L]]].sum()) > int(counts[L])]
         if main_lab:
             main_biggest = max(main_lab)[1]
     for L in range(1, n_lab + 1):
@@ -339,7 +344,7 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
     water_out["landings"] = lands
     # ---------- 水利（P6，waterworks.py）：谷口的渠、村塘 / 山塘、圩田的纵浦横塘与圩塘、闸 ----------
     from .waterworks import build_waterworks
-    works = build_waterworks(g, c["works"], fields, fields_raster, villages, sraster, FL["polders"], km, ruins, ruin_cells)
+    works = build_waterworks(g, c["works"], fields, fields_raster, villages, sraster, FL["polders"], km, ruins, ruin_cells, FL["big"])
     cmd_cells = works.pop("_commanded_cells")               # 谷口的渠灌得到的格（landuse 的渠灌田）
     # ---------- 第 3 步：没人住的岛有人用（P5）、主家候选、前哨、都与城 ----------
     uses, status = island_uses(g, sc, _rng(ctx, node, "settle:uses"), villages, hamlets, specials, ruins, seat, km, relays)
@@ -391,7 +396,10 @@ def build_settlements(ctx, node: int, c: dict, g: dict, log=print) -> None:
         f"邑治在岛 {MS['seat_island']}；航船 {MS['n_lines']} 线 {MS['line_km']:.0f} km、送 {MS['boat_villages']} 村 {MS['boat_households']} 户（走路 {MS['walk_villages']} 村）；"
         f"中转站 {MS['n_relays']}（{'、'.join(f'{k} {v}' for k, v in MS['relay_functions'].items()) or '—'}，常住 {MS['relay_households']} 户）")
     ws = works["summary"]
-    log(f"  水利：渠首 {ws['n_heads']}（季节性 {ws['n_heads_seasonal']}），渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2']:.0f} km²（已垦的 {ws['commanded_share']:.0%}）；"
+    bw = ws["big"]
+    log(f"  水利：大堰 {bw['n']}" + (f"（灌区 {bw['planned_km2']:.0f} km²、在种 {bw['served_km2']:.0f}（已垦的 {bw['share']:.0%}），渠 {bw['canal_km']:.0f} km、用水的村 {bw['villages']}）"
+        if bw["n"] else "") + (f"；村的渠首 {ws['n_heads']}（季节性 {ws['n_heads_seasonal']}），渠 {ws['canal_km']:.0f} km、灌田 {ws['commanded_km2'] - bw['served_km2']:.0f} km²；"
+        if ws["village_works"] else "；村级的渠、塘不在岛群层出（归营建器）；") +
         f"塘 {ws['n_ponds']}（{'、'.join(f'{k} {v}' for k, v in ws['ponds'].items() if v) or '—'}），闸 {ws['n_sluices']}；"
         f"圩田 {ws['polder_km2']:.1f} km²（湿地 {ws['wetland_km2']:.1f} 的 {ws['polder_share']:.0%}，{ws['n_polders']} 圩 / {ws['n_polder_patches']} 片，"
         f"纵浦横塘 {ws['polder_canal_km']:.0f} km、圩堤 {ws['dike_km']:.0f} km）")

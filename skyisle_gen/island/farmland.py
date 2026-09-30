@@ -82,6 +82,7 @@ def cultivable_land(g: dict, lc: dict, cover: np.ndarray, arable: np.ndarray, su
 def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: float, n_quota: int, wc: dict | None = None) -> dict:
     """好地先占 + 定居门槛 → g["cultivated"]（0 / 1 田 / 2 梯田，在种）、g["fallow_years"]（撂荒了几年，0 = 不是撂荒地）；
     P6：wc（[island.works]）给了就在第一遍之后挑要排干的湿地（waterworks.polder_plan），第二遍圩田的格先占（额度之内）→ g["polder_id"]；
+    四点四十：wc 给了就在好地先占之前定邑级大堰（waterworks.big_plan），灌区的格适宜度 × (1 + big_suit_gain)（g["suit"] 就地改）；
     改 g["landcover"]（上等地没人种的回原本的地表、已垦画成可耕地 / 梯田、撂荒按年头、圩田画成可耕地）与林场 / 芦苇荡的 patch_id。
     返回 {"ruins": [...（不含村址）], "summary": {...}, "polders": 圩田的安排}。"""
     island_id = g["island_id"]
@@ -103,6 +104,16 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
             from .resources import FIELD_KINDS, ROCK_KINDS
             for k in ROCK_KINDS:
                 pit |= g["res_field"][FIELD_KINDS.index(k)] > 0
+    # ---- 邑级大堰（四点四十，waterworks.big_plan）：在好地先占之前定；灌区的格适宜度加成（渠灌的地一亩顶两亩），好地先占先占它 → 人往灌区聚
+    bigw = []
+    if wc is not None:
+        from .waterworks import big_plan
+        bigw = big_plan(g, wc, pit, n_quota)
+        gain = 1.0 + float(wc["big_suit_gain"])
+        sf = g["suit"].reshape(-1)
+        for B in bigw:
+            idx = np.asarray(B["rc"], dtype=np.int64)
+            sf[idx] = sf[idx] * gain
     # ---- 宜垦的连通片（不跨岛）与定居门槛
     lab, n_lab = label_by_island(cult > 0, island_id, 8)
     labf = lab.ravel()
@@ -241,8 +252,9 @@ def fill_cultivated(g: dict, sc: dict, rng, water: np.ndarray, land_per_hh: floa
                "n_tracts_dropped": int((ok_t & ~kept).sum()), "n_ruins": len(ruins),
                "settle_min_hh": int(min_hh), "rain_ok": rain_ok,
                "floor_islands": g_isl, "floor_km2": round(float(n_g) * cell_km2, 3),
-               "wetland_km2": round(float(PP["wetland_cells"]) * cell_km2, 3), "polder_km2": round(float(n_p) * cell_km2, 3)}
-    return {"ruins": ruins, "summary": summary, "polders": PP}
+               "wetland_km2": round(float(PP["wetland_cells"]) * cell_km2, 3), "polder_km2": round(float(n_p) * cell_km2, 3),
+               "n_big": len(bigw), "big_planned_km2": round(float(sum(len(B["rc"]) for B in bigw)) * cell_km2, 3)}
+    return {"ruins": ruins, "summary": summary, "polders": PP, "big": bigw}
 
 
 def floor_cells(g: dict, sc: dict, lab: np.ndarray, n_lab: int, ok_t: np.ndarray, order: np.ndarray, t_ord: np.ndarray, pit: np.ndarray,

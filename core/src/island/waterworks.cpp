@@ -172,9 +172,175 @@ PolderPlan polder_plan(const Group& g, const Config& c, const Mask& wet, const s
     return out;
 }
 
+BigPlan big_plan(const Group& g, const Config& c, const std::vector<uint8_t>& pit, int64_t n_quota) {
+    const int H = g.H, W = g.W;
+    const size_t N = static_cast<size_t>(H) * W;
+    const double res_km = g.res_km, res_m = res_km * 1000.0, cell_km2 = res_km * res_km;
+    auto wc = [&](const std::string& k) { return c.get("works." + k); };
+    BigPlan out;
+    const int big_max = static_cast<int>(wc("big_max"));
+    if (big_max <= 0) return out;
+    auto land = [&](size_t k) { return g.island_id.v[k] >= 0; };
+    const float src_min = f32(wc("big_src_min_km2")), smax = f32(wc("big_cmd_slope_deg"));
+    const double weir = wc("big_weir_m"), grad_c = wc("big_grad_m_per_km") * res_km, cut = wc("canal_cut_m"), a_cost = wc("canal_slope_cost");
+    const double Rc = wc("big_reach_km") / res_km;
+    const int Rw = static_cast<int>(std::ceil(Rc - 1e-9));
+    const double P = pyround(g.P_mm, 0) / 1000.0, runoff = c.get("hydro.runoff_coef"), duty = wc("big_duty_mm") / 1000.0;
+    const int n_try = static_cast<int>(wc("big_try"));
+    const double ts = wc("big_try_sep_km") / res_km, sep2 = ts * ts;
+    const int64_t need = std::max(cells_min(wc("big_min_cmd_km2"), cell_km2),
+                                  static_cast<int64_t>(std::ceil(wc("big_min_quota_frac") * static_cast<double>(n_quota) - 1e-9)));
+    // 干渠走得过的格（不过崖缘、湖、常年河、湿地，不跨岛）；灌区的目标格：坡缓（< big_cmd_slope_deg）、宜垦、不是采场 / 岩类赋存
+    std::vector<uint8_t> pass(N, 0), tgt(N, 0);
+    for (size_t k = 0; k < N; ++k) {
+        const bool b = land(k) && !g.cliff.v[k] && !g.lake.v[k] && !(g.river.v[k] > 0) && g.landcover.v[k] != LC_WET;
+        pass[k] = b ? 1 : 0;
+        tgt[k] = (b && g.cultivable.v[k] > 0 && !pit[k] && f32(g.slope.v[k]) < smax) ? 1 : 0;
+    }
+    // 渠首候选：汇水 ≥ big_src_min_km2 的常年河格，按汇水降序（平局格号小），彼此隔 big_try_sep_km
+    std::vector<int32_t> cand;
+    for (size_t k = 0; k < N; ++k)
+        if (land(k) && !g.lake.v[k] && g.river.v[k] > 0 && f32(g.acc_km2.v[k]) >= src_min) cand.push_back(static_cast<int32_t>(k));
+    std::stable_sort(cand.begin(), cand.end(), [&](int32_t a, int32_t b) { return f32(g.acc_km2.v[a]) > f32(g.acc_km2.v[b]); });
+    std::vector<int32_t> kept;
+    for (int32_t q : cand) {
+        const int qi = q / W, qj = q % W;
+        bool nearq = false;
+        for (int32_t p : kept) {
+            const int64_t di = qi - p / W, dj = qj - p % W;
+            if (static_cast<double>(di * di + dj * dj) < sep2) {
+                nearq = true;
+                break;
+            }
+        }
+        if (!nearq) kept.push_back(q);
+    }
+    // 顺流而下到哪（D8 接收格走到头）：同一水系只修一处（水只有一份）
+    std::vector<int32_t> outs(kept.size());
+    for (size_t i = 0; i < kept.size(); ++i) {
+        int32_t q = kept[i];
+        for (size_t st = 0; st < N; ++st) {
+            const int qi = q / W, qj = q % W;
+            const int a = g.recv_i(qi, qj), b = g.recv_j(qi, qj);
+            if (a < 0 || b < 0 || (a == qi && b == qj)) break;
+            q = a * W + b;
+        }
+        outs[i] = q;
+    }
+    // 从渠首按最省工的路走出去（与村的渠同式，不限村走得到）：目标格里在渠水面以下的就是灌区，按出堆的次序到水量上限 cap_n 就停
+    auto dig = [&](int32_t cc, double z0, int64_t cap_n) {
+        BigWork B;
+        const int ci = cc / W, cj = cc % W, k = g.island_id.v[cc];
+        B.island = k;
+        B.head = cc;
+        B.z0 = z0;
+        B.acc = static_cast<double>(f32(g.acc_km2.v[cc]));
+        B.r0 = std::max(0, ci - Rw);
+        B.r1 = std::min(H, ci + Rw + 1);
+        B.c0 = std::max(0, cj - Rw);
+        B.c1 = std::min(W, cj + Rw + 1);
+        const int ww = B.c1 - B.c0;
+        const size_t nwin = static_cast<size_t>(B.r1 - B.r0) * ww;
+        std::vector<double> cost(nwin, INF), ln(nwin, 0.0);
+        B.par.assign(nwin, -1);
+        const size_t s0 = static_cast<size_t>(ci - B.r0) * ww + (cj - B.c0);
+        cost[s0] = 0.0;
+        using E = std::pair<double, int64_t>;
+        std::priority_queue<E, std::vector<E>, std::greater<E>> heap;
+        heap.push({0.0, static_cast<int64_t>(cc)});
+        while (!heap.empty()) {
+            const double d = heap.top().first;
+            const int32_t q = static_cast<int32_t>(heap.top().second);
+            heap.pop();
+            const int qi = q / W, qj = q % W;
+            const size_t lq = static_cast<size_t>(qi - B.r0) * ww + (qj - B.c0);
+            if (d > cost[lq]) continue;
+            if (d > Rc) break;
+            double hq = z0;
+            if (lq != s0) {
+                hq = g.height.v[q];
+                if (tgt[q] && hq <= z0 - grad_c * ln[lq]) {
+                    B.rc.push_back(q);
+                    if (static_cast<int64_t>(B.rc.size()) >= cap_n) break;
+                }
+            }
+            for (const Step& st : STEPS) {
+                const int a = qi + st.di, b = qj + st.dj;
+                if (a < B.r0 || a >= B.r1 || b < B.c0 || b >= B.c1) continue;
+                const size_t gp = static_cast<size_t>(a) * W + b;
+                if (!pass[gp] || g.island_id.v[gp] != k) continue;
+                const size_t lp = static_cast<size_t>(a - B.r0) * ww + (b - B.c0);
+                const double nl = ln[lq] + st.L;
+                const double hp = g.height.v[gp];
+                if (hp > z0 - grad_c * nl + cut) continue;
+                const double sl = std::abs(hp - hq) / (st.L * res_m);
+                const double nd = d + st.L * (1.0 + a_cost * sl * sl);
+                if (nd < cost[lp]) {
+                    cost[lp] = nd;
+                    ln[lp] = nl;
+                    B.par[lp] = q;
+                    heap.push({nd, static_cast<int64_t>(gp)});
+                }
+            }
+        }
+        return B;
+    };
+    std::vector<int32_t> used_out;
+    for (int w = 0; w < big_max; ++w) {
+        // 灌区的上界：离渠首 ≤ Rc、同岛、在渠水面线以下（直线距离算比降）的目标格，与水量上限取小；按上界降序试前 big_try 个
+        struct U {
+            double up;
+            int32_t q;
+            double water, z0;
+            int64_t cap_n;
+        };
+        std::vector<U> ups;
+        for (size_t i = 0; i < kept.size(); ++i) {
+            if (std::find(used_out.begin(), used_out.end(), outs[i]) != used_out.end()) continue;
+            const int32_t cc = kept[i];
+            const int ci = cc / W, cj = cc % W, k = g.island_id.v[cc];
+            const double z0 = g.height.v[cc] + static_cast<double>(f32(g.depth_m.v[cc])) + weir;
+            const double water = static_cast<double>(f32(g.acc_km2.v[cc])) * P * runoff / duty;
+            const int64_t cap_n = static_cast<int64_t>(std::floor(water / cell_km2));
+            int64_t m = 0;
+            for (int a = std::max(0, ci - Rw); a < std::min(H, ci + Rw + 1); ++a)
+                for (int b = std::max(0, cj - Rw); b < std::min(W, cj + Rw + 1); ++b) {
+                    const size_t gk = static_cast<size_t>(a) * W + b;
+                    if (!tgt[gk] || g.island_id.v[gk] != k) continue;
+                    const int di = a - ci, dj = b - cj;
+                    const double dist = std::sqrt(static_cast<double>(di * di + dj * dj));
+                    if (!(dist <= Rc)) continue;
+                    if (g.height.v[gk] <= z0 - grad_c * dist) ++m;
+                }
+            ups.push_back({static_cast<double>(std::min(m, cap_n)), cc, water, z0, cap_n});
+        }
+        std::stable_sort(ups.begin(), ups.end(), [](const U& a, const U& b) { return a.up > b.up; });
+        BigWork best;
+        int64_t best_n = 0;
+        const size_t nt = std::min(ups.size(), static_cast<size_t>(std::max(0, n_try)));
+        for (size_t t = 0; t < nt; ++t) {
+            const U& u = ups[t];
+            if (!(u.up > static_cast<double>(best_n))) break;
+            BigWork B = dig(u.q, u.z0, u.cap_n);
+            if (static_cast<int64_t>(B.rc.size()) > best_n) {
+                best_n = static_cast<int64_t>(B.rc.size());
+                B.water_km2 = u.water;
+                best = std::move(B);
+            }
+        }
+        if (best_n == 0 || best_n < need) break;
+        for (size_t i = 0; i < kept.size(); ++i)
+            if (kept[i] == best.head) best.outlet = outs[i];
+        used_out.push_back(best.outlet);
+        for (int32_t q : best.rc) tgt[q] = 0;              // 下一处不再灌这一处的地
+        out.works.push_back(std::move(best));
+    }
+    return out;
+}
+
 Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksField>& fields, const GridI& fields_raster,
                       const std::vector<WorksVillage>& villages, Grid<uint8_t>& sraster, const PolderPlan& plan,
-                      const std::vector<WorksRuin>& ruins, std::vector<int32_t>& cmd_cells) {
+                      const std::vector<WorksRuin>& ruins, const BigPlan& big, std::vector<int32_t>& cmd_cells) {
     const int H = g.H, W = g.W;
     const size_t N = static_cast<size_t>(H) * W;
     const double res_km = g.res_km, res_m = res_km * 1000.0, cell_km2 = res_km * res_km;
@@ -327,8 +493,8 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
         return D;
     };
     // 渠 = 渠首到入口、再到各格点的路合成的树：从渠首出来的一段是干渠，分出去的是支渠；灌区的格数按格点均分给各段算渠宽
-    auto emit = [&](int32_t cc, int k, const Dug& D, int64_t n_cmd, int hid, const std::function<void(Json&)>& extra, Json& out_arr, int64_t& n1_h,
-                    int64_t& n2_h) {
+    auto emit = [&](int32_t cc, int k, const Dug& D, int64_t n_cmd, int hid, const char* idkey, const std::function<void(Json&)>& extra, Json& out_arr,
+                    int64_t& n1_h, int64_t& n2_h) {
         const int ww = D.w.c1 - D.w.c0;
         auto up = [&](int32_t q) { return D.par[static_cast<size_t>(q / W - D.w.r0) * ww + (q % W - D.w.c0)]; };
         std::vector<int32_t> tl{D.entry};
@@ -381,7 +547,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
                 const double q_m3s = qk * (static_cast<double>(sv) * cell_km2);
                 Json cj_ = Json::obj();
                 cj_.set("kind", s_ == cc ? "main" : "branch");
-                cj_.set("head", hid);
+                cj_.set(idkey, hid);
                 cj_.set("island", k);
                 Json pa = Json::arr();
                 for (int32_t p : pts) pa.push(cellpt(p));
@@ -424,6 +590,107 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
     std::vector<HeadRec> heads;
     Json canals = Json::arr();
     int64_t n1_all = 0, n2_all = 0;
+
+    // ---------- 邑级大堰（四点四十）：渠网按 big_plan 的那棵最省工的路树修到灌区里在种的格；每个用水的村一个分水口（渠上离村最近的格）；邑管
+    const bool vw = wc("village_works") != 0.0;
+    const int s_big = std::max(1, static_cast<int>(std::nearbyint(wc("big_lateral_km") / res_km)));
+    std::map<int, const WorksVillage*> vby;
+    for (const WorksVillage& v : villages) vby[v.id] = &v;
+    std::vector<uint8_t> bigserved(N, 0);
+    Json bigj = Json::arr();
+    int64_t big_n1 = 0, big_n2 = 0, big_sv = 0, big_pl = 0;
+    std::set<int> big_vs;
+    int wid = 0;
+    for (const BigWork& B : big.works) {
+        ++wid;
+        const int32_t cc = B.head;
+        const int ci = cc / W, cj = cc % W, k = B.island;
+        std::vector<int32_t> sv;                             // 灌区里在种的格（按出堆的次序）
+        for (int32_t q : B.rc)
+            if (g.cultivated.v[q] > 0) sv.push_back(q);
+        big_pl += static_cast<int64_t>(B.rc.size());
+        int64_t n1_h = 0, n2_h = 0;
+        int n_seg = 0;
+        std::vector<int32_t> nodes;                          // 渠经过的格（不含渠首），升序
+        if (!sv.empty()) {
+            Dug D;
+            D.w = Win{B.r0, B.r1, B.c0, B.c1};
+            D.par = B.par;
+            D.entry = sv[0];
+            for (int32_t q : sv)
+                if (q != D.entry && (q / W - ci) % s_big == 0 && (q % W - cj) % s_big == 0) D.lat.push_back(q);
+            std::sort(D.lat.begin(), D.lat.end());
+            const int ww = D.w.c1 - D.w.c0;
+            std::set<int32_t> ns;
+            std::vector<int32_t> tl{D.entry};
+            tl.insert(tl.end(), D.lat.begin(), D.lat.end());
+            for (int32_t q : tl)
+                for (int32_t x = q; x != cc && ns.insert(x).second; x = D.par[static_cast<size_t>(x / W - D.w.r0) * ww + (x % W - D.w.c0)]) {
+                }
+            nodes.assign(ns.begin(), ns.end());
+            n_seg = emit(cc, k, D, static_cast<int64_t>(sv.size()), wid, "work", [&](Json& j) {
+                j.set("village", Json());
+                j.set("maintainer", "yi");
+            }, canals, n1_h, n2_h);
+        }
+        big_n1 += n1_h;
+        big_n2 += n2_h;
+        big_sv += static_cast<int64_t>(sv.size());
+        for (int32_t q : sv) {
+            bigserved[q] = 1;
+            cmd_cells.push_back(q);
+        }
+        // 用水的村：灌区里在种的格属哪个村的田（挂在村上的圩田也算；散户的田不算）
+        std::map<int, int64_t> vcnt;
+        for (int32_t q : sv) {
+            const int f = fields_raster.v[q];
+            if (f > 0 && fvill[f]) vcnt[fvill[f]]++;
+        }
+        Json tj = Json::arr();
+        std::vector<int> vids;
+        for (const auto& kv : vcnt) {
+            const WorksVillage* v = vby.at(kv.first);
+            int32_t bq = -1;
+            int64_t bd = 0;
+            for (int32_t q : nodes) {
+                const int64_t di = q / W - v->ci, dj = q % W - v->cj;
+                const int64_t d2 = di * di + dj * dj;
+                if (bq < 0 || d2 < bd) {
+                    bq = q;
+                    bd = d2;
+                }
+            }
+            if (bq < 0) continue;
+            Json t = Json::obj();
+            t.set("village", kv.first);
+            t.set("cell", Json::ipair(bq / W, bq % W));
+            t.set("km", km(bq / W, bq % W));
+            t.set("served_km2", pyround(static_cast<double>(kv.second) * cell_km2, 3));
+            t.set("dist_km", pyround(std::sqrt(static_cast<double>(bd)) * res_km, 2));
+            tj.push(std::move(t));
+            vids.push_back(kv.first);
+            big_vs.insert(kv.first);
+        }
+        Json x = Json::obj();
+        x.set("id", wid);
+        x.set("kind", "weir");
+        x.set("island", k);
+        x.set("cell", Json::ipair(ci, cj));
+        x.set("km", km(ci, cj));
+        x.set("source", "river");
+        x.set("level_m", pyround(B.z0, 1));
+        x.set("basin_km2", pyround(B.acc, 1));
+        x.set("water_km2", pyround(B.water_km2, 1));
+        x.set("planned_km2", pyround(static_cast<double>(B.rc.size()) * cell_km2, 3));
+        x.set("served_km2", pyround(static_cast<double>(sv.size()) * cell_km2, 3));
+        x.set("canal_km", pyround((static_cast<double>(n1_h) + static_cast<double>(n2_h) * SQRT2) * res_km, 3));
+        x.set("n_canals", n_seg);
+        x.set("maintainer", "yi");
+        x.set("villages", Json::arr_of(vids));
+        x.set("turnouts", tj);
+        bigj.push(std::move(x));
+    }
+    if (!vw) cand.clear();                                   // 村级的渠首、渠（含废渠）不在岛群层出
     for (int32_t cc : cand) {
         const int ci = cc / W, cj = cc % W;
         if (near(ci, cj, head_cells, sep_h2) || near(ci, cj, tried, sep_t2)) continue;
@@ -446,13 +713,13 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
         std::vector<const WorksVillage*> ok_v;
         for (const VS& x : vs) {
             const int F = x.v->field;
-            if (upper(ci, cj, z0, x.v->ci, x.v->cj, [&](size_t q) { return fields_raster.v[q] == F; }) >= min_cmd) ok_v.push_back(x.v);
+            if (upper(ci, cj, z0, x.v->ci, x.v->cj, [&](size_t q) { return fields_raster.v[q] == F && !bigserved[q]; }) >= min_cmd) ok_v.push_back(x.v);
         }
         if (ok_v.empty()) continue;
         tried.push_back({ci, cj});
         for (const WorksVillage* v : ok_v) {
             const int F = v->field;
-            const Dug D = dig(cc, ci, cj, z0, k, v->ci, v->cj, [&](size_t q) { return fields_raster.v[q] == F; });
+            const Dug D = dig(cc, ci, cj, z0, k, v->ci, v->cj, [&](size_t q) { return fields_raster.v[q] == F && !bigserved[q]; });
             if (!D.ok) continue;
             const int hid = static_cast<int>(heads.size()) + 1;
             head_cells.push_back({ci, cj});
@@ -461,7 +728,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
             cmd_cells.insert(cmd_cells.end(), D.rc.begin(), D.rc.end());
             int64_t n1_h = 0, n2_h = 0;
             const int vid = v->id;
-            const int n_seg = emit(cc, k, D, n_cmd, hid, [&](Json& j) { j.set("village", vid); }, canals, n1_h, n2_h);
+            const int n_seg = emit(cc, k, D, n_cmd, hid, "head", [&](Json& j) { j.set("village", vid); }, canals, n1_h, n2_h);
             n1_all += n1_h;
             n2_all += n2_h;
             HeadRec hr{hid, k, ci, cj, !(g.river.v[cc] > 0), z0, static_cast<double>(f32(g.acc_km2.v[cc])), {F}, n_cmd, n1_h, n2_h, n_seg};
@@ -496,7 +763,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
             const int64_t n_cmd = static_cast<int64_t>(D.rc.size());
             int64_t n1_h = 0, n2_h = 0;
             const int rid = r.id, years = r.years;
-            const int n_seg = emit(cc, k, D, n_cmd, hid, [&](Json& j) {
+            const int n_seg = emit(cc, k, D, n_cmd, hid, "head", [&](Json& j) {
                 j.set("village", Json());
                 j.set("ruin", rid);
                 j.set("abandoned", true);
@@ -579,7 +846,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
             pj_.set("area_m2", static_cast<int64_t>(std::nearbyint(static_cast<double>(n) * cell_km2 * 1e6 * pond_frac)));
             pj_.set("elev_m", pyround(g.height.v[pond], 0));
             pj_.set("village", vjson(vid));
-            ponds_p.push_back(std::move(pj_));
+            if (vw) ponds_p.push_back(std::move(pj_));    // 圩塘是村级的，归营建器
             Json sj_ = Json::obj();
             sj_.set("kind", "polder");
             sj_.set("island", k);
@@ -807,9 +1074,10 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
         }
     }
     for (const WorksVillage& v : villages) {
+        if (!vw) break;                                      // 村塘 / 山塘归营建器
         const WorksField& f = fields[v.field - 1];
         bool hill = false;
-        if (cmd[v.field] || pol_field[v.field] || !v.polder_fields.empty()) hill = false;   // 灌区里的村（有渠或圩田）：村塘接渠水
+        if (cmd[v.field] || pol_field[v.field] || !v.polder_fields.empty() || big_vs.count(v.id)) hill = false;   // 灌区里的村（有渠或圩田）：村塘接渠水
         else if (g.zone(v.ci, v.cj) >= 1 && g.zone(v.ci, v.cj) <= 3) hill = true;         // 高山 / 山地 / 丘陵：陂塘
         const int32_t q = village_pond(v.ci, v.cj, hill, true);
         const double area = hill ? std::max(hill_min, f.area_km2 * 1e6 * hill_ratio) : std::max(v_min, m2_hh * static_cast<double>(v.households));
@@ -821,6 +1089,7 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
     }
     std::vector<Json> ponds_ab;
     for (const WorksRuin& r : ruins) {                     // 废塘：死了的村的村塘 / 山塘，淤了、没人管
+        if (!vw) break;
         const bool hill = g.zone(r.ci, r.cj) >= 1 && g.zone(r.ci, r.cj) <= 3;
         const int32_t q = village_pond(r.ci, r.cj, hill, false);
         const double area = hill ? std::max(hill_min, r.fallow_km2 * 1e6 * hill_ratio) : std::max(v_min, m2_hh * static_cast<double>(r.households_before));
@@ -961,8 +1230,18 @@ Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksFi
     ab.set("ponds", static_cast<int64_t>(ponds_ab.size()));
     ab.set("sluices", static_cast<int64_t>(ab_heads.size()));
     S.set("abandoned", ab);
+    S.set("village_works", vw);
+    Json bs = Json::obj();
+    bs.set("n", static_cast<int64_t>(big.works.size()));
+    bs.set("planned_km2", pyround(static_cast<double>(big_pl) * cell_km2, 3));
+    bs.set("served_km2", pyround(static_cast<double>(big_sv) * cell_km2, 3));
+    bs.set("canal_km", pyround((static_cast<double>(big_n1) + static_cast<double>(big_n2) * SQRT2) * res_km, 3));
+    bs.set("share", pyround(static_cast<double>(big_sv) / static_cast<double>(std::max<int64_t>(1, n_cult)), 3));
+    bs.set("villages", static_cast<int64_t>(big_vs.size()));
+    S.set("big", bs);
     Json out = Json::obj();
     out.set("heads", hj);
+    out.set("big_works", bigj);
     out.set("canals", canals);
     out.set("ponds", pj);
     out.set("sluices", sj);

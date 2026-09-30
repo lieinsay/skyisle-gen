@@ -48,12 +48,17 @@ CANAL_ZH = {"main": "干渠", "branch": "支渠", "drain": "排水渠", "ns": "�
 POND_ZH = {"weir": "堰塘", "village": "村塘", "hill": "山塘", "polder": "圩塘"}
 SLUICE_ZH = {"head": "渠首闸", "polder": "圩闸", "outlet": "排水闸"}
 SOURCE_ZH = {"river": "常年河", "stream": "季节性溪涧"}
+BIG_ZH = {"weir": "大堰"}                       # 四点四十：邑级大堰（都江堰级）
+MAINT_ZH = {"yi": "邑"}                         # 管它的：邑（官府设堰官、岁修按用水的村出工）
 WORKS_NOTE = ("水利（P6）：渠首（heads）→ 渠（canals：干渠 / 支渠从渠首出来，纵浦 / 横塘是圩田的格子，排水渠从圩田的出水口接到河；"
               "pts = [行, 列] 群栅格坐标，格心 = 整数 + 0.5，圩田的纵浦横塘走在格边上 = 整数）；塘（ponds：村塘 / 山塘 / 圩塘 / 堰塘，area_m2 水面）；"
               "闸（sluices：渠首闸 / 圩闸 / 排水闸）；圩（polders：一格一圩，terrain.npz 的 polder_id 是圩号；dike_km = 圩堤长）与圩田片（polder_patches）。"
               "圩田算已垦、在额度之内（人口照旧 = ⑨）；没排干的湿地照旧是芦苇荡。"
               "P6b：每处都记管它的村（village，都在 summary.manage_walk_km 以内；渠首一村一堰、只灌那个村的田）；"
-              "abandoned = true 的是废村旁没人管的废渠首 / 废渠 / 废塘 / 废渠首闸（abandoned_years = 撤空了几年，ruin = 废村号，village = null），不进 summary 的数（另见 summary.abandoned）。")
+              "abandoned = true 的是废村旁没人管的废渠首 / 废渠 / 废塘 / 废渠首闸（abandoned_years = 撤空了几年，ruin = 废村号，village = null），不进 summary 的数（另见 summary.abandoned）。"
+              "水利分级（四点四十，用户 09-30 定）：岛群层只出邑级的——big_works 是大堰（都江堰级：常年河上的堰，干渠 / 支渠带 work = 堰号，"
+              "maintainer = 邑，turnouts 是每个用水的村的分水口，served_km2 = 灌区里在种的地）与圩区；村级的（村的渠首与渠、村塘 / 山塘 / 堰塘、圩塘、废塘 / 废渠）"
+              "归营建器按风格修，summary.village_works = false 时这里是空的。")
 
 
 def _cells_min(n_km2: float, cell_km2: float) -> int:
@@ -136,9 +141,164 @@ def polder_plan(g: dict, wc: dict, wet: np.ndarray, take1: np.ndarray, n_avail: 
     return out
 
 
+# ---------------------------------------------------------------- 邑级大堰（四点四十：farmland.fill_cultivated 在好地先占之前调）
+def big_plan(g: dict, wc: dict, pit: np.ndarray, n_quota: int) -> list[dict]:
+    """水利分级（用户 09-30 定，Zhouzhu PLAN-LAND L32–L34）：邑级的（都江堰级）是因，在田和村之前定——
+    常年河上汇水 ≥ big_src_min_km2 的格（按汇水降序、隔 big_try_sep_km）为候选渠首，渠水面 = 河床 + 水深 + big_weir_m；
+    灌区的上界 = 离渠首 ≤ big_reach_km、同岛、在渠水面线以下（直线距离算比降）的目标格（坡 < big_cmd_slope_deg、宜垦、不是采场 / 岩类赋存），
+    与水量上限（汇水 × 年雨 × 径流系数 / big_duty_mm）取小；按上界降序试前 big_try 个，各按最省工的路走一遍（与村的渠同式，不限村走得到），
+    灌区按出堆的次序到水量上限就停，取灌得最多的；够 big_min_cmd_km2 且 ≥ 额度的 big_min_quota_frac 才修。一个水系（顺流而下到同一处）至多一处，至多 big_max 处。
+    pit：不开田的格（[H, W] 布尔）。返回 [{island, head, outlet, z0, acc, water_km2, win, par, rc}]。C++ 的 waterworks.cpp big_plan 逐位同式。"""
+    iid = g["island_id"]
+    H, W = iid.shape
+    N = H * W
+    res_km = float(g["res_km"])
+    res_m = res_km * 1000.0
+    cell_km2 = res_km * res_km
+    big_max = int(wc["big_max"])
+    if big_max <= 0:
+        return []
+    J = g["json"]
+    land = iid >= 0
+    h = g["height"]
+    acc = g["flowacc_km2"]
+    accf = acc.ravel()
+    depf = g["river_depth_m"].ravel()
+    weir = float(wc["big_weir_m"])
+    grad_c = float(wc["big_grad_m_per_km"]) * res_km
+    cut = float(wc["canal_cut_m"])
+    a_cost = float(wc["canal_slope_cost"])
+    Rc = float(wc["big_reach_km"]) / res_km
+    Rw = int(math.ceil(Rc - 1e-9))
+    P = float(J["hydro"]["precip_mm"]) / 1000.0
+    runoff = float(J["hydro"]["runoff_coef"])
+    duty = float(wc["big_duty_mm"]) / 1000.0
+    n_try = int(wc["big_try"])
+    t = float(wc["big_try_sep_km"]) / res_km
+    sep2 = t * t
+    need = max(_cells_min(float(wc["big_min_cmd_km2"]), cell_km2), int(math.ceil(float(wc["big_min_quota_frac"]) * n_quota - 1e-9)))
+    # 干渠走得过的格（不过崖缘、湖、常年河、湿地，不跨岛）；灌区的目标格
+    base = land & ~g["cliff"] & ~g["lake"] & ~(g["river"] > 0) & (g["landcover"] != LC_WET)
+    tgt = base & (g["cultivable"] > 0) & ~pit & (g["slope_deg"] < np.float32(wc["big_cmd_slope_deg"]))
+    tgtf = tgt.reshape(-1)
+    passl = base.ravel().tolist()
+    tgtl = tgtf.tolist()
+    hl = h.ravel().tolist()
+    iidl = iid.ravel().tolist()
+    # 渠首候选：按汇水降序（平局格号小），彼此隔 big_try_sep_km
+    cand = np.flatnonzero((land & ~g["lake"] & (g["river"] > 0) & (acc >= np.float32(wc["big_src_min_km2"]))).ravel())
+    cand = cand[np.argsort(-accf[cand], kind="stable")].tolist()
+    kept, kp = [], []
+    for q in cand:
+        qi, qj = divmod(q, W)
+        if any((qi - a) * (qi - a) + (qj - b) * (qj - b) < sep2 for a, b in kp):
+            continue
+        kept.append(q)
+        kp.append((qi, qj))
+    # 顺流而下到哪（D8 接收格走到头）：同一水系只修一处
+    ri, rj = g["recv_i"].ravel().tolist(), g["recv_j"].ravel().tolist()
+    outs = []
+    for q in kept:
+        for _ in range(N):
+            qi, qj = divmod(q, W)
+            a, b = ri[q], rj[q]
+            if a < 0 or b < 0 or (a == qi and b == qj):
+                break
+            q = a * W + b
+        outs.append(q)
+
+    def dig(cc, z0, cap_n):
+        """从渠首按最省工的路走出去：目标格里在渠水面以下的就是灌区，按出堆的次序到 cap_n 就停。"""
+        ci, cj = divmod(cc, W)
+        k = iidl[cc]
+        r0, r1, c0, c1 = max(0, ci - Rw), min(H, ci + Rw + 1), max(0, cj - Rw), min(W, cj + Rw + 1)
+        ww = c1 - c0
+        nwin = (r1 - r0) * ww
+        cost = [math.inf] * nwin
+        ln = [0.0] * nwin
+        par = [-1] * nwin
+        s0 = (ci - r0) * ww + (cj - c0)
+        cost[s0] = 0.0
+        heap = [(0.0, cc)]
+        rc = []
+        while heap:
+            d, q = heapq.heappop(heap)
+            qi, qj = divmod(q, W)
+            lq = (qi - r0) * ww + (qj - c0)
+            if d > cost[lq]:
+                continue
+            if d > Rc:
+                break
+            hq = z0
+            if lq != s0:
+                hq = hl[q]
+                if tgtl[q] and hq <= z0 - grad_c * ln[lq]:
+                    rc.append(q)
+                    if len(rc) >= cap_n:
+                        break
+            for sdi, sdj, L in STEPS:
+                a, b = qi + sdi, qj + sdj
+                if a < r0 or a >= r1 or b < c0 or b >= c1:
+                    continue
+                gp = a * W + b
+                if not passl[gp] or iidl[gp] != k:
+                    continue
+                lp = (a - r0) * ww + (b - c0)
+                nl = ln[lq] + L
+                hp = hl[gp]
+                if hp > z0 - grad_c * nl + cut:
+                    continue
+                sl = abs(hp - hq) / (L * res_m)
+                nd = d + L * (1.0 + a_cost * sl * sl)
+                if nd < cost[lp]:
+                    cost[lp] = nd
+                    ln[lp] = nl
+                    par[lp] = q
+                    heapq.heappush(heap, (nd, gp))
+        return {"island": k, "head": cc, "z0": z0, "acc": float(accf[cc]), "win": (r0, r1, c0, c1), "par": par, "rc": rc}
+
+    out, used_out = [], []
+    for _w in range(big_max):
+        ups = []
+        for i, cc in enumerate(kept):
+            if outs[i] in used_out:
+                continue
+            ci, cj = divmod(cc, W)
+            k = iidl[cc]
+            z0 = hl[cc] + float(depf[cc]) + weir
+            water = float(accf[cc]) * P * runoff / duty
+            cap_n = int(math.floor(water / cell_km2))
+            r0, r1, c0, c1 = max(0, ci - Rw), min(H, ci + Rw + 1), max(0, cj - Rw), min(W, cj + Rw + 1)
+            di = (np.arange(r0, r1) - ci)[:, None]
+            dj = (np.arange(c0, c1) - cj)[None, :]
+            dist = np.sqrt((di * di + dj * dj).astype(np.float64))
+            m = int((tgt[r0:r1, c0:c1] & (iid[r0:r1, c0:c1] == k) & (dist <= Rc) & (h[r0:r1, c0:c1] <= z0 - grad_c * dist)).sum())
+            ups.append((float(min(m, cap_n)), cc, water, z0, cap_n))
+        ups.sort(key=lambda u: -u[0])
+        best, best_n = None, 0
+        for up, cc, water, z0, cap_n in ups[:max(0, n_try)]:
+            if not (up > best_n):
+                break
+            B = dig(cc, z0, cap_n)
+            if len(B["rc"]) > best_n:
+                best_n = len(B["rc"])
+                B["water_km2"] = water
+                best = B
+        if best_n == 0 or best_n < need:
+            break
+        best["outlet"] = outs[kept.index(best["head"])]
+        used_out.append(best["outlet"])
+        idx = np.asarray(best["rc"], dtype=np.int64)
+        tgtf[idx] = False                               # 下一处不再灌这一处的地
+        for q in best["rc"]:
+            tgtl[q] = False
+        out.append(best)
+    return out
+
+
 # ---------------------------------------------------------------- 渠、塘、闸（settle 在水设施之后调）
 def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.ndarray, villages: list[dict], sraster: np.ndarray,
-                     plan: dict, km, ruins: list[dict] | tuple = (), ruin_cells: dict | None = None) -> dict:
+                     plan: dict, km, ruins: list[dict] | tuple = (), ruin_cells: dict | None = None, big: list | tuple = ()) -> dict:
     """P6b（L30）：每处水利都有管它的村（village），在那个村走得到的范围（manage_walk_km）内——
     渠首一村一堰：只灌管它的那个村自己的（旱地）田，渠只走在那个村走得到的地方；圩、圩塘、圩闸归种那组圩田的村，
     纵浦横塘按两旁的圩分给各自的村，排水闸 / 排水渠归出水口最近、走得到的村（排水渠走出去就截短）；
@@ -286,8 +446,9 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
         lat = sorted(q for q in rc if q != entry and (q // W - ci) % s_lat == 0 and (q % W - cj) % s_lat == 0)
         return entry, lat, up, rc
 
-    def emit(c, k, entry, lat, up, n_cmd, hid, extra):
-        """渠 = 渠首到入口、再到各格点的路合成的树：从渠首出来的一段是干渠，分出去的是支渠；灌区的格数按格点均分给各段算渠宽。返回 (段, 直步, 斜步)。"""
+    def emit(c, k, entry, lat, up, n_cmd, hid, extra, idkey="head"):
+        """渠 = 渠首到入口、再到各格点的路合成的树：从渠首出来的一段是干渠，分出去的是支渠；灌区的格数按格点均分给各段算渠宽。返回 (段, 直步, 斜步)。
+        idkey：村的渠记渠首号（head），大堰的渠记堰号（work）。"""
         tl = [entry] + lat
         base, rem = divmod(n_cmd, len(tl))
         served, children = {}, {}
@@ -322,7 +483,7 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
                 n2_h += n2
                 sv = served[pts[1]]
                 q_m3s = qk * (sv * cell_km2)
-                segs.append({"kind": CANAL_ZH["main" if s_ == c else "branch"], "head": hid, "island": k,
+                segs.append({"kind": CANAL_ZH["main" if s_ == c else "branch"], idkey: hid, "island": k,
                              "pts": [[float(p // W) + 0.5, float(p % W) + 0.5] for p in pts],
                              "length_km": round((n1 + n2 * SQRT2) * res_km, 3), "served_km2": round(sv * cell_km2, 3),
                              "width_m": round(max(wmin, 5.0 * math.sqrt(q_m3s)), 1), **extra})
@@ -341,6 +502,73 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
     cvill = [v for v in villages if not pol_field[v["field"]] and f_cells[v["field"]] >= min_cmd]     # 一村一堰：灌自己的旱地田
     heads, head_cells, tried, canals, cmd_cells = [], [], [], [], []
     n1_all = n2_all = 0
+
+    # ---------- 邑级大堰（四点四十）：渠网按 big_plan 的那棵最省工的路树修到灌区里在种的格；每个用水的村一个分水口（渠上离村最近的格）；邑管
+    vw = bool(wc["village_works"])
+    s_big = max(1, int(round(float(wc["big_lateral_km"]) / res_km)))
+    vby = {v["id"]: v for v in villages}
+    bigserved = np.zeros((H, W), dtype=bool)
+    cultf = g["cultivated"].ravel()
+    big_works = []
+    big_n1 = big_n2 = big_sv = big_pl = 0
+    big_vs = set()
+    for wid, B in enumerate(big, start=1):
+        cc = B["head"]
+        ci, cj = divmod(cc, W)
+        k = B["island"]
+        sv = [q for q in B["rc"] if cultf[q] > 0]          # 灌区里在种的格（按出堆的次序）
+        big_pl += len(B["rc"])
+        n1_h = n2_h = n_seg = 0
+        nodes = []                                          # 渠经过的格（不含渠首），升序
+        if sv:
+            r0, r1, c0, c1 = B["win"]
+            ww = c1 - c0
+            par = B["par"]
+            up = lambda q, r0=r0, c0=c0, ww=ww, par=par: par[(q // W - r0) * ww + (q % W - c0)]
+            entry = sv[0]
+            lat = sorted(q for q in sv if q != entry and (q // W - ci) % s_big == 0 and (q % W - cj) % s_big == 0)
+            ns = set()
+            for q in [entry] + lat:
+                x = q
+                while x != cc and x not in ns:
+                    ns.add(x)
+                    x = up(x)
+            nodes = sorted(ns)
+            segs, n1_h, n2_h = emit(cc, k, entry, lat, up, len(sv), wid, {"village": None, "maintainer": MAINT_ZH["yi"]}, "work")
+            canals.extend(segs)
+            n_seg = len(segs)
+        big_n1 += n1_h
+        big_n2 += n2_h
+        big_sv += len(sv)
+        if sv:
+            bigserved.reshape(-1)[np.asarray(sv, dtype=np.int64)] = True
+        cmd_cells.extend(sv)
+        vcnt = {}                                           # 用水的村：灌区里在种的格属哪个村的田（挂在村上的圩田也算；散户的田不算）
+        for q in sv:
+            f = int(fidf[q])
+            if f > 0 and fvill[f]:
+                vcnt[fvill[f]] = vcnt.get(fvill[f], 0) + 1
+        turnouts, vids = [], []
+        for vid in sorted(vcnt):
+            vi, vj = vby[vid]["cell"]
+            bq, bd = -1, 0
+            for q in nodes:
+                d2 = (q // W - vi) * (q // W - vi) + (q % W - vj) * (q % W - vj)
+                if bq < 0 or d2 < bd:
+                    bq, bd = q, d2
+            if bq < 0:
+                continue
+            turnouts.append({"village": vid, "cell": [bq // W, bq % W], "km": km(bq // W, bq % W), "served_km2": round(vcnt[vid] * cell_km2, 3),
+                             "dist_km": round(math.sqrt(bd) * res_km, 2)})
+            vids.append(vid)
+            big_vs.add(vid)
+        big_works.append({"id": wid, "kind": BIG_ZH["weir"], "island": k, "cell": [ci, cj], "km": km(ci, cj), "source": SOURCE_ZH["river"],
+                          "level_m": round(B["z0"], 1), "basin_km2": round(B["acc"], 1), "water_km2": round(B["water_km2"], 1),
+                          "planned_km2": round(len(B["rc"]) * cell_km2, 3), "served_km2": round(len(sv) * cell_km2, 3),
+                          "canal_km": round((n1_h + n2_h * SQRT2) * res_km, 3), "n_canals": n_seg, "maintainer": MAINT_ZH["yi"],
+                          "villages": vids, "turnouts": turnouts})
+    if not vw:
+        cand = []                                           # 村级的渠首、渠（含废渠）不在岛群层出
     for c in cand:
         ci, cj = divmod(c, W)
         if near(ci, cj, head_cells, sep_h2) or near(ci, cj, tried, sep_t2):
@@ -357,14 +585,14 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
         ok_v = []
         for _d2, _id, v in vs:
             F = v["field"]
-            if upper(ci, cj, z0, v["cell"][0], v["cell"][1], lambda r0, r1, c0, c1, F=F: fields_raster[r0:r1, c0:c1] == F) >= min_cmd:
+            if upper(ci, cj, z0, v["cell"][0], v["cell"][1], lambda r0, r1, c0, c1, F=F: (fields_raster[r0:r1, c0:c1] == F) & ~bigserved[r0:r1, c0:c1]) >= min_cmd:
                 ok_v.append(v)
         if not ok_v:
             continue
         tried.append((ci, cj))
         for v in ok_v:
             F = v["field"]
-            got = dig(c, ci, cj, z0, k, v["cell"][0], v["cell"][1], lambda r0, r1, c0, c1, F=F: fields_raster[r0:r1, c0:c1] == F)
+            got = dig(c, ci, cj, z0, k, v["cell"][0], v["cell"][1], lambda r0, r1, c0, c1, F=F: (fields_raster[r0:r1, c0:c1] == F) & ~bigserved[r0:r1, c0:c1])
             if got is None:
                 continue
             hid = len(heads) + 1
@@ -460,8 +688,9 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
             pond = int(bc[int(np.argmax(accf[bc]))])               # 圩塘：圩里最低洼、汇水最多的一格
             pi_, pj_ = divmod(pond, W)
             si_, sj_ = divmod(best_s, W)
-            ponds_p.append({"kind": POND_ZH["polder"], "island": k, "cell": [pi_, pj_], "km": km(pi_, pj_), "polder": pid_,
-                            "area_m2": int(round(n * cell_km2 * 1e6 * pond_frac)), "elev_m": round(float(hf[pond]), 0), "village": vid})
+            if vw:                                          # 圩塘是村级的，归营建器
+                ponds_p.append({"kind": POND_ZH["polder"], "island": k, "cell": [pi_, pj_], "km": km(pi_, pj_), "polder": pid_,
+                                "area_m2": int(round(n * cell_km2 * 1e6 * pond_frac)), "elev_m": round(float(hf[pond]), 0), "village": vid})
             sluices_p.append({"kind": SLUICE_ZH["polder"], "island": k, "cell": [si_, sj_], "km": km(si_, sj_), "polder": pid_, "village": vid})
             r0_, r1_ = int(ii.min()), int(ii.max()) + 1
             c0_, c1_ = int(jj.min()), int(jj.max()) + 1
@@ -598,11 +827,11 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
         q = pick(ci, cj, near_c, None, vcell[hd["village"]])
         if q >= 0:
             ponds.append(mk_pond(q, "weir", max(hill_min, hd["served_km2"] * 1e6 * hill_ratio), head=hd["id"], village=hd["village"]))
-    for v in villages:
+    for v in (villages if vw else ()):                   # 村塘 / 山塘归营建器
         F = int(v["field"])
         f = fields[F - 1]
         vi, vj = v["cell"]
-        if cmd[F] or pol_field[F] or v.get("polder_fields"):          # 灌区里的村（有渠或圩田）：村塘接渠水
+        if cmd[F] or pol_field[F] or v.get("polder_fields") or v["id"] in big_vs:          # 灌区里的村（有渠或圩田）：村塘接渠水
             kind = "village"
         elif 1 <= int(zone[vi, vj]) <= 3:              # 高山 / 山地 / 丘陵：陂塘
             kind = "hill"
@@ -613,7 +842,7 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
         if q >= 0:
             ponds.append(mk_pond(q, kind, area, village=v["id"]))
     ponds_ab = []
-    for r in sorted(ruins, key=lambda r: r["id"]):             # 废塘：死了的村的村塘 / 山塘，淤了、没人管
+    for r in (sorted(ruins, key=lambda r: r["id"]) if vw else ()):     # 废塘：死了的村的村塘 / 山塘，淤了、没人管
         vi, vj = r["cell"]
         kind = "hill" if 1 <= int(zone[vi, vj]) <= 3 else "village"
         q, area = village_pond(vi, vj, kind, max(hill_min, float(r["fallow_km2"]) * 1e6 * hill_ratio),
@@ -670,8 +899,11 @@ def build_waterworks(g: dict, wc: dict, fields: list[dict], fields_raster: np.nd
                "n_polder_villages": sum(1 for v in villages if v.get("polder")),
                "n_villages_with_polders": sum(1 for v in villages if v.get("polder_fields")),
                "abandoned": {"heads": len(ab_heads), "canal_km": round((ab_n1 + ab_n2 * SQRT2) * res_km, 3), "ponds": len(ponds_ab),
-                             "sluices": len(ab_heads)}}
-    return {"heads": heads, "canals": canals, "ponds": ponds, "sluices": sluices, "polders": polders, "polder_patches": patches,
+                             "sluices": len(ab_heads)},
+               "village_works": vw,
+               "big": {"n": len(big), "planned_km2": round(big_pl * cell_km2, 3), "served_km2": round(big_sv * cell_km2, 3),
+                       "canal_km": round((big_n1 + big_n2 * SQRT2) * res_km, 3), "share": round(big_sv / max(1, n_cult), 3), "villages": len(big_vs)}}
+    return {"heads": heads, "big_works": big_works, "canals": canals, "ponds": ponds, "sluices": sluices, "polders": polders, "polder_patches": patches,
             "summary": summary, "note": WORKS_NOTE, "_commanded_cells": sorted(cmd_cells)}
 
 
@@ -693,7 +925,7 @@ def _runs_owner(owners: list) -> list[tuple[int, int, int]]:
 LC_ROCK, LC_FOREST, LC_SHRUB, LC_GRASS, LC_RIVER, LC_LAKE = 2, 4, 5, 6, 10, 11
 LANDUSE_CLASSES = ["没动过（原始地貌）", "开垦的田", "梯田", "渠灌田", "圩田（原为湿地）", "撂荒（在往回长）", "樵牧（村周砍林）", "采场（挖开的地）"]
 LANDUSE_NOTE = ("人工改造（terrain.npz 的 landuse，P6b）：0 没动过；1 开垦的田（在种的旱田，原来是什么见 landcover_natural）；2 梯田（坡地修成台阶）；"
-                "3 渠灌田（谷口的渠灌的田）；4 圩田（原为湿地，排干围圩）；5 撂荒（开过又撂下、按年头在往回长，含废村的田）；"
+                "3 渠灌田（邑级大堰的渠灌得到的在种的地；village_works = true 时也含村的渠灌的田）；4 圩田（原为湿地，排干围圩）；5 撂荒（开过又撂下、按年头在往回长，含废村的田）；"
                 "6 樵牧（村周的林子砍成草场 / 薪炭林）；7 采场（挖开的坑、采石场）。landcover_natural = 没有人以前的地表（上等地画田之前的地表，河、湖照旧）")
 
 

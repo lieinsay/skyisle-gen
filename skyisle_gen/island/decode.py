@@ -213,10 +213,12 @@ def _landing_kind(code: str) -> str:
 
 def waterworks(Wj: dict) -> dict:
     """P6 水利：渠 / 塘 / 闸的代码、渠首的水源 → 中文，加说明（waterworks.py 的 build_waterworks 同形）。"""
-    from .waterworks import CANAL_ZH, POND_ZH, SLUICE_ZH, SOURCE_ZH, WORKS_NOTE
+    from .waterworks import BIG_ZH, CANAL_ZH, MAINT_ZH, POND_ZH, SLUICE_ZH, SOURCE_ZH, WORKS_NOTE
     W = dict(Wj)
     W["heads"] = [dict(h, source=SOURCE_ZH[h["source"]]) for h in Wj["heads"]]
-    W["canals"] = [dict(x, kind=CANAL_ZH[x["kind"]]) for x in Wj["canals"]]
+    if "big_works" in Wj:                         # 四点四十：邑级大堰
+        W["big_works"] = [dict(x, kind=BIG_ZH[x["kind"]], source=SOURCE_ZH[x["source"]], maintainer=MAINT_ZH[x["maintainer"]]) for x in Wj["big_works"]]
+    W["canals"] = [dict(x, kind=CANAL_ZH[x["kind"]], **({"maintainer": MAINT_ZH[x["maintainer"]]} if "maintainer" in x else {})) for x in Wj["canals"]]
     W["ponds"] = [dict(x, kind=POND_ZH[x["kind"]]) for x in Wj["ponds"]]
     W["sluices"] = [dict(x, kind=SLUICE_ZH[x["kind"]]) for x in Wj["sluices"]]
     s = dict(Wj["summary"])

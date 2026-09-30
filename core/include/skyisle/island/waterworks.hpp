@@ -33,6 +33,27 @@ struct PolderPlan {
     int64_t wetland_cells = 0;
 };
 
+// 邑级大堰（都江堰级；用户 09-30 定，Zhouzhu PLAN-LAND L32–L34，DESIGN-NOTES 四点四十）：水利先后看谁修——邑级的是因，在田和村之前；
+// 村级的是果，在村之后、归营建器按风格修。big_plan 在好地先占之前（fill_cultivated 调）：常年河上挑渠首，按最省工的路走出干渠，
+// 灌区 = 坡缓、宜垦、在渠水面以下、走得到的格，按水量截；够大（big_min_cmd_km2 且 ≥ 额度 big_min_quota_frac）才修，一个水系至多一处。
+// 灌区的适宜度加成，好地先占先占它 → 人往灌区聚。渠网、分水口、用水的村在村落好以后（build_waterworks）按同一棵最省工的路树修到在种的格
+struct BigWork {
+    int island = 0;
+    int32_t head = 0;                   // 堰（渠首）的格：常年河上
+    int32_t outlet = 0;                 // 这条河顺流而下到哪（同一水系只修一处）
+    double z0 = 0;                      // 渠水面 = 河床 + 水深 + 堰抬的
+    double acc = 0;                     // 渠首的汇水 km²（float32 的值）
+    double water_km2 = 0;               // 水够灌的地 = 汇水 × 年雨 × 径流系数 / 一年灌一遍要的水
+    int r0 = 0, r1 = 0, c0 = 0, c1 = 0; // Dijkstra 的窗
+    std::vector<int32_t> par;           // 窗内每格的父格（全局格号，−1 = 没走到）
+    std::vector<int32_t> rc;            // 灌区的格（按出堆的次序；到水量上限就停）
+};
+struct BigPlan {
+    std::vector<BigWork> works;
+};
+// pit：不开田的格（采场、岩类赋存）；n_quota：已垦的额度（格）
+BigPlan big_plan(const Group& g, const Config& c, const std::vector<uint8_t>& pit, int64_t n_quota);
+
 // wet：聚落层动手之前的湿地；take1：第一遍好地先占的已垦（扁平）；n_avail：额度里还能给圩田的格数；
 // pit：不开田的格（扁平：资源层的采场——湿地里的盐井——与岩类赋存；P6b 起不围进圩里，湿地片与出水口照旧按整片算）
 PolderPlan polder_plan(const Group& g, const Config& c, const Mask& wet, const std::vector<uint8_t>& take1, int64_t n_avail,
@@ -57,10 +78,12 @@ struct WorksRuin {                      // P6b：废村（按废村号）与它�
 
 // 渠、塘、闸、圩的记录（settlements.json 的 waterworks，代码形）；塘写 15、闸写 16、废塘与废渠首闸写 19 进 sraster。
 // P6b：每处记管它的村（village），都在 works.manage_walk_km 以内；渠首一村一堰、只灌那个村的旱地田（按格算灌区）；
-// 废村旁另挑废渠首 / 废渠 / 废塘（abandoned）。cmd_cells 回传谷口的渠灌得到的格（landuse 的渠灌田，升序）
+// 废村旁另挑废渠首 / 废渠 / 废塘（abandoned）。cmd_cells 回传渠灌得到的在种的格（landuse 的渠灌田，升序）。
+// 水利分级（四点四十）：big 的大堰先修（邑管；渠网只修到在种的格、每个用水的村一个分水口）；works.village_works = 0 时村级的
+// （村的渠首与渠、村塘 / 山塘 / 堰塘、圩塘、废塘 / 废渠）不在岛群层出，归营建器
 Json build_waterworks(const Group& g, const Config& c, const std::vector<WorksField>& fields, const GridI& fields_raster,
                       const std::vector<WorksVillage>& villages, Grid<uint8_t>& sraster, const PolderPlan& plan,
-                      const std::vector<WorksRuin>& ruins, std::vector<int32_t>& cmd_cells);
+                      const std::vector<WorksRuin>& ruins, const BigPlan& big, std::vector<int32_t>& cmd_cells);
 
 // P6b（L31）：没有人以前的地表（cover_natural，河道 / 湖照现状）与人工改造码（waterworks.py 的 LANDUSE_CLASSES：0 没动过 1 开垦的田 2 梯田 3 渠灌田
 // 4 圩田 5 撂荒 6 樵牧 7 采场）→ g.landcover_natural / g.landuse

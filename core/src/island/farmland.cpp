@@ -130,6 +130,13 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
         for (size_t k = 0; k < N; ++k)
             if (g.res_field[FK_ORE].v[k] > 0 || g.res_field[FK_SULFUR].v[k] > 0 || g.res_field[FK_STONE].v[k] > 0) pit[k] = 1;
     }
+    // ---- 邑级大堰（四点四十，big_plan）：在好地先占之前定；灌区的格适宜度加成（渠灌的地一亩顶两亩），好地先占先占它 → 人往灌区聚
+    out.big = big_plan(g, c, pit, n_quota);
+    {
+        const double gain = 1.0 + c.get("works.big_suit_gain");
+        for (const BigWork& bw : out.big.works)
+            for (int32_t q : bw.rc) g.suit[q] = g.suit[q] * gain;
+    }
     Mask wet(H, W, 0);                                    // 聚落层动手之前的湿地（P6 的圩田从这里挑）
     for (size_t k = 0; k < N; ++k) wet.v[k] = (g.island_id.v[k] >= 0 && g.landcover.v[k] == LC_WET) ? 1 : 0;
     // ---- 宜垦的连通片（不跨岛）与定居门槛
@@ -355,6 +362,10 @@ FillResult fill_cultivated(Group& g, const Config& c, Rng& rng, const Mask& wate
     s.set("floor_km2", pyround(static_cast<double>(n_g) * cell_km2, 3));
     s.set("wetland_km2", pyround(static_cast<double>(out.polders.wetland_cells) * cell_km2, 3));
     s.set("polder_km2", pyround(static_cast<double>(n_p) * cell_km2, 3));
+    int64_t n_bp = 0;
+    for (const BigWork& bw : out.big.works) n_bp += static_cast<int64_t>(bw.rc.size());
+    s.set("n_big", static_cast<int64_t>(out.big.works.size()));
+    s.set("big_planned_km2", pyround(static_cast<double>(n_bp) * cell_km2, 3));
     out.summary = std::move(s);
     return out;
 }

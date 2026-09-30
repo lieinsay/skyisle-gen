@@ -415,14 +415,25 @@ def _works_check(g: dict, S: dict) -> dict:
     vp = [p["village"] for p in WK["ponds"] if p.get("village") is not None and p["kind"] in ("村塘", "山塘") and not p.get("abandoned")]
     dup_pond = len(vp) - len(set(vp))
     far, unmanaged, bad_aband, bad_cmd = _works_manage(g, S, pid)
-    ok = not (bad_head or bad_canal or bad_pond or bad_sluice or bad_polder or dup or dup_pond or far or unmanaged or bad_aband or bad_cmd)
+    # 四点四十：邑级大堰——堰在本岛的常年河上、邑管、灌区里在种的不超过规划的、用水的村都在、大堰的渠都记着堰号；村级的关了（village_works = false）就不该有村的渠首和塘
+    vids = {v["id"] for v in S["villages"]}
+    BW = WK.get("big_works", [])
+    wids = {w["id"] for w in BW}
+    bad_big = [w["id"] for w in BW if not river[w["cell"][0], w["cell"][1]] or iid[w["cell"][0], w["cell"][1]] != w["island"] or w["maintainer"] != "邑"
+               or w["served_km2"] > w["planned_km2"] + 1e-9 or any(t["village"] not in vids for t in w["turnouts"])
+               or [t["village"] for t in w["turnouts"]] != w["villages"]]
+    bad_big += [f"渠{c['id']}" for c in WK["canals"] if "work" in c and (c["work"] not in wids or c.get("maintainer") != "邑")]
+    vw_off = WK["summary"].get("village_works") is False and bool(WK["heads"] or WK["ponds"])
+    ok = not (bad_head or bad_canal or bad_pond or bad_sluice or bad_polder or dup or dup_pond or far or unmanaged or bad_aband or bad_cmd or bad_big or vw_off)
     ws = WK["summary"]
     return {"id": "SET-works", "name": "水利（P6）：渠首在常年河 / 溪涧上；谷口的渠除渠首外走在本岛陆地上（不上崖缘、湖、常年河）；塘、闸在本岛陆地上；"
             "圩号栅格与圩的格数一致；一块田只归一处渠首；一个村至多一口村塘 / 山塘；P6b：每处都有管它的村（渠首、渠的每一点、塘、闸、圩的每一格（整格）"
-            "都在它走得到的范围内），渠首只灌那个村的田；废弃的（abandoned）没有管它的村、记着废村与撤空的年头",
+            "都在它走得到的范围内），渠首只灌那个村的田；废弃的（abandoned）没有管它的村、记着废村与撤空的年头；四点四十：邑级大堰在本岛常年河上、邑管、"
+            "在种的 ≤ 规划的灌区、分水口的村都在，大堰的渠记着堰号；村级水利关了就没有村的渠首和塘",
             "value": {"bad_heads": bad_head[:10], "bad_canals": bad_canal[:10], "bad_ponds": bad_pond[:10], "bad_sluices": bad_sluice[:10],
                       "bad_polders": bad_polder[:10], "field_in_two_heads": dup[:10], "village_two_ponds": dup_pond,
                       "too_far": far[:10], "unmanaged": unmanaged[:10], "bad_abandoned": bad_aband[:10], "head_field_not_village": bad_cmd[:10],
+                      "bad_big_works": bad_big[:10], "village_works_left": vw_off, "big_works": len(BW),
                       "heads": ws["n_heads"], "canal_km": ws["canal_km"], "ponds": ws["n_ponds"], "sluices": ws["n_sluices"], "polder_km2": ws["polder_km2"],
                       "abandoned": ws.get("abandoned")},
             "threshold": "全 0", "pass": bool(ok), "hard": True, "note": None}
@@ -461,6 +472,8 @@ def _works_manage(g: dict, S: dict, pid: np.ndarray) -> tuple[list, list, list, 
         if not x.get("abandoned") and x.get("village") in V and x["fields"] != [V[x["village"]]["field"]]:
             bad_cmd.append(x["id"])
     for x in WK["canals"]:
+        if "work" in x:                             # 四点四十：大堰的渠邑管（岁修按用水的村出工），不按村走得到查
+            continue
         one("渠", x, x["pts"])
     for x in WK["ponds"]:
         one("塘", x, [[x["cell"][0] + 0.5, x["cell"][1] + 0.5]])
