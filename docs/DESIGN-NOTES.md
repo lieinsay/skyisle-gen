@@ -2394,6 +2394,50 @@ pytest 9.1、nanobind 3.1.0、`pip install -e .`；`_core.cp312-win_amd64.pyd` �
 
 **中文字体**：ME Pro 上第一次出图中文是缺字方框——matplotlib 的字体缓存（`~/.cache/matplotlib/fontlist-v3.11.0.json`）是 09-19 装 `fonts-noto-cjk` 之前建的，删掉让它重建就认到了 Noto Sans CJK SC（字体回退表里本来就有）。以后在那边装了字体要删这份缓存。
 
+## 四点四十二、删 Python 参考后端（2026-09-30，PLAN-CORE 第九节的收尾、PLAN-NATURE 开工前第二件事）
+
+四点四十一在 ME Pro 上验过两个后端逐位相同，用户同意「验过就删」。删之前的最后一版打了 git tag **`python-reference-final`**（7d025dc）；
+要翻当年的 Python 算法、或 C++ 注释里写的「xxx.py 同式」，都看那一版。
+
+**删了什么**：
+- 行星层：`almanac` / `noise` / `tectonics` / `moisture` 整个删；s01–s09 的 run() 只剩调 C++ 的那一支，Python 的算法（s02 的风廓线与 G 涡、s03 的密度网格与抽样与陆地模型、
+  s05 的 G 阻断、s06 的有向图、s07 的适宜度与窗、s08 的特征表与不动点、s09 的人口……）连同只给它们用的 import 删掉；
+  `sphere` / `skeleton` / `graph` / `weights` / `rng` / `localwind` 只留前端（check、九格表、操作台、第三层）还在用的几个函数。
+- 第三层：`layout` / `territory` / `river` / `tiers` / `compare` 整个删；`terrain` 只剩多核岛的 cores 摘要，`hydro` 只剩地表码、`build_hydro` 的桥与局地雨摘要，
+  `grid` 只剩平移、膨胀、PNG 写出，`resources` / `climate` / `weather` / `settle` / `farmland` / `waterworks` / `market` 只剩类表、中文、备注、摘要的拼装与写产物、出图，
+  `lod` 的块降采样、`climate.classify_all` 与 `weather.multi_year_stats` 只走 C++，`decode` 去掉没用的 `resources_after_settle`。模块说明里的算法描述留着，改成「算法在 C++ 的同名文件」。
+- 开关：`[engine] backend` 键、`run / stage / island --backend`、`island compare`（含 `--timing` / `--no-python`）去掉；`config.validate` 见到 `engine.backend` 不是 cpp 就报错
+  （旧 run 的快照里的 `backend = "cpp"` 无害）。`island batch` 只写 `islands/batch.json`（原来 cpp 写 batch_cpp.json 以免盖掉 python 的）。
+- `docs/probes/transect.py`：P7 之前的旧产物没有大泊场时，原来拿 Python 的 market 现算，现在记空（`derived_harbors = True`）。
+
+**没动的**：①–⑨ 的阶段 key 照旧固定混入 "+cpp"（`engine.cpp_key_suffix`），`STAGE_VERSIONS` 不改——产物逐位不变，改了只会让所有旧 run 白白重算；
+P6 之前或当年 `--backend python` 跑的 run 快照照旧能 check / viz / island，再 `run` 会整个重算一遍（产物逐位不变）。
+C++ 里 numpy 同式的函数照旧用：前端与 check 还是 numpy，同式才不会在边界上两边判得不一样。C++ 注释里的「xxx.py 同式」不改（指 tag 那一版）。
+
+**回归工具**：两个后端对照没了，改动前后的对照改用 `docs/probes/diff_runs.py`（由这次验证用的临时脚本整理）：
+行星层 run 目录 ①–⑨ 的 npz 逐数组逐位、json 逐值（去掉用时、run 名、阶段 key）、md 逐字；岛群产物目录 npz 逐数组、json 逐值、png / csv 逐字节；`--tol` 放过跨平台的末位。
+
+**验证**：
+- pyflakes：删之前 38 条警告（都是早就有的），删之后 14 条，没有新的；全部模块能 import。
+- 三 seed `run --explain`：①–⑩ 全命中缓存（key 没变）。
+- seed 42 从 ① 重算（`stage 1 --set run.id=verify42`，① – ⑩）：与 out/seed42 的 ①–⑨ 25 个文件 0 处不同，⑩ 里的 check 退出码 0。
+- 剖面五群 2051 / 6329 / 1165 / 5498 / 6610 重新生成：与删之前的产物逐字节相同（17–19 个文件，0 处不同）。
+- 用 tag 那一版建一个 git worktree（拷进同一个 `_core.pyd`），两边各跑一遍 `run --upto 9`、`island lod`（三群 × 2 km / 1 km）、`island stats`、`island floats`（十群）、
+  `island batch --sample 12`、`island check 2051`、`check`：①–⑨ 25 个文件 0 处不同；`islands_lod/` 7 个文件（6 个粗版 npz 与 index，粗版 meta 里只差用时）、`islands/` 下 225 个文件（季型统计、浮高统计 json / npz、
+  批跑与 check 生成的 13 群的整套产物含图）逐项相同，只差批跑结果的文件名（原来 cpp 写 batch_cpp.json，现在 batch.json，内容按行相同）；
+  两边的批跑都是 12 群里 #5586 挂软项 RES-quarry（删之前就有），`island check 2051` 与 `check` 两边都是 0。
+  顺手让 `diff_runs.py` 认 npz 里的 JSON 串（粗版的 meta）、也能比任意目录。
+- 三 seed `check`：0 硬 0 软 0 报警。操作台起一个服务把 13 个 GET 接口（world / fields / grid / check / path / island / island 的 data 与 raster / 季型 / 九格表 / 营建的风格与聚落）
+  各打一遍，都是 200；`/api/path` 2051 → 6329 按商旅走不到（两边的代码算出来一样，是模型本来的结果，不是删坏了）。
+- pytest：253 → 244 个，全过（`244 passed in 287 s`，fork 改完之后我又从头跑了一遍）；扩展没编时只剩 test_core 里不靠 C++ 的 23 个（静态断言、配置校验，`test_stages_do_not_import_island`、
+  `test_nothing_imports_town` 挪进 test_core 好在没编时也跑），其余 7 个文件整个跳过；conftest 不再塞 `engine.backend=python`。
+  **删的**（没有 C++ 绑定，覆盖靠三 seed 的 check 与 core/tests/selftest.cpp）：⑧ 不动点与 conflict_argmax 四个、水汽两个、带界位移、③ 的陆地模型、历法两个、季节强度两个、
+  纬度密度剖面、岛群的季名表；p6c / p6d 纯两边对照的 `test_stage_products_identical`。
+  **改成测 C++ 性质的**：图算法（Dijkstra 含有界、弱连通分量、介数与线程数无关）、kNN 跨日界线、网格插值、岛形与连通分量、势力范围、形态学包含、每个标号一块连通、
+  填洼只抬高、D8 下游更低、汇流按出口加起来 = 陆地格数、塑形后中位 = 台面且峰 − 岸缘 = 目标起伏、多核的核格数加起来 = 岛格数、IS-daily 走 C++；
+  p6b 的 P3 / P5 / P6 / P6b / 大堰 / P7 各条路径走到并且 island check 硬项全过；p6c / p6d 的 key 恒带 "+cpp"、变体只从该变的那步起变、内存对象与读回的对象生成的群逐字节相同。
+  与 numpy 本身逐位比的（rng、数学函数、求和 / 舍入、rfft、分位、中位数）与 C++ 对 graph.py 的逐位比（graph.py 还给 check / probe 用）留着。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。

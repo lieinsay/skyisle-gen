@@ -62,7 +62,9 @@
    - 先把 ME Pro 的遗留做掉：按新名字重装、编 C++ 核心、三 seed 与 `island compare` 逐位对照（CLAUDE.md「ME Pro」一段）；验过就按 PLAN-CORE 删 Python 的算法，A 起只有 C++。
    - ME Pro 一时做不了：Python 冻结在 A 之前那一版，DESIGN-NOTES 记分叉点（「从哪一版起两个后端不再逐位相同、差在哪」），`--backend python` 之后只用来对照 A 以前的产物，逐位对照测试改成 C++ 自身的回归（同 seed 重跑一致、与线程数无关）。
    - **已办（09-30）**：ME Pro 按新名字重装（`~/.venvs/skyisle`、`~/.local/bin/skyisle`、`SKYISLE-DEV-ENV`，numpy 2.5.2），编过 C++；三 seed ①–⑨ 两个后端逐数组相同、六个 check 0 / 0 / 0、`island compare` 30 / 30 整套产物逐字节相同。
-     和 Windows 比：浮点只差末位（绝对差 ≤ 3.5 × 10⁻¹¹，两边的 libm 不同），整数与离散的结果（航线、邦、兼并）全同。**删 Python 的算法接着做，A 起只有 C++。**
+     和 Windows 比：浮点只差末位（绝对差 ≤ 3.5 × 10⁻¹¹，两边的 libm 不同），整数与离散的结果（航线、邦、兼并）全同。
+   - **已删（09-30，DESIGN-NOTES 四点四十二）**：Python 的算法、`[engine] backend`、`--backend`、`island compare` 都去掉了（git tag `python-reference-final` 留着删之前那一版）；
+     删完三 seed 全命中缓存、seed 42 从 ① 重算逐位相同、剖面群的产物逐字节相同。**A 起只有 C++**；改动前后的回归用 `docs/probes/diff_runs.py` 与改前的产物比。
 
 ## 四、阶段 0：设定与文档（本次，09-30）
 
@@ -131,8 +133,8 @@
 - 哨兵：seed 2026（⑦ 驼峰）、seed 7（⑥ 介数的源权重读 `catch`）。
 - `pipeline.STAGE_VERSIONS`：①（`planet.json` 多一块）、④、⑦、⑨、⑩（九格表读可耕率与 `catch`、「叠层」的字）+1；③ 不动，⑥ 不改代码就不动。
 - 开局那一片：⑦ 的中心、#6329 周边量出来给用户看；Zhouzhu `DISCUSS-START-REGION` 跟着看。
-- DESIGN-NOTES 一节（四点四十一）；CLAUDE.md「当前默认值的由来」的气候段重写；DATA-GUIDE 写垂直结构、季节降水。
-- 逐位对照测试按第三节前提 2 的决定换基线。
+- DESIGN-NOTES 一节（四点四十三起；四点四十一、四点四十二是开工前的两件事）；CLAUDE.md「当前默认值的由来」的气候段重写；DATA-GUIDE 写垂直结构、季节降水。
+- 回归：没改的阶段用 `docs/probes/diff_runs.py` 与改前的 run 比（应逐位相同），改了的列出变了哪些数组（第三节前提 2 已办：只有 C++）。
 
 ## 六、阶段 B：岛群层地形——侵蚀细化、岩层进侵蚀、特殊的山
 
@@ -180,7 +182,7 @@
 - `island check` 的 IS-* / RES-* / SET-* 全过；三 seed `island batch --sample 30`。
 - 地形统计（参照）：山地坡中位、> 40° 占比、1 km 窗高差，改前改后对照。
 - 下游：宜垦、石料、村址、河网都会变——剖面八群（`docs/probes/transect.py`）前后对照；营建器（town）读的场地也会变。
-- 回归：同 seed 重跑逐字节一致、与线程数无关；`island compare` 按前提 2 的决定办。
+- 回归：同 seed 重跑逐字节一致、与线程数无关；有意改结果的对照用 `docs/probes/diff_runs.py` 列出哪些数组变了（前提 2 已办：只有 C++）。
 - DESIGN-NOTES 一节；DATA-GUIDE 第一批：高程、岸距、崖层、地貌点。
 
 ## 七、阶段 C：岛群层的水——真实的河、漫滩、集水核、地下水
@@ -255,7 +257,7 @@ D4 在 A 之后就能做；D1 要 B4，D2 / D5 要 B，D3 / D6 要 C。
 | # | 参数 | 建议起点 | 什么时候定 |
 |---|---|---|---|
 | 1 | numpy 环境 | 另建 venv 装 2.5.2 | **已办**（第三节） |
-| 2 | Python 参考后端 | ME Pro 验过，删 Python 算法 | **ME Pro 已验**，删算法在 A 之前做（第三节） |
+| 2 | Python 参考后端 | ME Pro 验过，删 Python 算法 | **已办**：ME Pro 已验、09-30 删了（第三节，DESIGN-NOTES 四点四十二） |
 | 3 | 抬升率基础值与各项系数、下沉压制、季风强度 k_mon | 按物理取，看柯本报告与剖面再调，不对着地球比例凑 | A 中 |
 | 4 | 降水线曲线；⑨ 的雨项怎么拆 | 约 250 / 400 / 600 mm 三个折点 | A 中 |
 | 5 | ⑦ 驼峰的峰与宽 | 峰 500–1000 mm | A 中 |
@@ -273,7 +275,7 @@ D4 在 A 之后就能做；D1 要 B4，D2 / D5 要 B，D3 / D6 要 C。
 
 - **开局那一片会变**：A 动 ⑦ 的中心和 ⑨ 的人口，B 动地形，C 动河与聚落。每阶段量出来给用户看；Zhouzhu 的开局、金标、`site_survey` 基线要重录。
 - **验收阈值是按旧模型校的**：P5、P7、C1–C5 可能要重看，理由写进 DESIGN-NOTES，不为过而改。
-- **逐位对照失效**：A 以后 Python 后端不再逐位相同（除非照抄），十几个逐位测试要按前提 2 换基线。
+- ~~逐位对照失效~~：Python 参考后端 09-30 删了（四点四十二），不再有两个后端要对齐；原来的逐位对照测试改成了只测 C++ 的性质。
 - **性能**：B 的原生分辨率侵蚀可能让整群生成慢几倍，全行星粗版跟着慢。
 - **范围**：季风只进水汽、不进 ⑤⑥ 的风；集水核的水只在第三层，⑨ 的人口不知道它（第三层不回灌，设定就这么定的）。
 - **营建器**（town）读岛群产物，场地跟着 B、C 变；它本来只给用户做参考，不接游戏。
@@ -281,8 +283,8 @@ D4 在 A 之后就能做；D1 要 B4，D2 / D5 要 B，D3 / D6 要 C。
 ## 十二、每阶段的收尾（照 CLAUDE.md）
 
 - 改了阶段代码 → `pipeline.STAGE_VERSIONS` +1；新参数写进 `config/default.toml` 并注释；键的含义变了就改键名。
-- 新改动先在 C++ 里做；Python 不照抄时 DESIGN-NOTES 记分叉点。
+- 算法只在 C++ 里（四点四十二）；没改的部分用 `docs/probes/diff_runs.py` 与改前的产物比。
 - 三 seed `check` 0 硬 0 软；`island batch --sample 30`；`pytest`。
-- DESIGN-NOTES 一节（四点四十一起）；CLAUDE.md 跟上（架构速查、默认值的由来、未做）；DATA-GUIDE 跟着字段。
+- DESIGN-NOTES 一节（四点四十三起）；CLAUDE.md 跟上（架构速查、默认值的由来、未做）；DATA-GUIDE 跟着字段。
 - Zhouzhu 两条导出路（`tools/export_skyisle.py`、`tools/export_planet.py`）与 `site_survey`。
 - 提交信息用中文；用户开口才提交。

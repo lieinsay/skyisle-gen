@@ -18,9 +18,9 @@ strength(t, j) = reach(t, o→j) × adopt(t, j)
 ## 安装与运行
 
 ```bash
-# Python ≥ 3.11，依赖仅 numpy + matplotlib（测试另需 pytest）；默认后端是 C++ 核心库，先编它（见下「C++ 核心库」）
-pip install numpy matplotlib pytest nanobind
-python core/build.py                             # 约 1 分钟；没编时加 --backend python 用冻结的 Python 参考后端
+# Python ≥ 3.11，依赖仅 numpy（钉 2.5.2）+ matplotlib（测试另需 pytest）；算法在 C++ 核心库里，先编它（见下「C++ 核心库」）
+pip install numpy==2.5.2 matplotlib pytest nanobind
+python core/build.py                             # 约 1 分钟；没编时各命令报错（Python 参考后端 2026-09-30 删了）
 
 python -m skyisle_gen.cli run --seed 42          # 全十步：①–⑨ 约 3 s（C++），⑩ 出图约 1 分钟
 python -m skyisle_gen.cli check --run out/seed42 # 单独重跑验收
@@ -227,12 +227,13 @@ python -m skyisle_gen.cli serve                               # 营建调试台 
 生成器的算法已整体移植成 `core/` 里的 C++17 核心库（不含 Python、不含 Godot；Zhouzhu 以后以子模块只编它），
 Python 前端经 nanobind 扩展 `skyisle_gen._core` 调它，命令与产物格式不变。设计稿 `docs/PLAN-CORE.md`，实测 DESIGN-NOTES 四点二十三 – 四点二十六。
 **P6a（已做）**：第三层的地形段——布局（含势力范围）、岛形、地形、水系、河道成形。
-**P6b（已做）**：第三层其余——资源（点 / 片 / 散）、聚落与层级、四季、逐日天气、粗版降采样；cpp 后端下整群 `generate` 一次在 C++ 里算完，
+**P6b（已做）**：第三层其余——资源（点 / 片 / 散）、聚落与层级、四季、逐日天气、粗版降采样；整群 `generate` 一次在 C++ 里算完，
 前端只拼 island.json、写产物、出图、校验。
-**P6c（已做）**：管线的 ①–④（行星与历法、风带、岛群分布与板块、局地风与水汽降水与季节强度）；cpp 后端下这四步由 C++ 算、npz / json 照旧由 Python 写，
+**P6c（已做）**：管线的 ①–④（行星与历法、风带、岛群分布与板块、局地风与水汽降水与季节强度）；这四步由 C++ 算、npz / json 照旧由 Python 写，
 第三层的行星层输入也由 C++ 直接给。
-**P6d（已做）**：管线的 ⑤–⑨（障碍、航路与抽样介数、文明中心与地区、特征扩散、政治层），第三层的人口与邦都也由 C++ 给；**默认后端切到 C++**。
-⑩ 输出（九格表、出图）只在 Python。Python 版的算法冻结成**参考后端**（`--backend python`），只作对照，新改动先在 C++ 里做。
+**P6d（已做）**：管线的 ⑤–⑨（障碍、航路与抽样介数、文明中心与地区、特征扩散、政治层），第三层的人口与邦都也由 C++ 给；默认后端切到 C++。
+⑩ 输出（九格表、出图）只在 Python。移植时 Python 版的算法留作参考后端对照，Windows 与 Linux（ME Pro）上都验过逐位相同之后，
+**2026-09-30 删了**（DESIGN-NOTES 四点四十二；git tag `python-reference-final` 是删之前的最后一版，C++ 注释里「xxx.py 同式」指的是那一版）。
 
 构建（要 CMake ≥ 3.20、C++17 编译器；Windows 用 VS 2022 的 MSVC，脚本自己进 x64 环境；Linux 直接 cmake，有 Ninja 用 Ninja）：
 
@@ -242,17 +243,15 @@ python core/build.py                 # Release → skyisle_gen/_core.cp312-win_a
 python core/build.py --test          # 另跑 C++ 自检（ctest）；--debug 调试版；--clean 重来
 ```
 
-用哪个后端由 `[engine] backend` 定（P6d 起默认 `"cpp"`；`"python"` 是冻结的参考后端）：
+改动前后的回归（顶替原来两个后端的 `island compare`）：
 
 ```bash
-python -m skyisle_gen.cli run --seed 42 --backend python --set run.id=py-seed42   # 参考后端：①–⑨ 用 Python 算（对照用）；两个后端的阶段缓存 key 分开，另放一个目录
-python -m skyisle_gen.cli island 2051 --run out/seed42 --backend python     # = --set engine.backend=python；check / batch / lod / stats 同样
-python -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --jobs 10   # 两个后端对照（统计 + island check + 整套产物逐字节）→ islands/compare.json
-python -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --timing    # 整群 generate（不写产物）的用时 → islands/timing.json（--no-python 跳过慢的 python）
+python docs/probes/diff_runs.py out/seed42 out/verify42          # ①–⑨ 的 npz 逐数组逐位、json 逐值、md 逐字（--tol 1e-9 放过跨平台 libm 的末位）
+python docs/probes/diff_runs.py 旧/islands/2051 out/seed42/islands/2051   # 一个岛群的整套产物
 ```
 
-没有 `[engine]` 段的旧 run 快照（如 P6 之前的 out/seed42）按 python 算阶段 key：在上面照旧 `check` / `viz` / `island` 没问题，
-但用默认的 cpp 再 `run --seed 42` 会把 ①–⑩ 当成缓存未命中整个重算（产物逐位不变，只是 `_meta.json` 的 key 与 engine 换了）。
+①–⑨ 的阶段 key 固定混入 "+cpp"（沿用 cpp 后端时的 key）：P6d 以后用 cpp 跑的 run 照旧命中缓存；
+P6 之前、或当年用 `--backend python` 跑的 run 快照照旧能 `check` / `viz` / `island`，再 `run` 会把 ①–⑩ 整个重算一遍（产物逐位不变）。
 
 随机流与 numpy 逐位一致（PCG64 / SeedSequence / ziggurat 正态与指数 / 泊松 …），浮点运算次序也照 numpy 与 CPython 做，所以两个后端的整套产物
 通常逐字节相同（cpp 后端的 island.json 在 meta 里多一个 `"engine": "cpp"`；逐位一致只在开发机上验过，换 CPU 架构或 C 库可能差一位）；
@@ -376,15 +375,14 @@ core/             C++ 核心库（CMake；build.py 一键构建；include/skyisl
 skyisle_gen/
   stages/         s01_planet … s10_output（十步；s09_polity 为第四批 R7 的政治层）
   polity.py       政治层产物的只读封装（邦名 / 状态 / 探针行 / 摘要）
-  almanac.py      历法 ↔ 轨道自洽（4 季 × 28 太阳日 → 恒星质量 / 轨道半径 / 卫星；反向亦可），① 调用
   geology.py      地质表现层：③ 板块格局 → 九格表 ① / 探针的叙事文本（原则甲：不进推导）
-  graph.py        Dijkstra / 抽样介数 / 连通分量（纯 numpy + heapq；参考后端，C++ 版在 core/.../planet/graph.hpp）
+  graph.py        Dijkstra / 抽样介数 / 连通分量（纯 numpy + heapq；check 的 P6 反事实、probe、操作台的路径用；管线用 C++ 版 core/.../planet/graph.hpp）
   culture.py      槽位份额 / TV 文化距离 / 同言线
   check.py        八条验收 + 气候 + 铁律自检 + 骨架/历法校准
   ninegrid.py     九格表草稿生成（docs/08）
-  engine.py       生成器后端开关（[engine] backend）与行星层的 C++ 桥（各步 C++ 对象的缓存、从 npz 读回）
+  engine.py       行星层的 C++ 桥（配置展平、各步 C++ 对象的缓存、从 npz 读回）
   town/           聚落营建器前端（独立工具，PLAN-TOWN）：配置、裁窗口、风格加载、营建请求、产物、出图、画廊、命令；算法在 core/.../town/；调试台在 web/town_api.py + static/town.html
-  probe.py  viz.py  weights.py  noise.py  sphere.py  rng.py  config.py  pipeline.py
-tests/            公式单测 + 确定性/缓存链集成测试 + C++ 后端对照（test_core_engine / test_core_p6b / test_core_p6c / test_core_p6d；
-                  conftest.py：扩展没编时不依赖 C++ 的测试自动用 python 后端）
+  probe.py  viz.py  weights.py  sphere.py  skeleton.py  localwind.py  rng.py  config.py  pipeline.py
+tests/            静态断言与配置校验 + C++ 核心的性质测试（与 numpy 逐位、确定性、与线程数无关、各条路径走到）+ 确定性/缓存链集成测试
+                  （test_core_engine / test_core_p6b / p6c / p6d / test_core_float / test_island / test_pipeline；扩展没编时这些整个文件跳过）
 ```

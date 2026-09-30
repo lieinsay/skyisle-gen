@@ -9,10 +9,10 @@
 ## 环境与命令
 
 - Python 3.12 的专用 venv（2026-09-30 起，DESIGN-NOTES 四点四十一）：`%LOCALAPPDATA%\venvs\skyisle\Scripts\python.exe`（PowerShell 里用 `$py = "$env:LOCALAPPDATA\venvs\skyisle\Scripts\python.exe"`；Git Bash 里 `"$LOCALAPPDATA/venvs/skyisle/Scripts/python.exe"`）。公用的 Python312 装着别的东西、numpy 是 1.26.4，**不要用它、也不要动它**。依赖仅 numpy + matplotlib（+ pytest；编 C++ 核心要 nanobind + CMake + VS 2022）；**numpy 钉在 2.5.2**（C++ 的逐位对照照它追的，别升别降）。**不引入 scipy/networkx/pandas。**
-- **默认后端是 C++ 核心库（P6d 起，`[engine] backend = "cpp"`）**：新机器先 `$py core/build.py`；扩展没编时 cpp 会报错（不静默退回），那台机器上先用 `--backend python`（冻结的参考后端）。
+- **算法只在 C++ 核心库里**（`core/`；Python 参考后端 2026-09-30 删了，git tag `python-reference-final`，DESIGN-NOTES 四点四十二）：新机器先 `$py core/build.py`，扩展没编时报错。
 - **ME Pro（Debian，无显示器，`ssh liein@10.8.0.12`）**：09-30 按新名字重装（四点四十一）——代码 `~/dev/skyisle-gen`（从 GitHub clone）、venv `~/.venvs/skyisle`（Python 3.13、numpy 2.5.2）、
   软链 `~/.local/bin/skyisle`、`~/.skyisle-env.sh`（`SKYISLE-DEV-ENV` 段，`~/.bashrc` 与 `~/.profile` 都 source；带代理与 `MPLBACKEND=Agg`）。C++ 核心已编（g++ 14、cmake 3.31、Ninja），
-  三 seed ①–⑨ 与 `island compare` 30 群两个后端逐位相同；和 Windows 只差浮点末位（两边的 libm 不同），离散结果全同。
+  删 Python 算法之前在那边验过：三 seed ①–⑨ 与 `island compare` 30 群两个后端逐位相同；和 Windows 只差浮点末位（两边的 libm 不同），离散结果全同。
   中文图标：`fonts-noto-cjk`（Noto Sans CJK SC 在字体回退表里）；装了新字体要删 `~/.cache/matplotlib/fontlist-*.json` 让它重建。`pipeline` 与 `serve` 不要同时跑；操作台绝不绑 `0.0.0.0`。
 - 一律在仓库根下执行：
   ```
@@ -34,10 +34,8 @@
                                                   # 默认顺带出第 --year 年的逐日天气：同一 npz 的 weather_<列>（与 weather_y0.csv 逐行相同，外加 temp_rim_c）+ weather_meta（气候参数头，四点二十七）；
                                                   # 已有的跳过（不带天气 / 年份不对的重跑）；全行星 2 km + 1 km 在 cpp 下 22 进程 8.5 分钟（Zhouzhu 的 tools/export_planet.py 读它打行星包）
   $py core/build.py [--test] [--debug] [--clean]  # 编 C++ 核心库 → skyisle_gen/_core.*.pyd（要 pip install nanobind；Windows 自动进 VS 2022 x64 环境，CMake + Ninja，约 1 分钟）
-  $py -m skyisle_gen.cli run --seed 42 --backend python --set run.id=py-seed42   # 参考后端（冻结的 Python 版，对照用）：两个后端的阶段 key 分开，另放一个目录
-  $py -m skyisle_gen.cli island 2051 --run out/seed42 --backend python   # 第三层用参考后端（= --set engine.backend=python）；check / batch（cpp 写 batch_cpp.json）/ lod / stats 同样
-  $py -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --jobs 10   # 两个后端对照（generate + island check + 整套产物逐字节）→ islands/compare.json，产物在 islands_compare/<后端>/
-  $py -m skyisle_gen.cli island compare --run out/seed42 --sample 30 --timing [--no-python]   # 整群 generate（不写产物）的用时（顺序跑）→ islands/timing.json
+  $py docs/probes/diff_runs.py out/seed42 out/verify42          # 改动前后的回归：①–⑨ 的 npz 逐数组逐位、json 逐值、md 逐字（--tol 1e-9 放过跨平台的末位）
+  $py docs/probes/diff_runs.py 旧/islands/2051 out/seed42/islands/2051   # 岛群产物：npz 逐数组、json 逐值（去掉用时）、png / csv 逐字节
   $py -m skyisle_gen.cli town site 2051 --run out/seed42 --site 村037 --style 华北集村   # 聚落营建器（独立工具，PLAN-TOWN）：岛群里一个聚落的地细化到 1–2 m 并营建
                                                   # → islands/2051/town/村037-华北集村/（site.npz / plan.json / plan.png / plan-detail.png / plan.svg / style.resolved.toml）；不给 --style 只出地面
   $py -m skyisle_gen.cli town synth --terrain 河谷 --style 江南水乡 [--operator waterfront] [--scale 村|小庄|宅院] [--households 60] [--seed 1] [--lat 35]
@@ -46,8 +44,8 @@
   $py -m skyisle_gen.cli serve                    # 3D 操作台 http://127.0.0.1:8642/（完全离线）；岛群调试台 /island.html?run=seed42&node=1165；营建调试台 /town.html?run=seed42&node=2051&site=村037
   skyisle serve --host 192.168.0.116,10.8.0.12 --no-open   # ME Pro 上这样起（--host 可多地址；拒绝 0.0.0.0）
   $py -m skyisle_gen.cli viz web --run out/seed42 # 单文件 viewer.html（内嵌 globe.gl）
-  $py -m pytest tests -q                          # 253 个测试，约 8 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
-                                                  # 扩展没编时 C++ 的 125 个跳过，其余经 tests/conftest.py 自动用 python 后端）
+  $py -m pytest tests -q                          # 244 个测试，约 5 分钟（test_island / test_core_engine / test_core_p6b / p6c / test_core_float（三 seed）跑 1600 岛的小世界到 ④，p6d 与 test_pipeline 到 ⑨；
+                                                  # 扩展没编时只剩 test_core 里不靠 C++ 的 23 个（静态断言、配置校验），其余整个文件跳过；四点四十二起逐位对照改成只测 C++ 的性质）
   $py docs/probes/transect.py out/seed42/islands 6615,6610,6329,6073,6072,5766,5498,2051 --run out/seed42
   $py docs/probes/works_view.py out/seed42/islands/6329 --auto big|head|patch|ruin [--out 图.png]   # 水利俯视图（P6）：灌田最多的大堰 / 渠首的渠网 / 最大的一片圩田 / 废村旁的废渠塘（也可 --big N / --head N / --patch N / --ruin N / --rows --cols）；
                                                   # P6b 起画管它的村（渠首、圩的虚线）、圩村（绿边）、废渠 / 废塘（灰）；四点四十起画邑级大堰（橙）与分水口（青）
@@ -55,14 +53,12 @@
                                                   # transect：量剖面（Zhouzhu PLAN-LAND 第二节同口径：地形 / 河 / 湿地、宜垦 / 已垦 / 撂荒、小岛有没有人、有人用没人住的岛、水利、镇 / 邑治 / 航船 / 中转站、
                                                   # P6b 的水利离村多远（离最近的村 / 离管它的村）与原始地貌 / 人工改造），直接读岛群产物
   ```
-- **C++ 核心库（`core/`，行星计划 P6；设计稿 `docs/PLAN-CORE.md`，DESIGN-NOTES 四点二十三 – 四点二十六）**：`[engine] backend = "cpp" | "python"`（**P6d 起默认 cpp**）。
-  P6a / P6b 移了第三层全部（cpp 后端的 `island.generate` 一次调 `_core.generate` 算完、前端只拼 island.json 与写产物）；
-  **P6c 移了行星层 ①–④、P6d 移了 ⑤–⑨**（`core/planet/`，四点二十五 / 四点二十六）：cpp 后端下 s01–s09 的 run() 第一行分派给 C++，npz / json / md 与摘要照旧由 Python 写
-  （各步的 `_write` 两个后端共用：中文名、round 的位数都在那里）；①–⑨ 的缓存 key 在 cpp 后端下另混入 "+cpp"（python 的 key 不变，没有 [engine] 段的旧快照也按 python 算）；
-  第三层的 PlanetView / NodeInputs（含 ⑨ 的人口与邦都）由 C++ 从各步的产物对象直接给（同进程跑过 cpp 就不读 npz）。⑩ 输出（九格表、出图）只在 Python。
-  **Python 版的算法冻结成参考后端**（`--backend python`）：只作对照（在别的机器上验逐位），**新改动先在 C++ 里做**；等 Linux（ME Pro）上编过并验过再删 Python 的算法
-  （前端、check、九格表、出图、操作台、decode.py 留着）。
-  改了 `core/` 要重编（`$py core/build.py`，增量几秒）；**有进程还在用 `_core.pyd` 时重编会链接失败**（Windows 锁文件）。Rider / 别的构建目录不要和它同时编同一个 `build/core`。ME Pro（Linux）还没编过，CMake 写法是跨平台的。
+- **C++ 核心库（`core/`，行星计划 P6；设计稿 `docs/PLAN-CORE.md`，DESIGN-NOTES 四点二十三 – 四点二十六、四点四十二）**：第三层全部（P6a / P6b：`island.generate` 一次调 `_core.generate` 算完）
+  与行星层 ①–⑨（P6c / P6d，`core/planet/`）的算法都在 C++ 里；s01–s09 的 run() 调 C++，npz / json / md 与摘要由 Python 的 `_write` 写（中文名、round 的位数都在那里）；
+  ①–⑨ 的缓存 key 固定混入 "+cpp"（沿用 cpp 后端时的 key，删 Python 之前的 run 照旧命中）；第三层的 PlanetView / NodeInputs（含 ⑨ 的人口与邦都）由 C++ 从各步的产物对象直接给
+  （同进程跑过就不读 npz）。Python 只剩前端：命令、配置、写产物、decode.py（C++ 的 ASCII 代码 → 中文）、check、九格表、出图、操作台、⑩。
+  **Python 参考后端 2026-09-30 删了**（ME Pro 上验过逐位相同之后；git tag `python-reference-final` 是删之前的最后一版，C++ 注释里「xxx.py 同式」指的是那一版）。
+  改了 `core/` 要重编（`$py core/build.py`，增量几秒）；**有进程还在用 `_core.pyd` 时重编会链接失败**（Windows 锁文件）。Rider / 别的构建目录不要和它同时编同一个 `build/core`。
 - 验收基线：**seed 42 / 7 / 2026 三个种子 `check` 必须全过（0 硬项 0 软项）**，改动核心公式或默认参数后都要重跑这三个。
 - PowerShell 向 `python -c` 传含引号的代码会被破坏：写成脚本文件再跑。
 - 产物目录 `out/` 已 gitignore；`config.resolved.toml` 是 `check/viz/probe` 读取配置的来源——改了 `[check]` 阈值要先 `run` 一次刷新它。
@@ -75,19 +71,16 @@
 ```
 skyisle_gen/
   pipeline.py    阶段注册、缓存 key 链（config[s0k]+shared+skeleton+seed+STAGE_VERSION[+"+cpp"]）、产物 IO
-  engine.py      （P6c / P6d）后端开关 `[engine] backend`（默认 cpp）、行星层配置展平（shared / skeleton / s01–s09 / 槽位表 / 手工特征表；表的数组展成 key.n 与 key.<i>.<子键>）、
-                 阶段 key 的后端分量；cpp 后端各步的 C++ 对象按（run, 阶段, key）进程内缓存，没有就从 npz / json 读回（part；⑧ 不读回）
-  config.py      TOML 加载/深合并/--set/校验（通过率∈[0,1]、r≤0.98、半衰序 daily≤trade≤migrate≤envoy、eps0>0）
-  stages/s01…s10 十步；每步 run(ctx) 读上游产物、写 npz/json + _meta.json（①–④ 的 run() 第一行按后端分派，`_write` 两个后端共用）
+  engine.py      （P6c / P6d）C++ 桥：行星层配置展平（shared / skeleton / s01–s09 / 槽位表 / 手工特征表；表的数组展成 key.n 与 key.<i>.<子键>）、
+                 阶段 key 的 "+cpp"；各步的 C++ 对象按（run, 阶段, key）进程内缓存，没有就从 npz / json 读回（part；⑧ 不读回）
+  config.py      TOML 加载/深合并/--set/校验（通过率∈[0,1]、r≤0.98、半衰序 daily≤trade≤migrate≤envoy、eps0>0；engine.backend 只认 cpp）
+  stages/s01…s10 十步；①–⑨ 的 run(ctx) 调 C++（core/src/planet/stage*.cpp）、`_write` 写 npz/json/md + 摘要，⑩ 全在 Python
                  ⑨ s09_polity 政治层（第四批 R7：人口、诸邦、采邑、名分/附庸、变法与兼并史），⑩ s10_output 输出（原 ⑨）
-  tectonics.py   浮石板块（③ 密度乘子、汇聚核、岛龄；第三批 2）
-  localwind.py   ②b 岛对风的扰动（④ 前半：障碍场、带界位移、摩擦/绕流/尾流、可靠局地风；第三批 3）
-  moisture.py    上风水汽追踪降水（④ 后半：2° 粗网格显式迎风推进到稳态；第三批 4）
-  graph.py       CSR、Dijkstra(heapq)、Brandes 抽样介数、弱连通分量 —— 纯 Python（参考后端），注意 inf 比较；C++ 版 core/include/skyisle/planet/graph.hpp
+  localwind.py   只剩八条局部带界的键与取值（EDGE_KEYS / edge_lats，⑤ 与 check 用）；板块（第三批 2）、岛对风的扰动（第三批 3）、水汽降水（第三批 4）都在 C++（stage3 / stage4.cpp）
+  graph.py       CSR、Dijkstra(heapq)、Brandes 抽样介数、弱连通分量 —— check（P6 的反事实介数）/ probe / 操作台的路径用的纯 Python 版，注意 inf 比较；管线里用的是 C++ 版 core/include/skyisle/planet/graph.hpp
   weights.py     w_m = λ_ref·cost_m + L_m（L = −ln perm，perm=0 → inf）
   culture.py     World 惰性读取；槽位份额（含本地行）；TV 文化距离；同言线边集
-  almanac.py     历法 ↔ 轨道自洽（R1）：纯换算，① 调用，写 planet.json.calendar；check 的 SK-cal 校它
-  skeleton.py    骨架第二版的共享定义：D 纬度域、文明核心窗、G 锚定、纬度密度剖面、季节强度公式（全部 |纬度|、随 band_scale 缩放）
+  skeleton.py    骨架第二版的几个读法（D 纬度域、文明核心窗、带界缩放、年长）给 check / 九格表 / 第三层；G 锚定、密度剖面、季节强度、历法 ↔ 轨道（R1）的算法在 C++（core/src/planet/）
   polity.py      政治层产物的只读封装（Polity：邦名/状态/探针行；print_summary），ninegrid/probe/web 共用
   geology.py     地质表现层（R4）：③ 板块网格按节点采样 → 九格表 ① / 探针 / 操作台的叙事文本，不进推导（原则甲）
   check.py       P1–P8 + C1–C5 + IL-*（铁律）+ SK-*（骨架校准，warn-only）
@@ -104,8 +97,10 @@ skyisle_gen/
                  POST /api/town/plan {source synth|site, …, style, operator, sets, save} → 底图 PNG + 抽稀栅格 + 方案（plan.json 同段）；地面按来源与窗口系数缓存 8 份，营建加锁
   island/        **第三层岛群生成器**（PLAN-ISLAND，DESIGN-NOTES 四点十四）：`skyisle island <节点>`，按需生成、不进十步管线、不回灌
                  （stages/ 与 check/ninegrid/polity/culture 不得 import 它，pytest 与 IS-iso 有静态断言）
+                 **下面各条的算法都在 C++（core/src/island/ 的同名 .cpp）**；Python 的同名模块只剩前端（类表与中文、备注、island.json 摘要、写产物、出图），
+                 layout / territory / river / tiers / compare 的 .py 已删（四点四十二）
                  __init__  island_config（[island] 段：默认值 ← run 的 resolved ← --set，不进缓存 key）、_node_inputs、build_terrain、generate
-                 grid      局部分形噪声（LatticeNoise / FractalNoise，特征尺度以 km 给）、行程并查集连通分量、形态学、块均值 / 双线性、PNG 写出
+                 grid      局部分形噪声（特征尺度以 km 给）、行程并查集连通分量、形态学、块均值 / 双线性（C++ 的 grid.hpp）；Python 只剩平移、膨胀（check 用）与 PNG 写出
                  layout    5.1 岛数（n0=30 × 陆地^0.35）、Zipf 大小（总和严格 = area_km2，主岛最大）、角向半径剖面放置（主岛引力、板块走向拉长）、各岛台面高度与目标起伏（岛龄 × 面积^0.3，另一条随机流）、
                            浮高 float_offsets（四点二十八：其余岛按岛龄整座上下平移 δ，又一条随机流；往下的等岸缘拟合出来再按离 rim_floor_m 的余量缩，平移在 build_terrain 里、水系之前）、
                            短渡（P5 起没有索桥与导水槽，四点三十六）
@@ -162,11 +157,10 @@ skyisle_gen/
                  floats    `island floats`（四点二十八）：全行星每群只跑布局 + 地形，收全部非主岛的浮高、Δ岛龄、岸缘，对标定区间（|δ| 中位 300–600 m、p90 0.8–1.2 km、
                            最高 ≥ 1.3 km、往上 60–80%、与 Δ岛龄秩相关 ≤ −0.4、岸缘 ≥ rim_floor_m）
                  check     第六节 IS-area/surface/arable/river/channel/season/float/link/terr/det/iso（硬）+ RES-site/occ/work/geo（硬）/ RES-quarry（软）+ IS-daily（软，60 年）+ SET-pop/field/site/land/town/home/farm/use/works/market/nature（硬，nature 是 P6b 的原始 / 人工对得上）/ SET-water（软）；batch 分层抽样批跑
-                 engine    后端开关与 C++ 桥（`[engine] backend`，四点二十三 / 四点二十四）：`generate` 第一处按后端分派（cpp：整群一次调 `_core.generate`），
-                           `build_terrain` / `hydro.build_hydro`（粗版、用时）、`weather.multi_year_stats`（IS-daily）、`lod` 的块降采样与天气（`_core.weather_year`）、`climate.classify_all` 也分派；
-                           把原始的数拼回与 Python 版同形的 g 与 island.json（键序、round 位数照抄）
-                 decode    （P6b）C++ 记录里的 ASCII 代码 → 中文、带数的备注按 Python 版 f-string 拼；赋存区的长度 / 走向按 numpy 的 cov / eigh 重算
-                 compare   `island compare`：两个后端逐群对照（陆地 / 主岛 / 岛数 / 峰 / 河长 / 村数 / 户数 / 资源处数 / 雨日 / 季型 + 两边 island check + 整套产物逐字节）与 `--timing` 用时
+                 engine    C++ 桥（四点二十三 / 四点二十四）：`generate`（整群一次调 `_core.generate`）、`build_terrain` / `hydro.build_hydro`（粗版、浮高统计）、
+                           `weather.multi_year_stats`（IS-daily）、`lod` 的块降采样与天气（`_core.weather_year`）、`climate.classify_all`（全量季型）；
+                           把原始的数拼回前端要的 g 与 island.json（键序、round 位数与删掉的 Python 版同形）
+                 decode    （P6b）C++ 记录里的 ASCII 代码 → 中文、带数的备注用 f-string 拼；赋存区的长度 / 走向按 numpy 的 cov / eigh 重算
   town/        **聚落营建器**（PLAN-TOWN，DESIGN-NOTES 四点二十九 – 四点三十三）：**优先次序地形 > 合理 > 风格（用户定，plan_site 放宽地面上限）**；**只给用户做参考，暂不接进游戏（用户定；Zhouzhu 不读它，用户开口前别往游戏里接）**；独立工具，只读岛群产物、不回写；任何别的模块不得 import 它（test_town 静态断言）。
                  算法只有 C++（core/.../town/：geom 几何、raster 哈希噪声 / 采样 / 精确欧氏距离 edt、site 场地——岛群窗口细化 / 十种合成地形 / 外部高程图 → 统一的 Site；
                  style 风格的强类型结构、analysis 场地分析、orient 朝向规则链、network 路网与 A* 寻路、plan 编排 plan_site、contour 等值线，src 里另有十个形态算子 op_fishbone / op_organic / op_street（街村、林地排村）/ op_waterfront / op_dispersed / op_green / op_comb / op_contour / op_enclosure
@@ -197,7 +191,7 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 ## 改代码时必须遵守
 
 1. **改了阶段代码就把 `pipeline.STAGE_VERSIONS[k]` +1**，否则旧缓存会被当成命中。只改配置不用改版本。
-   （P6c / P6d 的例外：只加分派、把写产物抽成 `_write`，python 后端产物三 seed 逐字节不变，没改版本——改了会让所有旧 run 白白重算一遍；cpp 后端靠 key 里的 "+cpp" 分开。）
+   （例外：只重构、产物三 seed 逐字节不变的改动不改版本——P6c / P6d 把写产物抽成 `_write`、四点四十二删 Python 参考后端都是这样；改了会让所有旧 run 白白重算一遍。）
 2. **原则乙**：`s07/s08/s09_polity/ninegrid/polity` 不得出现 `["height_m"]`，C++ 版 `core/src/planet/stage7–9.cpp` 不得读 Islands 的 `.height`（check 的 IL-yi 与 pytest 都有静态断言）。高度只进 s04 温度、s05 落差因子、s06 爬升成本。
    **`height_m` 的口径是主岛「台面」= 陆地高程中位数**（四点十九；④ 的岛上气温就在这个高度），不是峰高——峰由第三层按岛龄 × 面积长出来，`wall_m` 因此低估了真实山高。
    **陆地不受此限**：`area_km2`/`arable_frac` 是集雨面与人口容量（docs/02 §六），可以进社会推导——高度才是「地理决定贵贱」的禁区。`arable_frac` 刻意不从 `height_m` 推（保持这条卫生习惯）。
@@ -210,21 +204,15 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 9. **第三层不回灌**：`skyisle_gen/island/` 只读 ①③④ 的产物，`stages/`、check、ninegrid、polity、culture 不得 import 它（`test_stages_do_not_import_island` + IS-iso）。
    岛内的湖、多盆地等「会改变故事」的情形只写进 `island.json`，不改任何场。它的随机数用 `entity_rng(seed, ISLAND_STREAM=21, "island:{node}:{部件}")`，天气另加 `weather:{year}`；
    `[island]` 段不进任何阶段的缓存 key，旧 run 没有这段时用 default.toml 的默认值。
-10. **整个第三层与行星层 ①–⑨ 现在有两份实现**：C++（`core/`，默认后端）与冻结的 Python 参考后端（layout / territory / terrain / hydro / river / grid / resources / climate / weather /
-   settle / tiers / lod，s01–s09 与 almanac / sphere / noise / tectonics / localwind / moisture / skeleton.season_range / graph / weights）。
-   **新改动先在 C++ 里做；Python 后端冻结、只作对照**——要保持逐位对照就把同一改动也照抄进 Python，不照抄的话在 DESIGN-NOTES 记清「从哪一版起两个后端不再逐位相同、差在哪」；
-   **等 Linux（ME Pro）上编过并验过再删 Python 的算法**（前端、check、九格表、出图、操作台、decode.py 留着）。
-   改完重编后跑 `island compare`（常态是整套产物逐字节相同）与 `pytest tests/test_core_engine.py tests/test_core_p6b.py tests/test_core_p6c.py tests/test_core_p6d.py`；
-   改行星层另用 `run --backend python --set run.id=py-seedN` 跑三 seed，与默认（cpp）的 run 逐数组比（四点二十五 / 四点二十六）。
-   C++ 里凡是 numpy 的幂、hypot、求和、中位数、分位、插值、卷积、`round`、点积，都用 grid.hpp 的同式函数（四点二十三 / 四点二十四的踩坑表：ucrt 的 pow(x, 2) ≠ x·x、
-   math.hypot ≠ np.hypot、**Python 内置 sum() 对浮点是 Neumaier 补偿求和（py_sum）、numpy 标量的 round 是 rint(x·10ⁿ)/10ⁿ（npround）**……）；
-   四点二十六又加了：heapq 的 (dist, node) 平局次序、np.random.choice(p, replace=False) 的逐轮去重、numpy 标量与 Python 浮点的 round 在 ⑨ 的纪年里各用各的（前端 `_write` 按原类型舍）。
-   四点二十五又加了：**np.maximum / minimum 相等取第二个**（±0 跟着走，用 planet.hpp 的 np_maximum / np_minimum，Python 内置 max / min 才是 std::max / min）、
-   复数的 np.abs 是 larger·sqrt(fma(r, r, 1)) 不是 hypot、np.fft 走第三方 pocketfft、`python 浮点 × float32 数组` 按 float32 算（NEP 50）；
-   Python 版里一个数是 numpy 标量还是 Python 浮点（数组元素、numpy 整数参与的算式 vs float()）会改 round 的结果，移植时要看清；float32 栅格（slope_deg / flowacc_km2 / cut_m）
-   与 Python 浮点比较、相乘时 numpy 按 float32 算。按高度排序的循环能换拓扑序的要先证明每格只依赖下游终值（加权汇流：每个下游格按上游的原次序加）。
-   C++ 字符串只用 ASCII，中文名在前端（decode.py）映射；资源 / 聚落 / 四季的整体拼装与 island.json 摘要是两个后端共用的函数（resource_record / resource_summary /
-   set_climate / set_weather / set_settlements），改输出格式改它们一处。
+10. **算法只有 C++ 一份**（`core/`；Python 参考后端 2026-09-30 删了，tag `python-reference-final`，四点四十二）。改 C++ 之后的回归：
+   重编（`$py core/build.py --test` 连 ctest）→ 三 seed `run` + `check`（0 硬 0 软）→ 只重构的改动用 `docs/probes/diff_runs.py` 与改前的 run、改前的岛群产物逐项比（常态逐位相同）；
+   有意改结果的，在 DESIGN-NOTES 记清改了什么、量了哪些数（`island batch` / `transect.py` / `koppen.py` 之类）→ 全量 pytest。
+   C++ 里 numpy 同式的函数（grid.hpp 的 np_pow / np_hypot / np_sum / py_sum / npround / np_median / 分位 / 插值 / 卷积，planet.hpp 的 np_maximum / np_minimum，第三方 pocketfft 等）
+   是当年为了和 Python 逐位对照写的，**新代码照旧用它们**：前端与 check 还是 numpy，同式才不会在边界上两边判得不一样；踩坑表在四点二十三 – 四点二十六
+   （ucrt 的 pow(x, 2) ≠ x·x、math.hypot ≠ np.hypot、Python 内置 sum() 是 Neumaier 补偿求和、numpy 标量的 round 是 rint(x·10ⁿ)/10ⁿ、np.maximum / minimum 相等取第二个、
+   heapq 的 (dist, node) 平局次序、float32 栅格与 Python 浮点相乘按 float32 算……）。
+   C++ 字符串只用 ASCII，中文名在前端（decode.py）映射；资源 / 聚落 / 四季的整体拼装与 island.json 摘要在前端的一处（resource_record / resource_summary /
+   set_climate / set_weather / set_settlements），改输出格式改它们。
 
 ## 当前默认值的由来（调参前先看）
 
@@ -317,8 +305,8 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   浮高 `[island.float]`（2026-09-27，四点二十八，Zhouzhu 浮高计划 G 期）：主岛不动，其余岛整座平移 δ——z = 0.65 − 0.75 × Δ岛龄 / 0.08 + N(0, 1)，
   往上 1500 × tanh(550 z / 1500)、往下 500 × tanh(450 z / 500)，往下的再按 (岸缘 − 20) / 500 缩（岸缘 ≥ 20 m、不在下限堆一摞）；
   三 seed 全部非主岛：往上 70%、|δ| 中位 405 m、p90 1.02 km、最高 +1.47 km、与 Δ岛龄秩相关 −0.58；索桥当时按平移后的岸缘高差判（seed 42 全行星：旧判据 75,768 → 27,513，0.1 km / 30 m 下 64 座；P5 起索桥整个去掉）。
-- **生成器后端 `[engine]`（2026-09-27，行星计划 P6a – P6d，四点二十三 – 四点二十六）**：**`backend = "cpp"`（P6d 切的默认；三 seed 的 check 在 cpp 下 0 硬 0 软 0 报警、①–⑨ 与 python 逐位相同之后）**、
-  `threads = 4`（cpp 群内各岛并行、⑥ 抽样介数按源并行，结果与线程数无关；`island lod` 多进程时自动 1）。cpp 后端的 island.json 在 meta 多 `"engine": "cpp"`，python 后端产物一字不改。
+- **生成器 `[engine]`（2026-09-27，行星计划 P6a – P6d，四点二十三 – 四点二十六；四点四十二删了 Python 参考后端与 `backend` 键）**：
+  `threads = 4`（群内各岛并行、⑥ 抽样介数按源并行，结果与线程数无关；`island lod` / `floats` 多进程时自动 1）。island.json 的 meta 有 `"engine": "cpp"`。下面是移植时两个后端的实测，留作用时的参照：
   P6b 实测：seed 42 / 7 / 2026 共 210 群（对照 30 + 随机 180）整套产物逐字节相同；整群 generate（不写产物）4 线程中位 0.62 s、最长 1.65 s（python 7.3 / 22 s）；
   全行星粗版 10 进程约 12.5 分钟（python 28 进程约两小时）；带天气的实跑（四点二十七）：2 km + 1 km 22 进程 8.5 分钟，每群中位 1.07 s，与 P0 的粗版逐位相同。
   P6c 实测：三 seed 的 ①–④ 产物两个后端逐位相同（⑤–⑨ 与 ⑩ 的数据随之相同，图只差标题里的 run 名），三 seed 的 check 在 cpp 下 0 硬 0 软 0 报警；
@@ -326,13 +314,14 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   P6d 实测：三 seed 的 ⑤–⑨ 两个后端逐位相同（①–⑨ 全部产物与摘要、⑩ 的 json / 九格表；图只差标题里的 run 名），python 后端重跑与改前逐位相同、key 不变；
   ⑤–⑨ 用时（不写产物）python 46 s → C++ 0.77 s（⑥ 的介数 29 s → 0.1 s）；整条管线 ①–⑨（写产物）python 43 s → C++ 2.5 s；`planet_run` ①–⑨ 在内存里 1.2 s。
   切默认后 seed42 不变：15 个群（含 2051 / 2050）cpp 在 out/cpp-seed42 上生成的与 python 当场重生成的只差预览图标题里的 run 名。
+  删 Python（四点四十二）：三 seed 全命中缓存、seed 42 从 ① 重算与原来逐位相同，五个剖面群的产物与删之前逐字节相同。
 
 ## 未做 / 可改进（按价值排序）
 
-- **自然层第二版（`docs/PLAN-NATURE.md`，2026-09-30 用户逐条定，A 未开工）**：设定在 `docs/spec/13-浮石与陆地的生灭.md` 第二版（第二个超自然要素**集水核**、浮力随高度减弱得快、垂直结构与厚大气、闭孔两层、特殊的山）；阶段 A 行星层 ④ 按季节算（副高下沉、逆温层之上默认干、弱的岛群季风）+ 降水线 + ⑦ 驼峰 + 零点写进 planet.json，B 侵蚀细化 + 岩层进侵蚀 + 特殊的山 + 亚格岸线，C 河去夸张 + 漫滩照地球 + 河的数据 + 集水核 + 地下水，D 游戏；开工前的 numpy 环境与 ME Pro 验证 09-30 办了（四点四十一），接着删 Python 的算法再开工 A（方案第三节）。用户的总原则：原理定了以合理为主，要硬凑才对得上就改原理；地球的数只当参照。
+- **自然层第二版（`docs/PLAN-NATURE.md`，2026-09-30 用户逐条定，A 未开工）**：设定在 `docs/spec/13-浮石与陆地的生灭.md` 第二版（第二个超自然要素**集水核**、浮力随高度减弱得快、垂直结构与厚大气、闭孔两层、特殊的山）；阶段 A 行星层 ④ 按季节算（副高下沉、逆温层之上默认干、弱的岛群季风）+ 降水线 + ⑦ 驼峰 + 零点写进 planet.json，B 侵蚀细化 + 岩层进侵蚀 + 特殊的山 + 亚格岸线，C 河去夸张 + 漫滩照地球 + 河的数据 + 集水核 + 地下水，D 游戏；开工前的 numpy 环境与 ME Pro 验证（四点四十一）、删 Python 的算法（四点四十二）09-30 都办了，接着开工 A。用户的总原则：原理定了以合理为主，要硬凑才对得上就改原理；地球的数只当参照。
 
-- C++ 核心库（PLAN-CORE 第九节）：①–⑨ 与第三层都已移完、默认 cpp（P6d）；**Linux（ME Pro）09-30 编过并验过**（四点四十一），接着删 Python 的算法（PLAN-NATURE 第三节）；n_islands ≤ 512 的小世界 ③ 的 kNN 在 numpy 里走 dsyrk，尾块次序没追上（四点二十五）；
-  **⑨ 附庸判定的怪处**（`cap_dist[t].get(capitals[s])` 拿都城节点号查以邦号为键的表，三 seed 的附庸只有 0 / 1 / 0 个，修正后 147 / 158 / 164 个，兼并史不变；四点二十六）两个后端都照抄着，修不修待定；
+- C++ 核心库（PLAN-CORE 第九节）：①–⑨ 与第三层都已移完，Linux（ME Pro）09-30 编过并验过（四点四十一），Python 的算法 09-30 删了（四点四十二）；
+  **⑨ 附庸判定的怪处**（`cap_dist[t].get(capitals[s])` 拿都城节点号查以邦号为键的表，三 seed 的附庸只有 0 / 1 / 0 个，修正后 147 / 158 / 164 个，兼并史不变；四点二十六）C++ 里照旧，修不修待定；
   游戏（P6e）要一份不经 Python 的配置来源（C++ 的 Config 现在由前端展平 default.toml 给）
 
 - Monte Carlo 引擎（`s08.engine="mc"` 只留接口）、软先到权重（`first_arrival_weight` 默认关未实现）

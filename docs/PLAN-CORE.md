@@ -4,8 +4,10 @@
 本稿管 skyisle-gen 这一侧：核心库 `core/` 怎么划、按什么顺序移、Python 前端怎么调它、怎么对照验收。**P6a 移了第三层的地形段**（布局含势力范围、岛形、地形、水系、河道成形），
 **P6b 移了第三层其余**（资源、聚落与层级、四季、逐日天气、粗版的降采样，`generate` 整个进 C++，写产物仍在前端）；
 **P6c 移了行星层 ①–④**（行星与历法、风带、岛群分布与板块与候选边、局地风与气候 / 水汽模型；`core/planet/`，npz / json 仍由前端写）；
-**P6d 移了行星层 ⑤–⑨**（障碍、航路与抽样介数、文明中心与地区、特征扩散、政治层）并**把默认后端切到 C++**；Python 版的算法冻结成参考后端（只作对照，
-等 Linux 上编过并验过再删）。⑩ 输出（九格表、出图）只在 Python。
+**P6d 移了行星层 ⑤–⑨**（障碍、航路与抽样介数、文明中心与地区、特征扩散、政治层）并**把默认后端切到 C++**；Python 版的算法冻结成参考后端（只作对照），
+**Linux（ME Pro）上编过、验过逐位相同之后 2026-09-30 删了**（DESIGN-NOTES 四点四十一 / 四点四十二；git tag `python-reference-final` 是删之前的最后一版）。
+⑩ 输出（九格表、出图）只在 Python。下文讲的 `[engine] backend` 开关、`island compare`、两个后端的对照都是移植期间的做法，现在只剩 C++ 一份；
+C++ 注释里「xxx.py 同式」指 tag 里的那一版 Python。
 
 ## 一、范围与不变的东西
 
@@ -214,8 +216,9 @@ P6d（行星层 ⑤–⑨）同 P6c 的办法：
 - **P6c**（行星层 ①–④）：已做（DESIGN-NOTES 四点二十五）。`planet::run(Config, seed)` 一次出 ①–④，`planet_view` / `node_inputs` 直接给第三层；
   管线里各步照旧写 npz / json（前端），cpp 后端的阶段 key 另混入 "+cpp"。三 seed 的产物两个后端逐位相同、check 全过。
 - **P6d**（行星层 ⑤–⑨ 与切换）：已做（DESIGN-NOTES 四点二十六）。`run_society(cfg, seed, World)` 接着 `planet::run` 出 ⑤–⑨，`apply_polity` 给第三层补人口与邦都；
-  三 seed 的产物两个后端逐位相同、check 全过，**默认后端已切 cpp**。**Python 算法没删**（与原计划不同，主会话定的）：冻结成参考后端，
-  等 Linux（ME Pro）上编过、在那边与参考后端对照过再删（第三层的 Python 版随之删掉，decode.py、⑩、check、九格表、出图、操作台留着）。
+  三 seed 的产物两个后端逐位相同、check 全过，**默认后端已切 cpp**。Python 算法当时没删（与原计划不同，主会话定的）：冻结成参考后端，
+  等 Linux（ME Pro）上编过、在那边与参考后端对照过再删。**09-30 验过、删了**（DESIGN-NOTES 四点四十一 / 四点四十二）：`[engine] backend` 键、`--backend`、`island compare` 一起去掉，
+  decode.py、⑩、check、九格表、出图、操作台留着；改动前后的回归改用 `docs/probes/diff_runs.py` 与改前的产物逐项比。
 - 游戏（P6e）：`core/` 作子模块编进 GDExtension（CMake 目标 `skyisle_core`，静态库；`SKYISLE_PYTHON=OFF SKYISLE_TESTS=OFF` 就只编它，
   依赖只有 C++17 标准库与线程（`Threads::Threads`）和随仓库带的头文件 pocketfft；头文件入口 `skyisle/planet/planet.hpp`（①–④）、`civ.hpp`（⑤–⑨）、
   `view.hpp`（→ 第三层）、`island/generate.hpp`（整群））。剧情模式 NodeInputs / PlanetView 由行星包填；
