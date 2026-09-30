@@ -15,7 +15,9 @@
      航船几条 / 多长 / 连几个村；中转站几处（按功能）、住几户。P7 之前的产物没有大泊场：用 market.py 同一套算法在它的地形与田上现算（地形、田没变，算出来的与 P7 之后的相同）。
   8. 水利离村多远（P6b，Zhouzhu PLAN-LAND L30）：渠首、谷口的渠段、圩田的渠段、圩、塘、闸各离最近的村、离管它的村（village，P6b 起才有）多远，
      没有管它的村的、废弃的水利（abandoned）几处，村 / 圩村 / 挂着圩田的村、已垦 = 额度、人口 = ⑨；
-  9. 原始地貌与人工地貌（P6b，L31）：原始湿地 / 现状湿地 / 圩田，没人常住的岛上的湿地与田，人工改造（landuse）各类的面积与开垦的田原来是什么。
+  9. 原始地貌与人工地貌（P6b，L31）：原始湿地 / 现状湿地 / 圩田，没人常住的岛上的湿地与田，人工改造（landuse）各类的面积与开垦的田原来是什么；
+ 10. 邑级大堰（四点四十，水利分级）：每处堰在哪座岛、汇水、水够灌多少、规划的灌区、在种的（占全群已垦几成）、渠多长、几个村用水（户占全群几成）、
+     分水口离村多远、邑治的村在不在灌区里；村级的渠、塘关了（village_works = false）时水利表里只剩圩区。
 P5 之前的产物（没有 cultivable / uses / ruins，专业聚落都算常住）也能量：宜垦记「—」，已垦按旧的 arable。
 
 用法（仓库根下）：
@@ -196,14 +198,38 @@ def group(d: Path, node: int, run: Path | None) -> dict:
     WK = S.get("waterworks")
     if WK is not None:
         ws = WK["summary"]
-        main_km = sum(c["length_km"] for c in WK["canals"] if c["kind"] == "干渠")
+        main_km = sum(c["length_km"] for c in WK["canals"] if c["kind"] == "干渠" and "work" not in c)     # 大堰的渠另算（bigworks）
         out["works"] = {**{k: ws[k] for k in ("n_heads", "n_heads_seasonal", "canal_km", "polder_canal_km", "drain_km", "commanded_km2", "commanded_share",
                                                 "n_ponds", "ponds", "n_sluices", "sluices", "wetland_km2", "polder_km2", "polder_share", "n_polders",
                                                 "n_polder_patches", "dike_km")},
                         "main_canal_km": round(main_km, 1), "paddy_share": round(sum(p["paddy"] for p in WK["polders"]) / max(1, len(WK["polders"])), 3),
                         "heads_main_island": sum(1 for h in WK["heads"] if h["island"] == 0),
                         "canal_km_per_100km2": round(100.0 * ws["canal_km"] / max(1e-9, out["land_km2"]), 2)}
+        out["big"] = bigworks(S, WK)
     return out
+
+
+def bigworks(S: dict, WK: dict) -> dict | None:
+    """四点四十：邑级大堰。村的户按常住的村（村与镇的户）算；邑治的村 = 邑治那个镇长在哪个村上（town.village）。"""
+    if "big_works" not in WK:
+        return None
+    V = {v["id"]: v for v in S["villages"]}
+    hh_all = sum(v["households"] for v in S["villages"]) or 1
+    cult = S["farmland"]["cultivated_km2"] if S.get("farmland") else None
+    seat = next((t for t in S.get("towns", []) if t.get("seat")), None)
+    rows = []
+    for b in WK["big_works"]:
+        d = [t["dist_km"] for t in b["turnouts"]]
+        hh = sum(V[v]["households"] for v in b["villages"] if v in V)
+        rows.append({"id": b["id"], "island": b["island"], "basin_km2": b["basin_km2"], "water_km2": b["water_km2"], "planned_km2": b["planned_km2"],
+                     "served_km2": b["served_km2"], "share_cult": round(b["served_km2"] / cult, 3) if cult else None, "canal_km": b["canal_km"],
+                     "n_canals": b["n_canals"], "villages": len(b["villages"]), "households": hh, "hh_share": round(hh / hh_all, 3),
+                     "turnout_km_median": round(float(np.median(d)), 2) if d else None, "turnout_km_max": round(max(d), 2) if d else None,
+                     "level_m": b["level_m"]})
+    served_v = {v for b in WK["big_works"] for v in b["villages"]}
+    return {"village_works": WK["summary"].get("village_works"), "works": rows,
+            "seat_village": seat.get("village") if seat else None, "seat_island": seat["island"] if seat else None,
+            "seat_in_command": bool(seat and seat.get("village") in served_v)}
 
 
 WORKS_KINDS = ("渠首", "谷口的渠", "圩田的渠", "圩", "塘", "闸")
@@ -249,6 +275,8 @@ def works_manage(S: dict, Z, res_km: float, walk_km: float = 2.0) -> dict | None
             continue
         add("渠首", np.array([[x["cell"][0] + 0.5, x["cell"][1] + 0.5]]), x.get("village"))
     for c in WK["canals"]:
+        if "work" in c:                             # 四点四十：大堰的渠邑管，不按村量（bigworks 另量分水口离村多远）
+            continue
         if c.get("abandoned"):
             aband["渠段"] += 1
             aband["渠 km"] += c["length_km"]
@@ -468,6 +496,26 @@ def print_works(G: list[dict]) -> None:
               f"{w['polder_canal_km']:.0f} / {w['drain_km']:.1f} / {w['dike_km']:.0f} |")
 
 
+def print_big(G: list[dict]) -> None:
+    print("\n## 邑级大堰（四点四十：水利分级，岛群层只出邑级的；村级的渠、塘归营建器）\n")
+    print("| 群 | 村级水利 | 堰 | 岛 | 汇水 km² | 水够灌 km² | 规划灌区 km² | 在种的 km²（占全群已垦） | 渠 km（段） | 用水的村（户占全群） | 分水口离村 km：中位 / 最远 | 邑治的村在灌区里 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for g in G:
+        b = g.get("big")
+        if not b:
+            continue
+        vw = "有" if b["village_works"] else "关"
+        seat = f"是（{b['seat_village']}，岛 {b['seat_island']}）" if b["seat_in_command"] else f"否（{b['seat_village'] or '—'}，岛 {b['seat_island']}）"
+        if not b["works"]:
+            print(f"| #{g['node']} | {vw} | — | — | — | — | — | — | — | — | — | {seat} |")
+            continue
+        for k, w in enumerate(b["works"]):
+            sc = "—" if w["share_cult"] is None else f"{w['share_cult']:.0%}"
+            print(f"| {'#' + str(g['node']) if k == 0 else ''} | {vw if k == 0 else ''} | 大堰{w['id']} | {w['island']} | {w['basin_km2']:.0f} | {w['water_km2']:.0f} | "
+                  f"{w['planned_km2']:.1f} | {w['served_km2']:.1f}（{sc}） | {w['canal_km']:.0f}（{w['n_canals']}） | {w['villages']}（{w['hh_share']:.0%}） | "
+                  f"{w['turnout_km_median']} / {w['turnout_km_max']} | {seat if k == 0 else ''} |")
+
+
 def print_market(G: list[dict]) -> None:
     print("\n## 镇、邑治、航船、中转站（P7；P7 之前的大泊场按 market.py 在同一份地形与田上现算）\n")
     print("| 群 | 大泊场（主岛）/ 船 | 镇 | 镇离同岛最近的大泊场 km：中位 / 最大（≤ 2 km 的镇；岛上没有的） | 航船线汇到镇：中位 / 最多（有线的镇） | "
@@ -558,6 +606,7 @@ def main(argv=None):
     G = [group(root / n, int(n), run) for n in a.nodes.split(",") if (root / n / "island.json").exists()]
     print_tables(G)
     print_works(G)
+    print_big(G)
     print_market(G)
     print_manage(G)
     print_nature(G)

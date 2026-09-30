@@ -2,10 +2,11 @@
 
 读 island.json、terrain.npz、rivers.json、settlements.json（P6 起有 waterworks）。窗口给行列（群栅格），或 --head / --patch / --ruin 按渠首号 / 圩田片号 / 废村号自动取。
 P6b 起还画：管它的村（渠首、圩各一条虚线连到管它的村；圩村 = 绿边的村）、废村旁没人管的废渠（灰虚线）/ 废渠首（灰三角）/ 废塘（灰圆）、撂荒田（褐）。
+四点四十起还画邑级大堰（橙菱形）、它的渠（橙）、每个用水的村的分水口（青方块，虚线连到村）；村级的渠、塘默认不在岛群层出（village_works = false）。
 用法（仓库根下）：
-    PYTHONUTF8=1 python docs/probes/works_view.py <岛群目录> [--rows r0,r1 --cols c0,c1 | --head 3 | --patch 1 | --ruin 2 | --auto head|patch|ruin] [--pad 25] [--out 图.png]
+    PYTHONUTF8=1 python docs/probes/works_view.py <岛群目录> [--rows r0,r1 --cols c0,c1 | --head 3 | --big 1 | --patch 1 | --ruin 2 | --auto head|big|patch|ruin] [--pad 25] [--out 图.png]
     例：python docs/probes/works_view.py out/seed42/islands/6329 --auto patch --out out/p6/polder_6329.png
---auto head：灌田最多的渠首；--auto patch：最大的一片圩田；--auto ruin：有废渠首的废村（没有就撂荒田最大的废村）。
+--auto head：灌田最多的渠首；--auto big：灌田最多的大堰；--auto patch：最大的一片圩田；--auto ruin：有废渠首的废村（没有就撂荒田最大的废村）。
 """
 from __future__ import annotations
 
@@ -35,7 +36,8 @@ def main(argv=None):
     ap.add_argument("--head", type=int)
     ap.add_argument("--patch", type=int)
     ap.add_argument("--ruin", type=int)
-    ap.add_argument("--auto", choices=["head", "patch", "ruin"])
+    ap.add_argument("--big", type=int)
+    ap.add_argument("--auto", choices=["head", "big", "patch", "ruin"])
     ap.add_argument("--pad", type=int, default=25)
     ap.add_argument("--out")
     a = ap.parse_args(argv)
@@ -54,6 +56,9 @@ def main(argv=None):
     pad = a.pad
     if a.auto == "head" and WK["heads"]:
         a.head = max(WK["heads"], key=lambda x: (x["served_km2"], -x["id"]))["id"]
+    BW = WK.get("big_works", [])
+    if a.auto == "big" and BW:
+        a.big = max(BW, key=lambda x: (x["served_km2"], -x["id"]))["id"]
     if a.auto == "patch" and WK["polder_patches"]:
         a.patch = max(WK["polder_patches"], key=lambda x: (x["polder_km2"], -x["id"]))["id"]
     if a.auto == "ruin" and S.get("ruins"):
@@ -64,6 +69,12 @@ def main(argv=None):
         P = np.array(pts)
         r0, r1, c0, c1 = int(P[:, 0].min()) - pad, int(P[:, 0].max()) + pad, int(P[:, 1].min()) - pad, int(P[:, 1].max()) + pad
         title = f"渠首 {a.head}"
+    elif a.big:
+        b = next(x for x in BW if x["id"] == a.big)
+        pts = [b["cell"]] + [p for c in WK["canals"] if c.get("work") == a.big for p in c["pts"]]
+        P = np.array(pts, dtype=float)
+        r0, r1, c0, c1 = int(P[:, 0].min()) - pad, int(P[:, 0].max()) + pad, int(P[:, 1].min()) - pad, int(P[:, 1].max()) + pad
+        title = f"大堰 {a.big}（邑管）"
     elif a.patch:
         pid = Z["polder_id"]
         ids = next(x for x in WK["polder_patches"] if x["id"] == a.patch)["polders"]
@@ -131,6 +142,9 @@ def main(argv=None):
             continue
         col = {"干渠": "#0a8a8a", "支渠": "#18b8b0", "排水渠": "#2050c0", "纵浦": "#1060d0", "横塘": "#1060d0"}[k]
         lw = max(1.4 if k == "干渠" else 0.9, to_pt(c.get("width_m", 8.0) * 3)) if k in ("干渠", "支渠") else 1.1
+        if "work" in c:                                   # 四点四十：大堰的渠
+            col = "#d06010" if k == "干渠" else "#f09040"
+            lw = max(2.6 if k == "干渠" else 1.4, lw)
         ax.plot(Pp[:, 1], Pp[:, 0], color=col, lw=lw, solid_capstyle="round", zorder=5)
     for p in WK["polders"]:
         a0, b0, a1, b1 = p["cells_bbox"]
@@ -190,6 +204,17 @@ def main(argv=None):
             ax.scatter(r["cell"][1] + 0.5, r["cell"][0] + 0.5, s=40, marker="x", c="#5a5048", linewidths=1.6, zorder=8)
             ax.annotate(f"{r['name']}（撤空 {r['abandoned_years']} 年）", (r["cell"][1] + 0.5, r["cell"][0] + 0.5), xytext=(5, 3), textcoords="offset points",
                         fontsize=8, color="#5a5048", zorder=9)
+    for b in BW:                                          # 四点四十：大堰、分水口（虚线连到用水的村）
+        for t in b["turnouts"]:
+            v = V.get(t["village"])
+            if inside(t["cell"]) or (v and inside(v["cell"])):
+                ax.scatter(t["cell"][1] + 0.5, t["cell"][0] + 0.5, s=18, marker="s", c="#20c0d0", edgecolors="k", linewidths=0.4, zorder=8)
+                if v:
+                    ax.plot([t["cell"][1] + 0.5, v["cell"][1] + 0.5], [t["cell"][0] + 0.5, v["cell"][0] + 0.5], color="#20a0b0", lw=0.7, ls=(0, (2, 2)), zorder=6)
+        if inside(b["cell"]):
+            ax.scatter(b["cell"][1] + 0.5, b["cell"][0] + 0.5, s=90, marker="D", c="#e07020", edgecolors="k", linewidths=0.8, zorder=9)
+            ax.annotate(f"{b['kind']}{b['id']}（灌 {b['served_km2']:.1f} km²，{len(b['villages'])} 村用水，{b['maintainer']}管）", (b["cell"][1] + 0.5, b["cell"][0] + 0.5),
+                        xytext=(6, 5), textcoords="offset points", fontsize=9, fontweight="bold", color="#a04000", zorder=9)
     for hd in WK["heads"]:
         if inside(hd["cell"]):
             if hd.get("abandoned"):
@@ -208,9 +233,13 @@ def main(argv=None):
     ax.set_xticks([])
     ax.set_yticks([])
     ws = WK["summary"]
-    ax.set_title(f"#{J['meta']['node']} {title}：渠 {ws['canal_km']:.0f} km / 塘 {ws['n_ponds']} / 闸 {ws['n_sluices']} / 圩田 {ws['polder_km2']:.1f} km²（全群）", fontsize=10)
+    bs = ws.get("big") or {}
+    big_t = f"大堰 {bs['n']}（灌 {bs['served_km2']:.0f} km²，渠 {bs['canal_km']:.0f} km）/ " if bs.get("n") else ""
+    ax.set_title(f"#{J['meta']['node']} {title}：{big_t}村的渠 {ws['canal_km']:.0f} km / 塘 {ws['n_ponds']} / 闸 {ws['n_sluices']} / 圩田 {ws['polder_km2']:.1f} km²（全群）", fontsize=10)
     handles = [Patch(color=(0.95, 0.80, 0.35), label="已垦的田"), Patch(color=(0.20, 0.78, 0.74), label="渠灌得到的田"), Patch(color=(0.55, 0.85, 0.55), label="圩田"),
                Patch(color=(0.45, 0.65, 0.55), label="湿地（芦苇荡）"), Patch(color=(0.66, 0.45, 0.36), label="撂荒"),
+               Line2D([], [], marker="D", ls="", color="#e07020", label="邑级大堰"), Line2D([], [], color="#d06010", lw=2.6, label="大堰的干渠 / 支渠"),
+               Line2D([], [], marker="s", ls="", color="#20c0d0", label="分水口（→ 用水的村）"),
                Line2D([], [], color="#0a8a8a", lw=2, label="干渠"), Line2D([], [], color="#18b8b0", lw=1.2, label="支渠"),
                Line2D([], [], color="#1060d0", lw=1.1, label="纵浦 / 横塘 / 排水渠"), Line2D([], [], color="#5a4020", lw=0.8, label="圩堤"),
                Line2D([], [], color=(0.2, 0.35, 0.85), lw=2, label="河"),
