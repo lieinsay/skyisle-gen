@@ -8,12 +8,12 @@
 
 ## 环境与命令
 
-- Python 3.12：`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`（不在 PATH；PowerShell 里用 `$py = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"`）。依赖仅 numpy + matplotlib（+ pytest；编 C++ 核心要 nanobind + CMake + VS 2022）。**不引入 scipy/networkx/pandas。**
+- Python 3.12 的专用 venv（2026-09-30 起，DESIGN-NOTES 四点四十一）：`%LOCALAPPDATA%\venvs\skyisle\Scripts\python.exe`（PowerShell 里用 `$py = "$env:LOCALAPPDATA\venvs\skyisle\Scripts\python.exe"`；Git Bash 里 `"$LOCALAPPDATA/venvs/skyisle/Scripts/python.exe"`）。公用的 Python312 装着别的东西、numpy 是 1.26.4，**不要用它、也不要动它**。依赖仅 numpy + matplotlib（+ pytest；编 C++ 核心要 nanobind + CMake + VS 2022）；**numpy 钉在 2.5.2**（C++ 的逐位对照照它追的，别升别降）。**不引入 scipy/networkx/pandas。**
 - **默认后端是 C++ 核心库（P6d 起，`[engine] backend = "cpp"`）**：新机器先 `$py core/build.py`；扩展没编时 cpp 会报错（不静默退回），那台机器上先用 `--backend python`（冻结的参考后端）。
-- **ME Pro（Debian，无显示器）**：⚠️ 那边是按旧名字装的（venv `~/.venvs/zhouzhu`、软链 `~/.local/bin/zhouzhu`、`~/.bashrc` 的 ZHOUZHU-DEV-ENV 段），
-  改名后**需要重装一遍**（venv 里装的是可编辑包，入口脚本名变了）。该段里已 `export MPLBACKEND=Agg`。中文图标需 `fonts-noto-cjk`（已装，字体回退表里列了 Linux 三个名字）。
-  `pipeline` 与 `serve` 不要同时跑；操作台绝不绑 `0.0.0.0`。**那边还没编过 C++ 核心**（默认后端 cpp）：先 `python core/build.py`（要 cmake、g++、`pip install nanobind`），
-  编好后与参考后端对照（`run --backend python` 与默认各跑三 seed 逐数组比、`island compare`）；没编之前一律加 `--backend python`。
+- **ME Pro（Debian，无显示器，`ssh liein@10.8.0.12`）**：09-30 按新名字重装（四点四十一）——代码 `~/dev/skyisle-gen`（从 GitHub clone）、venv `~/.venvs/skyisle`（Python 3.13、numpy 2.5.2）、
+  软链 `~/.local/bin/skyisle`、`~/.skyisle-env.sh`（`SKYISLE-DEV-ENV` 段，`~/.bashrc` 与 `~/.profile` 都 source；带代理与 `MPLBACKEND=Agg`）。C++ 核心已编（g++ 14、cmake 3.31、Ninja），
+  三 seed ①–⑨ 与 `island compare` 30 群两个后端逐位相同；和 Windows 只差浮点末位（两边的 libm 不同），离散结果全同。
+  中文图标：`fonts-noto-cjk` 装着，但没有 fontconfig，matplotlib 认不到 .ttc，出图中文缺字（待修）。`pipeline` 与 `serve` 不要同时跑；操作台绝不绑 `0.0.0.0`。
 - 一律在仓库根下执行：
   ```
   $py -m skyisle_gen.cli run --seed 42            # 十步全跑（①–⑨ 约 3 s（C++），大头是 ⑩ 出图约 1 分钟；只改 [s0k] 的参数就从第 k 步起重算）
@@ -329,8 +329,9 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 
 ## 未做 / 可改进（按价值排序）
 
-- C++ 核心库（PLAN-CORE 第九节）：①–⑨ 与第三层都已移完、默认 cpp（P6d）；**Linux（ME Pro）上还没编过**（逐位一致只在本机验过：换 CPU 架构 BLAS 内核、换 C 库都可能差一位），
-  编过并验过之后删 Python 的算法（P6d 没删，主会话定的）；n_islands ≤ 512 的小世界 ③ 的 kNN 在 numpy 里走 dsyrk，尾块次序没追上（四点二十五）；
+- **自然层第二版（`docs/PLAN-NATURE.md`，2026-09-30 用户逐条定，A 未开工）**：设定在 `docs/spec/13-浮石与陆地的生灭.md` 第二版（第二个超自然要素**集水核**、浮力随高度减弱得快、垂直结构与厚大气、闭孔两层、特殊的山）；阶段 A 行星层 ④ 按季节算（副高下沉、逆温层之上默认干、弱的岛群季风）+ 降水线 + ⑦ 驼峰 + 零点写进 planet.json，B 侵蚀细化 + 岩层进侵蚀 + 特殊的山 + 亚格岸线，C 河去夸张 + 漫滩照地球 + 河的数据 + 集水核 + 地下水，D 游戏；开工前的 numpy 环境与 ME Pro 验证 09-30 办了（四点四十一），接着删 Python 的算法再开工 A（方案第三节）。用户的总原则：原理定了以合理为主，要硬凑才对得上就改原理；地球的数只当参照。
+
+- C++ 核心库（PLAN-CORE 第九节）：①–⑨ 与第三层都已移完、默认 cpp（P6d）；**Linux（ME Pro）09-30 编过并验过**（四点四十一），接着删 Python 的算法（PLAN-NATURE 第三节）；n_islands ≤ 512 的小世界 ③ 的 kNN 在 numpy 里走 dsyrk，尾块次序没追上（四点二十五）；
   **⑨ 附庸判定的怪处**（`cap_dist[t].get(capitals[s])` 拿都城节点号查以邦号为键的表，三 seed 的附庸只有 0 / 1 / 0 个，修正后 147 / 158 / 164 个，兼并史不变；四点二十六）两个后端都照抄着，修不修待定；
   游戏（P6e）要一份不经 Python 的配置来源（C++ 的 Config 现在由前端展平 default.toml 给）
 
@@ -340,7 +341,6 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   挑圩田只看第一遍的压力；粗版不跑聚落、看不到渠与圩田（DESIGN-NOTES 四点三十七末尾）。P6b：几个村合用一条长渠（渠长轮值、按田出工）没做，渠首多贴着管它的村 2 km 的边；
   废渠首 / 废渠只在测试里走到（剖面八群与 30 群的废村都在没有大河的小岛上）、废圩没做；小圩村（< 8 户）照样是村（不当镇）；P7 挑镇、挑邑治对户数敏感，#6329 的邑治跟着换到岛 2（四点三十九末尾）
 - 水利分级（四点四十）：营建器只记下、画出邑的渠与本村的分水口，营建算法不避渠、村里的水不从分水口接；村域（村外田里的渠、塘）窗口没做；一个水系至多一处大堰；没有大堰的群岛群层只剩圩区（打井、溪涧的小渠归营建器）；灌区顺等高线成带，个别村的田拉成长条（#6329 村066 的田 8 km）。
-- **本机 numpy 是 1.26.4**（2024 年装的，两个 Python 都是）：C++ 的 rfft / BLAS 次序是照 numpy 2.5.2 追的（四点二十五），test_core_p6c / p6d 与 test_core_engine 的 sculpt 共 19 个逐位对照挂（09-30 用 HEAD 编出来跑同样挂，与水利无关）；三 seed check 与 island compare 不受影响。要么装回 numpy 2.5.2，要么把这些测试按 numpy 版本跳过。
 - 镇与航船（P7）：大泊场只是普查（点与面积，不从地表划出来）；航船线是村心之间的直线、按年均风，没有按季 / 按日的风与时刻表；中转站看 ⑥ 的长途流量，⑥ 的背水群（#2051）没有关卡；
   站址不看平地够不够大；镇的市户没有细分行当（船行、浮石行、修船铺……是游戏的事）；邑治可能是小村长出来的镇、也可能不在主岛（#5766）；游戏的 C++ 路要从行星包给 `NodeInputs.routes`（DESIGN-NOTES 四点三十八末尾）
 - 岛群生成器：资源不进村址选择（村定了再去找石 / 土，矿镇落在矿旁）、赋存区的储量只有面积 × 品位没有吨位、没有地下水与岩性栅格（岩性一岛一种）；河宽是夸张后的数，不是水文模型；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；散户多（已垦按格排先后，田是一片片的）；粗版不跑聚落、地表里的田仍按上等地画；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四

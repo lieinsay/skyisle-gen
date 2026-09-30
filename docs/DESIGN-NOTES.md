@@ -2369,6 +2369,31 @@ C++ 新 `BigWork / BigPlan / big_plan`，`FillResult` 加 `big`，`build_waterwo
 - 灌区是顺等高线的一长条，个别村的田跟着拉成带子（#6329 村066 的田长 8 km）。
 - P7 挑镇对户数敏感，这次 #5498 的镇少了三成多、邑治离大泊场远了。
 
+## 四点四十一、Linux（ME Pro）验过两个后端；本机另建 venv 装 numpy 2.5.2（2026-09-30，PLAN-NATURE 开工前的两件事）
+
+用户 09-30 定了自然层第二版（`docs/PLAN-NATURE.md`），同意开工 A 之前先办两件遗留：numpy 环境、Python 参考后端的去留（先在 ME Pro 验，验过删 Python 的算法）。
+
+**本机的 numpy**：公用的 Python312（`%LOCALAPPDATA%\Programs\Python\Python312`）的 numpy 1.26.4 是 2024-04 的原装，同一个 Python 里还装着 opencv 4.10、pandas 2.2、scipy 1.14，
+不知道别的项目靠不靠它，不动。另建专用 venv `%LOCALAPPDATA%\venvs\skyisle`（基于同一个 Python 3.12）：numpy **2.5.2**（C++ 的 rfft / BLAS 次序照它追的，四点二十五）、matplotlib 3.11.2、
+pytest 9.1、nanobind 3.1.0、`pip install -e .`；`_core.cp312-win_amd64.pyd` 的 ABI 相同，不用重编。
+全量 pytest 253 个全过（604 s）——四点四十末尾记的 19 个逐位对照失败（p6c 8、p6d 5、sculpt 6）全转绿，确认是环境的事。
+（之前几节里本机的 numpy 记得前后不一：四点三十四、四点三十五记 2.5.2，四点三十、四点四十记 1.26.4，原因没查清；以后一律用这个 venv，不再碰公用的 Python。）
+
+**ME Pro（Debian 13.6、i5-13500H、X86_V3、无 AVX-512）**：
+- 按新名字重装：旧的 `~/.venvs/zhouzhu`（可编辑包指向已经不存在的 `~/dev/Zhouzhu/generator`）、`~/.local/bin/zhouzhu`、`~/.zhouzhu-env.sh` 删掉；
+  新 `~/.venvs/skyisle`（Python 3.13.5、numpy 2.5.2——那边原来是 2.5.3，钉回 2.5.2）、`~/.local/bin/skyisle`、`~/.skyisle-env.sh`（`SKYISLE-DEV-ENV` 段，`~/.bashrc` 与 `~/.profile` 都 source，改前备份成 `.bak.skyisle`）；
+  代码 `~/dev/skyisle-gen` 从 GitHub clone（24d1f1e）。
+- `core/build.py --test`：g++ 14.2、cmake 3.31、Ninja，一次编过，ctest 过（settle.cpp 一个未用变量的警告）。
+- **三 seed 两个后端**（`run --upto 9` 与 `--backend python --set run.id=py-seedN`）：①–⑨ 的 npz 逐数组逐位、json 逐值、md 逐字相同，manifest 只差 run_id 与阶段 key（"+cpp"）；六个 `check` 全是 0 硬 0 软 0 报警。
+- **`island compare --run out/seed42 --sample 30 --jobs 12`**：30 / 30 整套产物逐字节相同、两边 island check 全过。用时中位（整群 generate，不写产物）python 59.8 s / cpp 5.1 s。
+- **和 Windows 比**（同一版代码、同阶段 key）：cpp 的 ①–⑨ 每 seed 133 个数组里 10–11 个差在末位——`s03` 的 lat / xyz / 板块种子与候选边天数，顺着传到 ⑤ perm、⑥ cost、⑦ dist_pre，
+  seed 7 的 ⑧ reach 一个元素、seed 2026 的 ⑧ share；最大绝对差 3.5 × 10⁻¹¹、相对差 1.2 × 10⁻⁹。整数与离散的结果（邦、采邑、兼并、航线选择、候选边）全同。
+  这是两边 libm（UCRT / glibc）的三角函数末位不同：每个平台上 numpy 与 C++ 用同一个 libm，所以平台内逐位相同，跨平台只差末位。
+
+**结论**：Linux 上 C++ 与参考后端逐位相同，PLAN-CORE 第九节「等 Linux 上编过、对照过再删 Python 的算法」的条件满足了；接着删（下一节）。
+
+**已知**：ME Pro 上 matplotlib 找不到中文字体（`fonts-noto-cjk` 装着，但没有 fontconfig、`fc-list` 不在，matplotlib 扫目录没认到 .ttc），出图的中文是缺字方框；数据不受影响，要出图时再修。
+
 ## 五、操作台（web/）
 
 - 纯标准库 `http.server`；API 见 `server.py` 头部注释。重跑走 `pipeline.run(log=...)` 后台线程，进度轮询 `/api/run/status`。
