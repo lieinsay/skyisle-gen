@@ -281,6 +281,9 @@ def test_island_deterministic_and_consistent(small_ctx):
             return float(np.hypot(P[:, 0] - V[vid]["cell"][0] - 0.5, P[:, 1] - V[vid]["cell"][1] - 0.5).max())
         for kind, xs in (("heads", W["heads"]), ("canals", W["canals"]), ("ponds", W["ponds"]), ("sluices", W["sluices"])):
             for x in xs:
+                if "work" in x:                     # 四点四十：邑级大堰的渠邑管，不按村走得到查
+                    assert x["village"] is None and x["maintainer"] == "邑"
+                    continue
                 if x.get("abandoned"):
                     assert x["village"] is None and x["ruin"] in rid and x["abandoned_years"] >= 1
                     continue
@@ -293,6 +296,13 @@ def test_island_deterministic_and_consistent(small_ctx):
             ii, jj = np.nonzero(z["polder_id"] == pr["id"])
             corners = [[ii + a, jj + b] for a in (0, 1) for b in (0, 1)]
             assert pr["village"] in V and max(far(pr["village"], np.stack(cc, 1)) for cc in corners) <= walk
+        # 四点四十：邑级大堰在本岛常年河上、邑管、用水的村都在；渠灌田（landuse 3）= 渠灌得到的在种的地；村级的关了就没有村的渠首和塘
+        for bw in W.get("big_works", []):
+            i, j = bw["cell"]
+            assert z["river"][i, j] > 0 and z["island_id"][i, j] == bw["island"] and bw["maintainer"] == "邑" and bw["served_km2"] <= bw["planned_km2"]
+            assert set(bw["villages"]) <= set(V)
+        if W["summary"].get("village_works") is False:
+            assert not W["heads"] and not W["ponds"]
         pf_ids = {f["id"] for f in S["fields"] if f.get("polder")}
         assert all(v["field"] in pf_ids for v in S["villages"] if v.get("polder"))                  # 圩村落在自己那组圩田上
         assert all(set(v.get("polder_fields", [])) <= pf_ids for v in S["villages"])

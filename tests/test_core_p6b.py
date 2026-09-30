@@ -178,6 +178,8 @@ def test_generate_p3_resources_identical(small_ctx, tmp_path):
     assert sorted(pa) == sorted(pb)
     assert not [k for k in pa if pa[k] != pb[k]]
     assert ga["resources"] == gb["resources"] and ga["settle"] == gb["settle"]
+    isl.island_config(small_ctx, ["island.terrain.age_young=0.3", "island.resources.density_per_100km2.salt=0.05",
+                                  "island.resources.fossil_per_km2=0.1"])   # --set 会留在 ctx 上：改回默认（之前漏了，后面的测试都跑在 age_young 0.6 上）
 
 
 def test_generate_p5_farmland_identical(small_ctx, tmp_path):
@@ -214,10 +216,12 @@ def test_generate_p6_waterworks_identical(small_ctx, tmp_path):
     """P6（水利：谷口的渠、村塘 / 山塘 / 堰塘、圩田的纵浦横塘与圩塘、闸）：默认门槛下小世界里已有圩田、季节性渠首；再强开一遍圩田
     （压力门槛 0、片与圩的下限放小：整片湿地排干），两个后端的整套产物仍逐字节相同，圩田在额度之内（已垦 = 额度），各种渠、塘、闸与水田 / 泽田都走到。"""
     from skyisle_gen import island as isl
+    vw = ["island.works.village_works=true", "island.works.big_max=0"]          # 四点四十起村级默认不出、大堰默认修：这里测留着的村级算法
     forced = ["island.works.polder_pressure_min=0.0", "island.works.polder_patch_min_km2=0.05", "island.works.polder_block_min_km2=0.05"]
-    base = ["island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1"]
+    base = ["island.works.polder_pressure_min=0.5", "island.works.polder_patch_min_km2=0.3", "island.works.polder_block_min_km2=0.1",
+            "island.works.village_works=false", "island.works.big_max=2"]
     seen = set()
-    for extra in ([], forced):
+    for extra in (vw, vw + forced):
         for node in _nodes(small_ctx, 2):
             outs = {}
             for b in ("python", "cpp"):
@@ -245,12 +249,14 @@ def test_generate_p6b_manage_identical(small_ctx, tmp_path):
     每处水利都有管它的村、在它走得到的范围内（check 的 SET-works），原始地表与人工改造对得上（SET-nature）。"""
     from skyisle_gen import island as isl
     from skyisle_gen.island.check import _nature_check, _works_manage
+    vw = ["island.works.village_works=true", "island.works.big_max=0"]          # 四点四十起村级默认不出、大堰默认修：这里测留着的村级算法
     forced = ["island.works.polder_village_blocks=1", "island.works.manage_walk_km=3.0", "island.settle.ruin_min_hh=2",
               "island.works.works_src_min_km2=1.0", "island.works.works_stream_min_km2=2.0", "island.works.canal_min_cmd_km2=0.05"]
     base = ["island.works.polder_village_blocks=3", "island.works.manage_walk_km=2.0", "island.settle.ruin_min_hh=8",
-            "island.works.works_src_min_km2=10.0", "island.works.works_stream_min_km2=30.0", "island.works.canal_min_cmd_km2=0.5"]
+            "island.works.works_src_min_km2=10.0", "island.works.works_stream_min_km2=30.0", "island.works.canal_min_cmd_km2=0.5",
+            "island.works.village_works=false", "island.works.big_max=2"]
     seen = set()
-    for extra in ([], forced):
+    for extra in (vw, vw + forced):
         for node in _nodes(small_ctx, 2)[:2]:
             outs = {}
             for b in ("python", "cpp"):
@@ -278,6 +284,51 @@ def test_generate_p6b_manage_identical(small_ctx, tmp_path):
     assert {"圩村", "挂圩田", "废塘", "废渠首", "废渠", "改造1", "改造3", "改造4", "改造5"} <= seen, seen
 
 
+def test_generate_bigworks_identical(small_ctx, tmp_path):
+    """水利分级（四点四十，用户 09-30 定）：默认一遍（村级的渠、塘不在岛群层出）；再强开一遍邑级大堰（小世界的河小：汇水、灌区的门槛放低、
+    不看额度占比），两个后端的整套产物仍逐字节相同；大堰在本岛常年河上、邑管，灌区里在种的地 = landuse 的渠灌田、都是已垦，
+    每个用水的村一个分水口，SET-works / SET-nature 过，已垦 = 额度、人口不变。"""
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.check import _nature_check, _works_check
+    forced = ["island.works.big_src_min_km2=1.0", "island.works.big_min_cmd_km2=0.2", "island.works.big_min_quota_frac=0.0", "island.works.big_try=4"]
+    base = ["island.works.big_src_min_km2=30.0", "island.works.big_min_cmd_km2=20.0", "island.works.big_min_quota_frac=0.1", "island.works.big_try=10"]
+    seen = set()
+    for extra in ([], forced):
+        for node in _nodes(small_ctx, 3):
+            outs = {}
+            for b in ("python", "cpp"):
+                out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
+                                      return_state=True, out_root=tmp_path / b)
+                small_ctx.cfg["engine"]["backend"] = "python"
+                outs[b] = (_products(out), g)
+            (pa, ga), (pb, gb) = outs["python"], outs["cpp"]
+            assert sorted(pa) == sorted(pb)
+            assert not [k for k in pa if pa[k] != pb[k]], node
+            assert ga["settle"] == gb["settle"]
+            S = gb["settle"]
+            W = S["waterworks"]
+            assert W["summary"]["village_works"] is False and not W["heads"] and not W["ponds"]
+            assert S["farmland"]["cultivated_km2"] == S["farmland"]["quota_km2"]
+            assert _works_check(gb, S)["pass"], _works_check(gb, S)["value"]
+            assert _nature_check(gb, S)["pass"], _nature_check(gb, S)["value"]
+            V = {v["id"] for v in S["villages"]}
+            ck = (gb["json"]["raster"]["res_m"] / 1000.0) ** 2
+            served = 0.0
+            for bw in W["big_works"]:
+                i, j = bw["cell"]
+                assert gb["river"][i, j] > 0 and gb["island_id"][i, j] == bw["island"] and bw["maintainer"] == "邑"
+                assert bw["served_km2"] <= bw["planned_km2"] <= bw["water_km2"] + 1e-9
+                assert [t["village"] for t in bw["turnouts"]] == bw["villages"] and set(bw["villages"]) <= V
+                served += bw["served_km2"]
+                seen.add("大堰")
+                seen |= {"用水的村"} if bw["villages"] else set()
+            lu3 = gb["landuse"] == 3
+            assert abs(float(lu3.sum()) * ck - served) < 1e-2 and (gb["cultivated"][lu3] > 0).all()
+            seen |= {c["kind"] for c in W["canals"] if "work" in c}
+    isl.island_config(small_ctx, base)                      # --set 会留在 ctx 上：改回默认
+    assert {"大堰", "用水的村", "干渠", "支渠"} <= seen, seen
+
+
 def test_generate_p7_market_identical(small_ctx, tmp_path):
     """P7（大泊场、镇、航船、邑治、群内的烽火台）：小世界到 ④、没有 ⑥ 的航线，只有群内的中转站。默认一遍，再一遍把走路赶集收到 2 km、
     镇距放到 4 km（多数村搭航船、线多、邑治挑得开），两个后端的整套产物仍逐字节相同；大泊场、镇挨着的泊场、航船线、搭航船的村、烽火台都走到。"""
@@ -288,7 +339,7 @@ def test_generate_p7_market_identical(small_ctx, tmp_path):
             "island.market.harbor_min_km2=0.5", "island.market.tailwind_factor=0.7", "island.market.headwind_factor=1.5", "island.market.wind_ref_ms=5.0"]
     seen = set()
     for extra in ([], forced):
-        for node in _nodes(small_ctx, 2):
+        for node in _nodes(small_ctx, 3):                      # 第三群才有烽火台（群边高处的没人住的岛）
             outs = {}
             for b in ("python", "cpp"):
                 out, g = isl.generate(small_ctx, node, res_m=300.0, sets=[f"engine.backend={b}", "engine.threads=4"] + extra, log=lambda *a: None,
