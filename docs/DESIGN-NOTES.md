@@ -2392,7 +2392,7 @@ pytest 9.1、nanobind 3.1.0、`pip install -e .`；`_core.cp312-win_amd64.pyd` �
 
 **结论**：Linux 上 C++ 与参考后端逐位相同，PLAN-CORE 第九节「等 Linux 上编过、对照过再删 Python 的算法」的条件满足了；接着删（下一节）。
 
-**已知**：ME Pro 上 matplotlib 找不到中文字体（`fonts-noto-cjk` 装着，但没有 fontconfig、`fc-list` 不在，matplotlib 扫目录没认到 .ttc），出图的中文是缺字方框；数据不受影响，要出图时再修。
+**中文字体**：ME Pro 上第一次出图中文是缺字方框——matplotlib 的字体缓存（`~/.cache/matplotlib/fontlist-v3.11.0.json`）是 09-19 装 `fonts-noto-cjk` 之前建的，删掉让它重建就认到了 Noto Sans CJK SC（字体回退表里本来就有）。以后在那边装了字体要删这份缓存。
 
 ## 五、操作台（web/）
 

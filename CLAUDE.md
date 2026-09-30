@@ -13,7 +13,7 @@
 - **ME Pro（Debian，无显示器，`ssh liein@10.8.0.12`）**：09-30 按新名字重装（四点四十一）——代码 `~/dev/skyisle-gen`（从 GitHub clone）、venv `~/.venvs/skyisle`（Python 3.13、numpy 2.5.2）、
   软链 `~/.local/bin/skyisle`、`~/.skyisle-env.sh`（`SKYISLE-DEV-ENV` 段，`~/.bashrc` 与 `~/.profile` 都 source；带代理与 `MPLBACKEND=Agg`）。C++ 核心已编（g++ 14、cmake 3.31、Ninja），
   三 seed ①–⑨ 与 `island compare` 30 群两个后端逐位相同；和 Windows 只差浮点末位（两边的 libm 不同），离散结果全同。
-  中文图标：`fonts-noto-cjk` 装着，但没有 fontconfig，matplotlib 认不到 .ttc，出图中文缺字（待修）。`pipeline` 与 `serve` 不要同时跑；操作台绝不绑 `0.0.0.0`。
+  中文图标：`fonts-noto-cjk`（Noto Sans CJK SC 在字体回退表里）；装了新字体要删 `~/.cache/matplotlib/fontlist-*.json` 让它重建。`pipeline` 与 `serve` 不要同时跑；操作台绝不绑 `0.0.0.0`。
 - 一律在仓库根下执行：
   ```
   $py -m skyisle_gen.cli run --seed 42            # 十步全跑（①–⑨ 约 3 s（C++），大头是 ⑩ 出图约 1 分钟；只改 [s0k] 的参数就从第 k 步起重算）
