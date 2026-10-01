@@ -313,9 +313,9 @@ class Handler(BaseHTTPRequestHandler):
             rf = np.ascontiguousarray(arrs["res_field"][:, ::step, ::step]).astype(np.uint8)
             out["res_field_u8"] = base64.b64encode(rf.tobytes()).decode("ascii")
             out["res_field_k"] = int(rf.shape[0])
-        if "w_mean_m" in arrs:        # 河宽 × 2（年均流量口径；平岸宽在 rivers.json 的 segments 里）（0.5 m 一档，C1 去夸张后大多几米）、水深 × 10（u8：到 127.5 m / 25.5 m）
-            out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["w_mean_m"]) * 2.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
-            out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["d_mean_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+        if "w_ch_m" in arrs:          # 河道（平岸）宽 × 2（年均流量口径；平岸宽在 rivers.json 的 segments 里）（0.5 m 一档，C1 去夸张后大多几米）、水深 × 10（u8：到 127.5 m / 25.5 m）
+            out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["w_ch_m"]) * 2.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+            out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["d_ch_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "floor_w_m" in arrs:       # C2 谷底宽 / 20 m（到 5100 m）；C4 凝结水 / 4 mm（到 1020 mm）
             out["floor_w_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["floor_w_m"]) / 20.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "condense_mm" in arrs:

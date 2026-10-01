@@ -327,8 +327,8 @@ nb::dict hydro_dict(Group& g) {
     d["landcover"] = grid_np(Grid<uint8_t>(g.landcover));
     d["arable"] = grid_np(Grid<uint8_t>(g.arable));
     if (!g.cultivable.v.empty()) d["cultivable"] = grid_np(Grid<uint8_t>(g.cultivable));
-    d["w_mean_m"] = f32_np(g.width_m);      // 河道格在**年均流量**口径下的宽 / 深（C1：w = 5·Q^0.5、d = 0.35·Q^0.4）
-    d["d_mean_m"] = f32_np(g.depth_m);      // 平岸口径（代平岸流量）在 rivers.json 的 segments 里（w_bf_m / d_bf_m）
+    d["w_ch_m"] = f32_np(g.width_m);        // 河道（**平岸**）宽 / 深：年均口径 × (bf_ratio_channel)^站内指数（river.cpp；四点五十一）
+    d["d_ch_m"] = f32_np(g.depth_m);        // 逐点、按真实平岸流量的宽深在 rivers.json 的 segments（w_bf_m / d_bf_m），年均水面宽是 w_mean_m
     d["cut_m"] = f32_np(g.cut_m);
     d["slope_deg"] = f32_np(g.slope);
     d["rain_mm"] = f32_np(g.rain);
@@ -504,7 +504,7 @@ nb::dict rivernet_dict(const RiverNet& R) {
     d["q_bf"] = vec_np(R.q_bf);
     d["w"] = vec_np(R.w);              // 平岸宽（同上式，代平岸流量 q_bf）
     d["d"] = vec_np(R.d);
-    d["w_mean"] = vec_np(R.w_mean);    // 年均流量口径（栅格 terrain.npz 的 w_mean_m 同值）
+    d["w_mean"] = vec_np(R.w_mean);    // 年均流量下的水面宽 / 深（栅格 terrain.npz 的 w_ch_m 是河道 = 平岸口径）
     d["d_mean"] = vec_np(R.d_mean);
     d["surf"] = vec_np(R.surf);
     d["bed"] = vec_np(R.bed);

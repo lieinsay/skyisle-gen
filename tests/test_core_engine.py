@@ -318,7 +318,7 @@ def _build(ctx, node, res_m=300.0, threads=4, sets=()):
 
 
 GRIDS = ("island_id", "cliff", "height", "river", "stream", "lake", "landcover", "arable", "cultivable", "floodplain", "flowacc_km2",
-         "w_mean_m", "d_mean_m", "cut_m", "slope_deg", "filled", "recv_i", "recv_j", "route_h", "lith", "coast_dist_m")
+         "w_ch_m", "d_ch_m", "cut_m", "slope_deg", "filled", "recv_i", "recv_j", "route_h", "lith", "coast_dist_m")
 
 
 def test_small_world_constraints(small_ctx):
@@ -382,7 +382,7 @@ def test_two_calls_match_generate(small_ctx):
     g2 = _build(small_ctx, node)
     assert "strat_top" in g2
     g1 = isl.generate(small_ctx, node, write=False, res_m=300.0, steps=2, log=lambda *a: None)
-    for k in ("height", "lith", "river", "stream", "flowacc_km2", "slope_deg", "w_mean_m", "coast_dist_m"):
+    for k in ("height", "lith", "river", "stream", "flowacc_km2", "slope_deg", "w_ch_m", "coast_dist_m"):
         assert np.array_equal(g1[k], g2[k], equal_nan=True), k
     assert g1["json"]["islands"][0]["rim_m"] == g2["json"]["islands"][0]["rim_m"]
 

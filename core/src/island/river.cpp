@@ -35,11 +35,18 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
         out.floodplain = Grid<uint8_t>(H, W, 0);
         return out;
     }
-    // 水力几何（Leopold & Maddock 1953 的下游关系，按年均流量：w ∝ Q^0.5、d ∝ Q^0.4；系数对过泰晤士河 Q 65 m³/s 宽约 60 m、莱茵河巴塞尔 1000 m³/s 约 200 m）。
+    // 水力几何（Leopold & Maddock 1953 的下游关系，**按年均流量**：w = 5·Q^0.5、d = 0.35·Q^0.4 m——这是一年平均的水面宽深。
+    // 5.0 落在实测带 3–5.3 里：泰晤士 Q 66 → 水面宽约 43 m（平岸约 60）、莱茵巴塞尔 Q 1060 → 约 146（平岸约 200）。
+    // **平岸**宽深在 rivernet 里按站内指数换算（w ∝ Q^0.26、d ∝ Q^0.40，四点五十一）。
     // C1 起没有夸张（旧 width_scale / depth_scale 删了）
     const double wa = c.get("hydro.width_a"), wb = c.get("hydro.width_b");
     const double dc = c.get("hydro.depth_c"), df = c.get("hydro.depth_f");
     const double sm = c.get("hydro.stream_width_mult");
+    // 切出来的河道 = **平岸河道**：年均流量下的水面宽深 × (平岸 / 年均)^站内指数（地形阶段只有假设的比值 bf_ratio_channel，
+    // 逐日的真实比值在 rivers.json；站内指数小，误差异常小——四点五十一）
+    const double bfr = c.get("hydro.bf_ratio_channel", 5.0);
+    const double aw = c.get("hydro.at_station_width_b", 0.26), ad = c.get("hydro.at_station_depth_f", 0.40);
+    const double ch_w = np_pow(bfr, aw), ch_d = np_pow(bfr, ad);
     std::vector<double> Q(N), width(N), depth(N), incise(N), base(N), bed(N, NaN);
     double amax = -INF;
     for (size_t k = 0; k < N; ++k)
@@ -49,8 +56,8 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     for (size_t k = 0; k < N; ++k) {
         Q[k] = Qin ? Qin->v[k] : Akm.v[k] * 1e6 * (P_mm / 1000.0) * runoff / year_s;
         const double q = std::max(Q[k], 0.0);
-        const double w = wa * np_pow(q, wb);
-        const double d = dc * np_pow(q, df);
+        const double w = wa * np_pow(q, wb) * ch_w;      // 河道（平岸）宽
+        const double d = dc * np_pow(q, df) * ch_d;      // 河道（平岸）深
         width[k] = center_r.v[k] ? w : (center_s.v[k] ? sm * w : 0.0);
         depth[k] = center_r.v[k] ? d : (center_s.v[k] ? sm * d : 0.0);
         incise[k] = center_r.v[k] ? inc_m * std::sqrt(clip(Akm.v[k] / amax, 0.0, 1.0)) : (center_s.v[k] ? s_inc : 0.0);

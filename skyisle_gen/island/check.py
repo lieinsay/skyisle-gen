@@ -67,9 +67,9 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
     small_ok = all(not i.get("has_perennial_river", False) for i in J["islands"][1:])
     add("IS-river", "主岛有常年河 ⇔ has_river；小岛只有溪涧", {"main": rv.get("actual"), "target": rv["target"], "small_islands_ok": small_ok},
         "相等", rv.get("actual") == rv["target"] and small_ok)
-    if "w_mean_m" in g:
+    if "w_ch_m" in g:
         rvm = g["river"] > 0
-        ok_wd = bool(((g["w_mean_m"][rvm] > 0) & (g["d_mean_m"][rvm] > 0)).all()) if rvm.any() else True
+        ok_wd = bool(((g["w_ch_m"][rvm] > 0) & (g["d_ch_m"][rvm] > 0)).all()) if rvm.any() else True
         # 河道下切：横断面上两岸都高于河道——四组对边邻格（南北 / 东西 / 两条对角）里至少一组两格都是岸且都不低于河道（容 0.5 m）。
         # 不用「≤ 相邻岸格均值 / 最低者」：陡的河段每格落差十几米，下游那侧的岸本来就比这格河床低（那样陡河段只有 63–89%）
         from .grid import shift
@@ -88,7 +88,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
         water_ok = True
         if "river_water" in g and c is not None:
             thr_w = float(c.get("hydro", {}).get("river_water_min_cells", 1.0)) * g["res_km"] * 1000.0
-            water_ok = bool((g["river_water"].astype(bool) == (rvm & (g["w_mean_m"] >= thr_w))).all())
+            water_ok = bool((g["river_water"].astype(bool) == (rvm & (g["w_ch_m"] >= thr_w))).all())
         add("IS-channel", "常年河每格有河宽 / 水深；河道切在两岸之下（横断面两侧都不低于河道）的占比；记成水面的河道格恰是河宽够一格的（C1）",
             {"width_depth_ok": ok_wd, "below_banks": round(below, 4), "river_water_ok": water_ok}, "全有 / ≥ 0.95 / 是", ok_wd and below >= 0.95 and water_ok)
     if "runoff_acc" in g:

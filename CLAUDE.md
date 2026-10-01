@@ -153,7 +153,7 @@ skyisle_gen/
                            浮石 = 岛体，崖面与峡谷壁按露头率露出、可开采不影响浮空。resource（uint8）只是显示用的主导类（稀的盖常的）；→ resources.json / png、terrain_zone.png、preview_resources.png
                  climate   5.4 四季：降水 = 年均 × 季数 × ④ 的份额 precip_share（A5）；风暴 / 窗口 / 风按 ④ 的每季带界位移 season_shift 取样再缩放到年均（旧 k_shift 作废）；温度 = 年均 + season_range/2·cos(相位 − 滞后)；季型分类命名
                  weather   5.5 逐日：马尔可夫晴雨 + 伽马雨量（风暴日计入预算）、风暴事件、AR(1) 风温、云海漫顶、岸缘 ≤ 0.5 °C 记为雪（小雪 / 大雪 / 暴风雪）；multi_year_stats 供 IS-daily
-                 output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz（含 w_mean_m / d_mean_m（河道宽深，年均流量口径）/ floodplain / terrain_zone / resource / res_field / patch_id）/ climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）；
+                 output    5.6 island.json / height.png(16 位) / landcover.png / water.png / arable.png / terrain.npz（含 w_ch_m / d_ch_m（河道 = 平岸宽深）/ floodplain / terrain_zone / resource / res_field / patch_id）/ climate.json / weather_y<年>.csv / preview.png（总览）/ preview_main.png（主岛放大）；
                            water.png 值 6 = 漫滩；河道格的 height 是河床，水面 = 河床 + 水深；rivers.json = 河道中心线折线（调试台 / preview 按河宽画平滑矢量，栅格上河只有一两格宽）；调试台拉近后停手会「细化渲染」当前视口（连续量双线性、分类图扰动 + 加权投票，纯显示）
                  settle    聚落（PLAN-SETTLE，DESIGN-NOTES 四点十五 / 四点十八 / 四点三十六 / 四点三十八）：人口只读 ⑨ → 户（10% 非农）；已垦（farmland：好地先占 + 定居门槛、撂荒、废村）
                            连通块切田块（k-means 按 80 户地量分；P6b：切好后圩田的格拿出来按 3 × 3 圩一组另成田块）；村址评分；圩田的田块挂到走得到的村上或自成圩村（polder_villages，P6b）；专业聚落与住法（常住 / 工棚 / 季节住）；P7 的大泊场、中转站、镇与航船、邑治（market）；
@@ -301,7 +301,7 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
   含水层最小厚 5 m、粗格 4（SOR ω 1.85、300 轮 / 0.05 m 收敛）、打破平局的朝岸微倾 1 m/km（最多算到 2 km，只为定流向）；
   泉线 1 km 一段、≥ `springline_min_ls` 0.5 L/s 才记；**泉 / 崖瀑**要出水 ≥ 本岛出口段的 `spring_pct` 0.85 / `spring_fall_pct` 0.97 **且**含水层厚度 ≥ `spring_min_aquifer_m` 20 m，
   其余算弥散渗出（旧键 `springline_fall_ls` 绝对 5 L/s 作废）；#1165 629 弥散渗出 / 90 泉 / 41 崖瀑（直径 100 m、21 岛，generate 7.0 → 7.6 s）
-  河的数据 `[island.rivers]`（C3，四点五十：`w_bf_m` / `d_bf_m` 是真**平岸**（代 q_bf）≈ 年均口径 ×2.6，`w_mean_m` / `d_mean_m` 是年均口径 = terrain.npz 同名的键）：砾床 Shields 0.05 / 砂床 1、BQART 岩性 [1, 1.75, 0.6, 1.5, 1]、全垦 × 2 全林 × 0.7、瀑布合起来 ≥ 20 m 且平均比降 ≥ 0.25、雪 ≤ 0.5 °C、度日 3 mm；
+  河的数据 `[island.rivers]`（C3，四点五十：`w_bf_m` / `d_bf_m` 是真**平岸**（= 年均口径 × (q_bf/q_mean)^站内指数 0.26 / 0.40 ≈ ×1.5–2）、`w_mean_m` / `d_mean_m` 是年均流量下的水面；terrain.npz 的 w_ch_m / d_ch_m 是**河道**（× bf_ratio_channel^站内指数））：砾床 Shields 0.05 / 砂床 1、BQART 岩性 [1, 1.75, 0.6, 1.5, 1]、全垦 × 2 全林 × 0.7、瀑布合起来 ≥ 20 m 且平均比降 ≥ 0.25、雪 ≤ 0.5 °C、度日 3 mm；
   地形区的局地起伏按 4 km 方窗，山地 ≥ 300 m、丘陵 ≥ 100 m，外加相对高度判据（旧的平岛上只按起伏判一格山地都没有；有真实起伏后主要靠起伏判）；土层到 60° 才归零、坡向湿度修正 ±0.2、成林土层门槛 0.2（按平岛定的 40° / ±0.4 / 0.3 在真实坡上是一片灌丛）；盆地 = 汇流 ≥ max(5 km², 2%) 的河口集水区，≥ 15% 岛面积算大盆地；
   相对降水 → mm：④ 的 `precip_mm_ref` 4000 × p（线性，A3；旧 150 + 3850 × p^1.3 作废）、已垦额度读 ④ 的 `arable_frac_eff`；四季降水按 ④ 的份额、带界摆动读 ④ 的每季位移（A5，±5.2°）；季型阈值：四季分明 ≥ 20 °C、冷暖两季 ≥ 8 °C、雨旱 2.5 倍、风暴 / 窗口季差 0.25；
   雨日比例 0.12 + 0.30 × (季雨量/1000)^0.7、湿→湿持续 0.45、伽马形状 0.8、风暴日比例 0.35 × 强度^1.2（布尔覆盖率反解事件数）、云海漫顶只在峰高 < 800 m 的群。
@@ -387,7 +387,8 @@ core/            C++17 核心库（PLAN-CORE；不含 Python、不含 Godot）�
 - 岛群生成器：资源不进村址选择（村定了再去找石 / 土，矿镇落在矿旁）、赋存区的储量只有面积 × 品位没有吨位；岩性 B2 起有栅格（terrain.npz 的 lith）、
   **水位面 B+A 起有**（wt_m / wt_depth_m，四点四十九）；逐日径流指数只一年；**聚落层还没读埋深**（井 / 取水点 / 定居门槛要水，下一轮改）；
   泉的等第只看「本岛出水分的分位 + 含水层厚度」，没看岩性与岩层 / 浮石交界在崖壁上出露不出露；水位面是粗格解（排水口在细格上钉回地表，其余格是粗格插值）；
-  河宽 B0 起是真实比例、四点五十起平岸 / 年均两个口径分开（`width_a = 5.0` 与它注释里引的泰晤士 / 莱茵标定点差 25–35%，没动），不是水文模型；默认视图的河道线宽是示意（有最小像素下限），控制台有「按真实比例」开关；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；散户多（已垦按格排先后，田是一片片的）；粗版不跑聚落、地表里的田仍按上等地画；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四。
+  **河道宽用假设的平岸 / 年均比 5.0**（地形阶段还没有逐日天气，四点五十一）：真实温带 3.8–4.6、本模型的日指数年最大 4.8–14.9（**偏急一倍**，天气模型的事，没动）；drainage density 0.56 km/km²（真实温带 1–2，`stream_min_km2` 1.0 偏保守，没动）；
+  河宽 B0 起是真实比例、四点五十起平岸 / 年均两个口径分开，不是水文模型；**四点五十一 按文献重做**：那两个「标定点」是**平岸**口径（泰晤士 60 m = 年均水面 40 × 4.3^0.26），`a = 5.0` 配年均流量是对的；错的是四点五十 用下游指数 0.5 换算站内（多放大 1.6 倍）——已改 `ratio^0.26`，且**切出来的河道改成平岸河道**（`bf_ratio_channel` 5.0；栅格键改 w_ch_m / d_ch_m）；默认视图的河道线宽是示意（有最小像素下限），控制台有「按真实比例」开关；不做岛内逐日空间分布；老岛台地的宽谷偏少；可耕地偏向沿河带；散户多（已垦按格排先后，田是一片片的）；粗版不跑聚落、地表里的田仍按上等地画；`island batch` 的三 seed 统计见 DESIGN-NOTES 四点十四。
   **版本戳只管控制台**（`products_stale`）：`transect.py` / `works_view.py` / `market_view.py` / `koppen.py` 直接读 `islands/<节点>/`，不看戳——量之前先确认那批产物是当前的（或 `island <节点>` 重生成一次）
 - 九格表 ④ 特有种 / ⑦ 外观 标【待填】；⑨ 文本量词与归因还比较模板化。⑧ 的世仇 = 接壤且势均力敌、界边最多的邻邦（启发式）
 - 政治层：兼并史是静态快照 + 逐邦顺序（无年内事件、无分裂/复国）；附庸只一层；邦名是 `邦NNN` 占位；南圈与 NW 圈不发生变法（docs/11 §八）

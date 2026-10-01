@@ -101,8 +101,8 @@ def write_terrain(out: Path, g: dict) -> None:
     # C1 / C2（DESIGN-NOTES 四点四十七）：河道格的 height 是平岸水面（= 谷底的滩面），bed_m = 河床（其余 NaN），river_water = 河宽够一格、记成水面的河道格；
     # floor_w_m / confine = 河道格上的谷底宽（m）与限制度（1 峡谷 / 2 半限制 / 3 开阔）；floodplain = 谷底里的岸上格；
     # C4 / C5：condense_mm = 集水核的凝结水（只进水账，runoff_mm 含它、rain_mm 不含），cloud_forest = 云雾林，recharge_mm = 地下水补给
-    for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "w_mean_m",
-              "d_mean_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse",
+    for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "w_ch_m",
+              "d_ch_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse",
               "lith", "rockwall_m", "rockwall_dir", "coast_dist_m", "bed_m", "river_water", "floor_w_m", "confine", "condense_mm", "cloud_forest", "recharge_mm"):
         if k in g:
             arrays[k] = g[k]

@@ -274,9 +274,9 @@ function renderSide(){
       + `<tr><td>主家候选</td><td>${(S.home_candidates||[]).map(h => `<div><b>${h.id}·${h.kind}</b>（岛 ${h.island}，${fmt(h.elev_m,0)} m，离邑治 ${h.dist_seat_km ?? '—'} km，离主泊场 ${h.dist_main_landing_km ?? h.dist_main_dock_km ?? '—'} km）：${h.note}；${h.season_type}，雪 ${h.snow_days} 日 / 风暴 ${h.storm_days} 日 / 可出航 ${h.sailable_days} 日${h.island_has_river ? '，岛上有河' : ''}${h.island_lakes ? '，湖 ' + h.island_lakes : ''}</div>`).join('')}</td></tr>`; }
   const rv = hy.rivers || [];
   const bfR = hy.river_data && hy.river_data.bf_ratio_range;
-  $('rivers').innerHTML = rv.length ? `<tr><th>#</th><th>流域</th><th>长</th><th>流量</th><th>宽 / 深（年均）</th><th>下切</th><th>瀑布</th></tr>` + rv.slice(0, 8).map((r, k) =>
-      `<tr><td><button class="mini" data-rc="${r.mouth_cell.join(',')}">${k + 1}${['','小','中','大'][r.level]}</button></td><td>${fmt(r.basin_km2, 0)} km²</td><td>${fmt(r.length_km, 0)} km</td><td>${fmt(r.discharge_m3s, 1)} m³/s</td><td>${fmt(r.w_mean_m, 0)} m / ${fmt(r.d_mean_m, 1)} m</td><td>${fmt(r.incision_m, 0)} m</td><td>${fmt(r.waterfall_m, 0)} m</td></tr>`).join('')
-      + `<tr><td colspan="7" class="small">宽 / 深是**年均流量**口径（w = 5·Q^0.5、d = 0.35·Q^0.4，C1 的真实比例）${bfR ? `；**平岸**宽 = 年均 × √(平岸/年均)，本群流域的平岸 / 年均在 ${fmt(bfR[0], 1)}–${fmt(bfR[1], 1)}（即 ×${fmt(Math.sqrt(bfR[0]), 2)}–${fmt(Math.sqrt(bfR[1]), 2)}），逐点的平岸宽见 rivers.json 的 w_bf_m` : ''}。常年河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
+  $('rivers').innerHTML = rv.length ? `<tr><th>#</th><th>流域</th><th>长</th><th>流量</th><th>宽 / 深（河道）</th><th>下切</th><th>瀑布</th></tr>` + rv.slice(0, 8).map((r, k) =>
+      `<tr><td><button class="mini" data-rc="${r.mouth_cell.join(',')}">${k + 1}${['','小','中','大'][r.level]}</button></td><td>${fmt(r.basin_km2, 0)} km²</td><td>${fmt(r.length_km, 0)} km</td><td>${fmt(r.discharge_m3s, 1)} m³/s</td><td>${fmt(r.w_ch_m, 0)} m / ${fmt(r.d_ch_m, 1)} m</td><td>${fmt(r.incision_m, 0)} m</td><td>${fmt(r.waterfall_m, 0)} m</td></tr>`).join('')
+      + `<tr><td colspan="7" class="small">宽 / 深是**河道（平岸）**口径 = 年均流量下的水面宽深（w = 5·Q^0.5、d = 0.35·Q^0.4）× (bf_ratio_channel)^站内指数（0.26 / 0.40）${bfR ? `；**平岸**宽 = 年均 × (平岸/年均)^0.26（站内关系，L&M 1964），本群流域的平岸 / 年均在 ${fmt(bfR[0], 1)}–${fmt(bfR[1], 1)}（即 ×${fmt(Math.pow(bfR[0], 0.26), 2)}–${fmt(Math.pow(bfR[1], 0.26), 2)}），逐点的平岸宽见 rivers.json 的 w_bf_m` : ''}。常年河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
     : `<tr><td class="small">无常年河${hy.n_waterfalls ? '（溪涧跌落 ' + hy.n_waterfalls + ' 处）' : ''}</td></tr>`;
   $('rivers').querySelectorAll('button[data-rc]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.rc.split(',').map(Number); flyToCell(i, j, 8); });
   const RS = D.resources;
@@ -288,7 +288,7 @@ function renderSide(){
   $('islandList').querySelectorAll('button').forEach(b => b.onclick = () => zoomIsland(+b.dataset.i));
   const f = `/api/island/preview?run=${run}&node=${node}`;
   $('files').innerHTML = `<div>${D.island.meta.run}/islands/${node}/：island.json · height.png · landcover.png · water.png · farmland.png · terrain.npz · climate.json · weather_y${year}.csv</div>
-    <div>resources.json · resources.png · terrain_zone.png（terrain.npz 另有 w_mean_m / d_mean_m（河道宽深，年均口径）/ floodplain / terrain_zone / resource（主导）/ res_field（赋存）/ patch_id / wt_m / wt_depth_m）</div>
+    <div>resources.json · resources.png · terrain_zone.png（terrain.npz 另有 w_ch_m / d_ch_m（河道 = 平岸宽深）/ floodplain / terrain_zone / resource（主导）/ res_field（赋存）/ patch_id / wt_m / wt_depth_m）</div>
     <div><a href="${D.preview}" target="_blank">preview.png</a> · <a href="${D.preview_main}" target="_blank">preview_main.png</a>${D.preview_res ? ` · <a href="${D.preview_res}" target="_blank">preview_resources.png</a>` : ''}</div>`;
 }
 
@@ -598,7 +598,7 @@ function draw(){
     const dayT = D.climate.weather && D.climate.weather.days ? D.climate.weather.days[day].temp_c : D.climate.annual.temp_c;
     const T = D.climate.annual.temp_sea_c + (dayT - D.climate.annual.temp_c) - 6 * hv / 1000;
     let water = R.lake && R.lake[p] ? '湖' : (R.river && R.river[p] ? ['','小河','中河','大河'][R.river[p]] : (R.stream && R.stream[p] ? '溪涧' : ''));
-    if (water && water !== '湖' && R.rw && R.rw[p]) water += `（宽 ${fmt(R.rw[p] / 2, 1)} m · 深 ${fmt(R.rd[p] / 10, 1)} m${R.stream && R.stream[p] ? '，湿季' : ''}）`;
+    if (water && water !== '湖' && R.rw && R.rw[p]) water += `（河道宽 ${fmt(R.rw[p] / 2, 1)} m · 深 ${fmt(R.rd[p] / 10, 1)} m${R.stream && R.stream[p] ? '，湿季' : ''}）`;
     if (water && water !== '湖' && R.conf && R.conf[p]) water += ` · 谷底 ${R.fw ? R.fw[p] * 20 : '—'} m，${['', '峡谷', '半限制', '开阔'][R.conf[p]]}`;
     if (!water && R.flood && R.flood[p]) water = liveOn() && dayTab && dayTab.flood[day] ? '漫滩（今日被淹：暴雨 / 风暴）' : '漫滩';
     const RS = D.resources; const zr = RS && R.zone ? RS.zones.classes[R.zone[p]] : ''; const rs = RS && R.res && R.res[p] ? RS.resources.classes[R.res[p]] : '';

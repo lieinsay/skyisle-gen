@@ -67,11 +67,11 @@ def test_island_deterministic_and_consistent(small_ctx):
         assert (z["landcover"][land] > 0).all() and (z["landcover"][~land] == 0).all()
         # 河道成形：常年河 / 溪涧每格有河宽水深；河道下切（主岛有河时至少一条入虚空、带瀑布落差）
         rv = z["river"] > 0
-        assert (z["w_mean_m"][rv] > 0).all() and (z["d_mean_m"][rv] > 0).all()
-        assert (z["w_mean_m"][~land] == 0).all() and not (z["floodplain"] & (rv | z["lake"])).any()
+        assert (z["w_ch_m"][rv] > 0).all() and (z["d_ch_m"][rv] > 0).all()
+        assert (z["w_ch_m"][~land] == 0).all() and not (z["floodplain"] & (rv | z["lake"])).any()
         if c["has_river"]["actual"]:
             r0 = J1["hydro"]["rivers"][0]
-            assert J1["hydro"]["n_rivers"] >= 1 and r0["w_mean_m"] > 0 and r0["d_mean_m"] > 0 and r0["waterfall_m"] > 0
+            assert J1["hydro"]["n_rivers"] >= 1 and r0["w_ch_m"] > 0 and r0["d_ch_m"] > 0 and r0["waterfall_m"] > 0
         # 河道中心线（矢量渲染）：每条 ≥ 2 点、落在栅格内；常年河的线河宽 > 0；主岛有河时至少一条常年河线
         RV = json.loads((out / "rivers.json").read_text(encoding="utf-8"))
         Hh, Ww = z["height"].shape

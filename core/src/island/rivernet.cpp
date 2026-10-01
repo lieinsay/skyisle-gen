@@ -272,8 +272,11 @@ void build_rivernet(Group& g, const Config& c) {
 
     // ---- 沿程每点
     const double tg = rc(c, "shields_gravel"), ts = rc(c, "shields_sand"), low_w = rc(c, "low_energy_w_m2");
-    // 水力几何式（C1，config 的 [island.hydro]）：平岸宽深 = 同式代平岸流量
-    const double wbexp = c.get("hydro.width_b", 0.5), dfexp = c.get("hydro.depth_f", 0.4);
+    // 平岸宽深 = 年均宽深 × (平岸 / 年均)^站内指数（L&M 1964：w ∝ Q^0.26、d ∝ Q^0.40）——别用下游的 0.5（四点五十一）
+    const double wbexp = c.get("hydro.at_station_width_b", 0.26), dfexp = c.get("hydro.at_station_depth_f", 0.40);
+    // 年均流量下的水面宽深（下游关系，L&M 1953）：w = width_a·Q^width_b、d = depth_c·Q^depth_f
+    const double wa = c.get("hydro.width_a", 5.0), wb = c.get("hydro.width_b", 0.5);
+    const double dc0 = c.get("hydro.depth_c", 0.35), df0 = c.get("hydro.depth_f", 0.4);
     const double bf_farm = rc(c, "bqart_farm"), bf_for = rc(c, "bqart_forest"), tol = rc(c, "floor_tol_m");
     const double a_temp = g.clim.a_temp, a_ref = g.clim.a_ref_h;
     const size_t M = R.cell.size();
@@ -346,11 +349,14 @@ void build_rivernet(Group& g, const Config& c) {
             R.acc[m] = static_cast<float>(g.acc_km2.v[k]);
             R.q_mean[m] = static_cast<float>(q);
             R.q_bf[m] = static_cast<float>(qbf);
-            R.w_mean[m] = static_cast<float>(w);
-            R.d_mean[m] = static_cast<float>(d);
-            // 平岸宽与深：同一条水力几何式（w = a·Q^b、d = c·Q^f，Q 以 m³/s）代**平岸流量**——q_bf = 年均 × 所在流域的 bf_ratio
-            R.w[m] = static_cast<float>(w * np_pow(rq, wbexp));
-            R.d[m] = static_cast<float>(d * np_pow(rq, dfexp));
+            // 三个口径各算各的（别叠乘）：年均流量下的水面 = 直接按式子（不依赖栅格，栅格里的已经是河道）；
+            // 真平岸 = 年均 × (q_bf/q_mean)^站内指数；栅格 w_ch_m / d_ch_m = 河道 = 年均 × (假设比值)^站内指数（river.cpp 切的）
+            const double w_mean = wa * np_pow(q, wb), d_mean = dc0 * np_pow(q, df0);
+            R.w_mean[m] = static_cast<float>(w_mean);
+            R.d_mean[m] = static_cast<float>(d_mean);
+            // 平岸宽与深：年均口径 × (平岸 / 年均)^站内指数（L&M 1964：宽 0.26、深 0.40）——q_bf = 年均 × 所在流域的 bf_ratio
+            R.w[m] = static_cast<float>(w_mean * np_pow(rq, wbexp));
+            R.d[m] = static_cast<float>(d_mean * np_pow(rq, dfexp));
             R.surf[m] = static_cast<float>(surf);
             R.bed[m] = static_cast<float>(bed);
             R.slope[m] = static_cast<float>(S);

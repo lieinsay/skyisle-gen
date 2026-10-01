@@ -15,10 +15,12 @@ import numpy as np
 from ..config import CONFIG_DIR, _deep_merge, apply_sets
 
 ISLAND_STREAM = 21   # 与十步管线的流号 1–10 错开
-ISLAND_VERSION = "3"  # 岛群层的实现版本：改了 core/src/island/（或这里的输入拼装、写产物）就 +1。
+ISLAND_VERSION = "4"  # 岛群层的实现版本：改了 core/src/island/（或这里的输入拼装、写产物）就 +1。
                      # 2 = 水位面（B+A，四点四十九）：流向按潜水面、泉线分弥散渗出 / 泉 / 崖瀑、terrain.npz 多 wt_m / wt_depth_m
                      # 3 = 河宽口径分开（四点五十）：rivers.json 的 w_bf_m / d_bf_m 改成真平岸（代 q_bf）、新增 w_mean_m / d_mean_m；
-                     #     terrain.npz 的 river_width_m / river_depth_m 改名 w_mean_m / d_mean_m（年均口径）
+                     #     terrain.npz 的 river_width_m / river_depth_m 改名 w_mean_m / d_mean_m（当时的「年均口径」，四点五十一 又改名为 w_ch_m / d_ch_m）
+                     # 4 = 水力几何按文献重做（四点五十一）：平岸宽深的换算改成站内指数（w_bf = w_mean × ratio^0.26、d_bf = d_mean × ratio^0.40；四点五十 时用错成下游的 0.5，多放大 1.6 倍）；
+                     #     切出来的河道改成**平岸河道**（× bf_ratio_channel^站内指数），栅格那两列 w_mean_m / d_mean_m 随之改名 w_ch_m / d_ch_m
                      # 写进 island.json 的 meta.stamp，控制台与 island check 拿它对盘上的产物判新旧
 
 

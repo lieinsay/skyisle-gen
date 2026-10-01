@@ -167,7 +167,8 @@ struct RiverNet {
     std::vector<int32_t> cell;                                   // 群栅格扁平下标
     std::vector<uint8_t> level, d50c, planform, confine;         // 级别（0 溪涧 / 1–3）、河床质档、平面型、限制度
     std::vector<float> acc, q_mean, q_bf, w, d, surf, bed, slope, d50_mm, ssc, fp_l, fp_r;
-    // w / d = **平岸**宽与深（同一条水力几何式，代平岸流量）；w_mean / d_mean = 年均流量口径（栅格 terrain.npz 的 w_mean_m / d_mean_m 就是这个）
+    // w / d = **平岸**宽与深（= 年均口径 × (q_bf/q_mean)^站内指数 0.26 / 0.40）；w_mean / d_mean = 年均流量下的水面宽深
+    // （栅格 terrain.npz 的 w_ch_m / d_ch_m 是**河道** = 平岸宽深，用假设的 bf_ratio_channel 切出来的）
     std::vector<float> w_mean, d_mean;
     struct Seg {
         int island = 0, down = -1, join = -1, start = 0, n = 0, basin = -1, level = 0;
@@ -347,7 +348,7 @@ struct Group {
     // P5（farmland.cpp）：宜垦（0 / 1 / 2 要修梯田）、上等地画进地表之前原本的地表、适宜度（聚落层排先后）
     Grid<uint8_t> cultivable, cover_natural;
     std::vector<double> suit;
-    GridD width_m, depth_m, cut_m, slope;
+    GridD width_m, depth_m, cut_m, slope;   // width_m / depth_m = **河道（平岸）**宽深（四点五十一；逐点的真值在 g.rnet.w / d）
     GridD bed_m;                    // 河床高程（C1：河道格的 height 是平岸水面，河床 = height − depth_m；其余 NaN）
     GridD floor_w;                  // 谷底全宽（m，C2：河道格的目标 W）
     Grid<uint8_t> confine;          // 限制度（C2，河道格）：1 峡谷 / 2 半限制 / 3 开阔
