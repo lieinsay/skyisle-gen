@@ -773,7 +773,10 @@ lake_min_depth_m = 5.0
 lake_max_per_island = 2       # 主岛最多几个湖；其余岛 lake_max_per_islet；落选的洼地抬到填平面以下 pit_keep_m
 lake_max_per_islet = 1
 pit_keep_m = 2.0
-stream_min_km2 = 1.0          # 汇流面积 ≥ 此值即有季节性溪涧（小岛一律只有溪涧）
+stream_min_km2 = 0.3          # 汇流面积 ≥ 此值即有季节性溪涧（小岛一律只有溪涧）。**与 [terrain] carve_a0_km2 取齐**（四点五十二）：
+                              # 侵蚀就是按 0.3 下切的，掩膜标 1.0 会漏掉 0.3–1.0 那条已切出来的沟（#1165 实测：标 1.0 → drainage density 0.33 km/km²，
+                              # 标 0.3 → 0.84，真实湿润区 1–2 的下沿）。取齐后「有水的网」也跟着分两级：中位那天 ≈ 年均网（≥ 1.0）、湿季铺满整张刻出来的网、
+                              # 干季缩到干流（日层 aMin 的地板 = 本键）
 river_min_q_m3s = 0.3         # 常年河（只在主岛、has_river 为真时）：年均流量门槛（m³/s），按降水与径流系数换算成汇流面积——1,000 mm 约 19 km²、3,000 mm 约 6、300 mm 约 65；
                               # 若主岛最大汇流不足，降到 river_reach_frac × 最大汇流。旧口径是固定 25 km²（干岛上 13 m 宽、0.4 m 深的小沟也算常年河）
 river_reach_frac = 0.2

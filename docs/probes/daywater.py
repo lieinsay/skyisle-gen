@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-TAU_B, MELT, A_REF = 30.0, 3.0, 2.0
+TAU_B, MELT, A_REF = 30.0, 3.0, 1.0   # A_REF = 1.0 是 island.html 现值（四点五十 用户定）
 KB = float(np.exp(-1.0 / TAU_B))
 AREFS = (1.0, 1.4, 2.0, 3.0)
 

@@ -261,7 +261,8 @@ def test_generate_p6b_manage(small_ctx, tmp_path):
             "island.works.village_works=false", "island.works.big_max=2"]
     seen = set()
     for extra in (OLD_FLOOD + vw, OLD_FLOOD + vw + forced):
-        for node in _nodes(small_ctx, 2)[:2]:
+        # 三点五十二（stream_min_km2 0.3）之后小世界的湿地/圩田挪了位：前两个节点不再走「圩村」分支，取三个
+        for node in _nodes(small_ctx, 3)[:3]:
             out, gb = _gen(small_ctx, node, tmp_path / "a", sets=extra)
             assert not _hard_fails(small_ctx, node, gb, out), node
             for k in ("landcover_natural", "landuse"):
