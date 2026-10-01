@@ -878,14 +878,27 @@ hotspring_mw = 5.0            # 一座岛进岩体的热每这么多 MW 给一�
 hotspring_core_min = 0.25     # 大核山：集水核强度 ≥ 此值（高出岸缘的山体约 16 km³ 以上）的岛才有核山温泉（RES-geo 按它查）
 # 地下水：岛的上层岩层是含水层，闭孔的浮石骨架是底。各格的补给 = 雨的径流 × 基流比例 + 凝结水；基流比例与退水常数按出露岩性
 # （石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石：石灰岩岩溶、大泉，辉长岩裂隙，泥灰岩与蛇纹岩差，浮石不透水）。没有岩层的旧配置按 bfi_default。
-# 地下水顺流向走：进了河道是河的基流；一路没进河道、走到岸边的，从崖壁上岩层与浮石的交界渗出来——崖壁泉线（按 springline_seg_km 一段，
-# 出水 < springline_min_ls 的不记，≥ springline_fall_ls 挂成崖瀑）。泉眼的多少与种类也按岩性：spring_lith_mult 乘泉的密度
+# **水位面（B，四点四十九）**：稳态潜水面 ∇·(T∇h) = −R——排水口（河道 / 溪涧 / 湖 / 岸缘）固定水头 = 地表，水位高过地表就钉回地表（渗出面），
+# 不低于骨架顶面 + 最小含水厚。在 1/gw_coarse 的粗格上做 SOR，再双线性插值回原分辨率；**流向按水位面的梯度**（不再按地表）。
+# 水进了河道是河的基流；走到岸边的从崖壁上岩层与浮石的交界渗出来——崖壁泉线（按 springline_seg_km 一段）：
+# 出水 < springline_min_ls 的不记；段的出水 ≥ 本岛分位（spring_pct / spring_fall_pct）**且**含水层厚度 ≥ spring_min_aquifer_m 才算「泉 / 崖瀑」，
+# 其余是「弥散渗出」（干湿岛的比例因此一致，不再出现湿岛处处是崖瀑）。泉眼的多少与种类也按岩性：spring_lith_mult 乘泉的密度
 bfi = [0.55, 0.25, 0.4, 0.2, 0.0]
 bfi_default = 0.4
 recession_days = [60.0, 15.0, 30.0, 15.0, 30.0]
+gw_r_over_t = 8.0e-5          # 补给 / 导水系数（1/m）：水位丘的高度 ≈ 这个值 × 到排水口距离² / 4——越小水位越平（8e-5 时 #1165 埋深中位约 20 m、p90 约 140 m）
+gw_min_thick_m = 5.0          # 含水层最小厚度：水位不低于骨架顶面 + 这个值（水位不能穿进闭孔浮石）
+gw_coarse = 4                 # 在 1/N 的粗格上解（水位面是光滑场；粗格够用、快得多）
+gw_iters = 300                # SOR 迭代上限（提前收敛就停）
+gw_sor_omega = 1.85           # SOR 松弛因子
+gw_tol_m = 0.05               # 收敛判据（一轮里水位变动的最大值）
+gw_tie_m_per_km = 1.0         # 打破平局：按流向的场朝岸缘每公里抬这么多（水位面光滑、平局多；只为定流向，量级远小于真起伏）
+gw_tie_km = 2.0               # 上面的抬升最多算到离岸这么远
 springline_seg_km = 1.0
-springline_min_ls = 0.5
-springline_fall_ls = 5.0
+springline_min_ls = 0.5       # 段出水低于这个不记（连弥散渗出也不算）
+spring_min_aquifer_m = 20.0   # A：段内含水层厚度（水位 − 骨架顶面）低于这个只算弥散渗出
+spring_pct = 0.85             # A：段出水在本岛出口段里的分位，以上算「泉」
+spring_fall_pct = 0.97        # A：以上算「崖瀑」（旧键 springline_fall_ls 是绝对 5 L/s，对干湿岛一刀切，作废）
 spring_lith_mult = [1.5, 0.5, 1.2, 0.3, 0.0]
 
 [island.rivers]               # 河的数据（C3，PLAN-NATURE 第七节；DESIGN-NOTES 四点四十七；rivernet.cpp）：rivers.json 的干支分段、沿程每点、瀑布与跌水、

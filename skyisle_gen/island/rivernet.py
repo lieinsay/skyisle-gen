@@ -10,12 +10,13 @@ PLANFORM_ZH = ["受限（随谷）", "低能顺直", "曲流", "曲流带串沟�
 CONFINE_ZH = ["", "峡谷", "半限制", "开阔"]
 EXIT_ZH = ["汇入", "崖边", "湖", "没入地里"]
 FALL_ZH = ["崖边瀑布", "瀑布", "跌水"]
-COLS = ["row", "col", "level", "acc_km2", "q_mean", "q_bf", "w_bf_m", "d_bf_m", "surf_m", "bed_m", "slope", "d50_mm", "d50", "planform",
+COLS = ["row", "col", "level", "acc_km2", "q_mean", "q_bf", "w_bf_m", "d_bf_m", "w_mean_m", "d_mean_m", "surf_m", "bed_m", "slope", "d50_mm", "d50", "planform",
         "ssc_mgl", "fp_left_m", "fp_right_m", "confine"]
 NOTE = ("河网（C3）：segments 每段从上游到下游，干流按汇水最大的一支往上追，down = 汇入的段号（−1 = 出口）、join = 汇入处在下游段里的点号；"
         "exit：汇入 / 崖边 / 湖 / 没入地里；basin = 所在流域（basins 的下标，−1 = 其余）。pts 的列见 cols：行列是群栅格的格（格心 = 整数 + 0.5），"
         "level 0 = 季节性溪涧、1–3 小中大河；q_mean 年均流量（m³/s，按格的 Budyko 径流累计，含集水核的凝结水）、q_bf 平岸流量（= 年均 × 所在流域逐日径流指数的年最大）；"
-        "w_bf_m / d_bf_m 平岸宽与深（C1 的河道，真实比例）；surf_m 平岸水面（= 该格 height）、bed_m 河床；slope 河床比降（顺流 500 m）；"
+        "**w_bf_m / d_bf_m 平岸宽与深**（同一条水力几何式 w = 5·Q^0.5、d = 0.35·Q^0.4 代 q_bf；比 w_mean_m 宽 √bf_ratio ≈ 2.6 倍）、"
+        "**w_mean_m / d_mean_m 同一式代年均流量**（= terrain.npz 的 w_mean_m / d_mean_m，也是屏幕上那条河的常态宽度）；surf_m 平岸水面（= 该格 height）、bed_m 河床；slope 河床比降（顺流 500 m）；"
         "d50_mm 河床质中值粒径（平岸 Shields 数：砾床 0.05、砂床 1；乘上游岩性的粗细）与档 d50（d50_classes）；"
         "planform 平面型（Kleinhans & van den Berg 2011，planform_classes）；ssc_mgl 年均悬沙浓度（BQART，Syvitski & Milliman 2007，按上游的林与已垦）；"
         "fp_left_m / fp_right_m 顺流向左右的谷底宽（到谷坡脚）；confine 限制度（confine_classes）")
@@ -34,7 +35,8 @@ def rivers_doc(g: dict) -> dict:
     num = {"row": cell // W, "col": cell % W, "level": N["level"].astype(np.int64),
            "acc_km2": np.round(N["acc"].astype(np.float64), 2), "q_mean": np.round(N["q_mean"].astype(np.float64), 4),
            "q_bf": np.round(N["q_bf"].astype(np.float64), 4), "w_bf_m": np.round(N["w"].astype(np.float64), 2),
-           "d_bf_m": np.round(N["d"].astype(np.float64), 2), "surf_m": np.round(N["surf"].astype(np.float64), 1),
+           "d_bf_m": np.round(N["d"].astype(np.float64), 2),
+           "w_mean_m": np.round(N["w_mean"].astype(np.float64), 2), "d_mean_m": np.round(N["d_mean"].astype(np.float64), 2), "surf_m": np.round(N["surf"].astype(np.float64), 1),
            "bed_m": np.round(N["bed"].astype(np.float64), 1), "slope": np.round(N["slope"].astype(np.float64), 5),
            "d50_mm": np.round(N["d50_mm"].astype(np.float64), 3), "d50": N["d50c"].astype(np.int64), "planform": N["planform"].astype(np.int64),
            "ssc_mgl": np.round(N["ssc"].astype(np.float64), 0), "fp_left_m": np.round(N["fp_l"].astype(np.float64), 0),

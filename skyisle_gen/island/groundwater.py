@@ -3,7 +3,7 @@
 
 - 谷底：terrain.npz 的 floodplain = 谷底里的岸上格（滩面 = 平岸水面，涨水即漫）；河道格的 floor_w_m / confine 在 rivers.json 的沿程点上（C3）。
 - 集水核：terrain.npz 的 condense_mm（凝结水，mm/年；只进水账——runoff_mm 含它，rain_mm 不含）、cloud_forest（云雾林）。
-- 地下水：terrain.npz 的 recharge_mm（补给 = 雨的径流 × 基流比例 + 凝结水）；崖壁泉线在 rivers.json 的 springline。
+- 地下水：terrain.npz 的 recharge_mm（补给 = 雨的径流 × 基流比例 + 凝结水）、**wt_m / wt_depth_m（水位面与埋深，B，四点四十九）**；崖壁泉线在 rivers.json 的 springline（分弥散渗出 / 泉 / 崖瀑）。
 """
 from __future__ import annotations
 
@@ -15,8 +15,12 @@ NOTE_SPRING = "出水约 {:.1f} L/s（该处顺流向累计的地下水补给）
 NOTE_HOTSPRING_CORE = ("集水核凝结的热约千分之一进岩体（本岛约 {:.1f} MW）：大核山下深循环的水出成温泉，"
                        "沿谷底、离核山近（spec 13 第八节第 7 条）")
 WATER_NOTE = ("集水核（C4，spec 13 第八节）：凝结水 condense_mm 只进水账（渗进岩层 → 基流与泉，runoff_mm 含它），不进局地雨 rain_mm、不进天气；"
-              "最多到局地雨的 1 倍、跟着湿度走。地下水（C5）：补给 = 雨的径流 × 基流比例（按出露岩性）+ 凝结水，顺流向走——进了河道是河的基流，"
+              "最多到局地雨的 1 倍、跟着湿度走。地下水（C5）：补给 = 雨的径流 × 基流比例（按出露岩性）+ 凝结水；进了河道是河的基流，"
               "没进河道走到岸边的从崖壁上岩层与浮石的交界渗出（崖壁泉线，rivers.json 的 springline）")
+WT_NOTE = ("水位面（B，四点四十九）：稳态潜水面 ∇·(T∇h) = −R——排水口（河道 / 溪涧 / 湖 / 岸缘）固定水头 = 地表，水位高过地表就钉回地表（渗出面），"
+           "不低于骨架顶面 + 最小含水厚；流向按水位面的梯度（不再按地表）。terrain.npz 的 wt_m = 水位（零点口径，m）、wt_depth_m = 埋深（地表 − 水位，m）——"
+           "井打多深、挖到哪层见水读它。崖壁泉线按段分三等：弥散渗出 / 泉 / 崖瀑（出水 ≥ 本岛出口段分位且含水层够厚才算泉，A）")
+KIND_ZH = {0: "弥散渗出", 1: "泉", 2: "崖瀑"}
 
 
 def valley_summary(g: dict, cell_km2: float) -> dict:
@@ -47,6 +51,20 @@ def water_summary(g: dict, R: dict, island_id: np.ndarray, cell_km2: float) -> d
            "condense_max_ratio": round(float(np.max(np.where(land & (rain > 0), cond / np.maximum(rain, 1e-9), 0.0))), 3),
            "core_strength": [round(float(x), 3) for x in R["core_s"]],
            "cloud_forest_km2": round(float(R["cloud_forest"].sum()) * cell_km2, 3) if "cloud_forest" in R else 0.0}
+    if "wt" in R:
+        # B（四点四十九）：水位面 / 埋深——井打多深、挖到哪层见水、泉在哪，都读它
+        wt = R["wt"].astype(np.float64)
+        hgt = R["height"].astype(np.float64)
+        d = np.where(land, hgt - wt, np.nan)[land]
+        sl = R.get("springline", [])
+        n_k = [sum(1 for s in sl if int(s.get("kind", 0)) == k) for k in range(3)]
+        km_k = [round(sum(float(s["length_km"]) for s in sl if int(s.get("kind", 0)) == k), 1) for k in range(3)]
+        ls_k = [round(sum(float(s["q_ls"]) for s in sl if int(s.get("kind", 0)) == k), 1) for k in range(3)]
+        out.update({"wt_note": WT_NOTE,
+                    "wt_depth_m": {"p10": round(float(np.nanpercentile(d, 10)), 1), "p50": round(float(np.nanpercentile(d, 50)), 1),
+                                   "p90": round(float(np.nanpercentile(d, 90)), 1), "max": round(float(np.nanmax(d)), 1)},
+                    "wt_shallow_share": round(float((d <= 5.0).mean()), 3),
+                    "spring_kind": {KIND_ZH[k]: {"n": n_k[k], "km": km_k[k], "ls": ls_k[k]} for k in range(3)}})
     if "recharge_mm" in R:
         rec = R["recharge_mm"].astype(np.float64)
         sl = R.get("springline", [])

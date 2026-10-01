@@ -241,11 +241,11 @@ class Handler(BaseHTTPRequestHandler):
                 "lambda_ref": lam}
 
     def _island(self, rid, node, year, force):
-        """岛群生成器：产物已存在（同年份）就直接读，否则生成（约 5–15 s）。只读管线产物，不回灌。"""
+        """岛群生成器：产物是当前的（版本戳对得上、同年份）就直接读，否则生成（约 5–15 s）。只读管线产物，不回灌。"""
         ctx = self.app.ctx(rid)
         out = ctx.out_dir / "islands" / str(node)
-        if force or not all((out / f).exists() for f in ("island.json", "climate.json", "preview.png", "preview_main.png", f"weather_y{year}.csv")):
-            from ..island import generate
+        from ..island import generate, products_stale
+        if force or products_stale(ctx, node, year):
             with self.app.island_lock:
                 generate(ctx, node, year=year, log=lambda *a: None)
         J = json.loads((out / "island.json").read_text(encoding="utf-8"))
@@ -261,12 +261,8 @@ class Handler(BaseHTTPRequestHandler):
     def _island_data(self, rid, node, year, force=False, sets=None):
         ctx = self.app.ctx(rid)
         out = ctx.out_dir / "islands" / str(node)
-        need = force or not all((out / f).exists() for f in ("island.json", "climate.json", "terrain.npz", "preview_main.png", "settlements.json", "resources.json", "rivers.json", f"weather_y{year}.csv"))
-        if not need:
-            C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
-            need = C.get("weather", {}).get("year") != year or not isinstance(C.get("weather", {}).get("days"), list)
-        if need:
-            from ..island import generate
+        from ..island import generate, products_stale
+        if force or products_stale(ctx, node, year):
             with self.app.island_lock:
                 generate(ctx, node, year=year, sets=list(sets or []), log=lambda *a: None)
         J = json.loads((out / "island.json").read_text(encoding="utf-8"))
@@ -307,6 +303,9 @@ class Handler(BaseHTTPRequestHandler):
                       ("confine", np.uint8), ("cloud_forest", np.uint8), ("river_water", np.uint8)):   # C2 限制度、C4 云雾林、C1 记成水面的河道格
             if k in arrs:
                 out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
+        if "wt_depth_m" in arrs:      # B（四点四十九）：水位埋深（m，0–255 饱和；255 = 虚空 / 更深）——调试台「水位埋深」底图
+            wd = np.nan_to_num(pick(arrs["wt_depth_m"]).astype(np.float64), nan=255.0, posinf=255.0, neginf=0.0)
+            out["wtdepth_u8"] = base64.b64encode(np.clip(np.round(wd), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "cultivable" in arrs:      # P5：田的编码与 farmland.png 同——1 宜垦没开 / 2 已垦的田 / 3 已垦的梯田 / 4 撂荒
             from ..island.output import farmland_codes
             out["farm_u8"] = base64.b64encode(pick(farmland_codes(arrs)).astype(np.uint8).tobytes()).decode("ascii")
@@ -314,9 +313,9 @@ class Handler(BaseHTTPRequestHandler):
             rf = np.ascontiguousarray(arrs["res_field"][:, ::step, ::step]).astype(np.uint8)
             out["res_field_u8"] = base64.b64encode(rf.tobytes()).decode("ascii")
             out["res_field_k"] = int(rf.shape[0])
-        if "river_width_m" in arrs:   # 河宽 × 2（0.5 m 一档，C1 去夸张后大多几米）、水深 × 10（u8：到 127.5 m / 25.5 m）
-            out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_width_m"]) * 2.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
-            out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["river_depth_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+        if "w_mean_m" in arrs:        # 河宽 × 2（年均流量口径；平岸宽在 rivers.json 的 segments 里）（0.5 m 一档，C1 去夸张后大多几米）、水深 × 10（u8：到 127.5 m / 25.5 m）
+            out["river_width_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["w_mean_m"]) * 2.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
+            out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["d_mean_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "floor_w_m" in arrs:       # C2 谷底宽 / 20 m（到 5100 m）；C4 凝结水 / 4 mm（到 1020 mm）
             out["floor_w_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["floor_w_m"]) / 20.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "condense_mm" in arrs:

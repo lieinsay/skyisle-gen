@@ -16,6 +16,148 @@ double wc(const Config& c, const std::string& k) { return c.get("water." + k); }
 // 凝结 1 m/年放出的潜热（W/m²）：2.45 MJ/kg × 1000 kg/m³ / 一年的秒数（一年 336 天约 84 W/m²，spec 13 第八节第 7 条）
 double latent_w_per_m(double year_s) { return 2.45e6 * 1000.0 / std::max(1.0, year_s); }
 
+// 一格的含水层底：骨架顶面 + 最小含水厚（没有岩层时退回「岛底 + 0.4 × 崖高」，与泉线高程的口径同）
+inline double aquifer_floor(const Group& g, const IslandRec& J, size_t k, double min_thick) {
+    const double s = (!g.skel_top.v.empty() && !std::isnan(g.skel_top.v[k])) ? g.skel_top.v[k]
+                                                                          : J.keel_j + 0.4 * (J.rim_j - J.keel_j);
+    return s + min_thick;
+}
+
+// 稳态地下水位（B，四点四十九）：∇·(T∇h) = −R 的离散形式——水位 = 「8 邻水位的均值 + 源项」，
+// 排水口（河道 / 溪涧 / 湖 / 岸缘）钉在地表，水位高过地表就钉回地表（渗出面），不低于含水层底。
+// 在 1/gw_coarse 的粗格上做 SOR（水位面是光滑场、粗格够用；逐岛解，岛之间隔着虚空互不影响），
+// 再双线性插值回原分辨率并按每格夹一次（≤ 地表、≥ 含水层底）
+GridD water_table(const Group& g, const Config& c, const Mask& land, double min_thick) {
+    const int H = g.H, W = g.W;
+    GridD wt(H, W, NaN);
+    const int step = std::max(1, static_cast<int>(std::lround(wc(c, "gw_coarse"))));
+    const double dx = g.res_km * 1000.0 * step;
+    const double src = wc(c, "gw_r_over_t") * dx * dx / 4.0;
+    const int iters = std::max(1, static_cast<int>(std::lround(wc(c, "gw_iters"))));
+    const double omega = wc(c, "gw_sor_omega"), tol = std::max(1e-6, wc(c, "gw_tol_m"));
+    // 岸缘 = 邻接虚空的陆地格（也是排水口）
+    Mask rim(H, W, 0);
+    for (int i = 0; i < H; ++i)
+        for (int j = 0; j < W; ++j) {
+            const size_t k = static_cast<size_t>(i) * W + j;
+            if (!land.v[k]) continue;
+            bool v = false;
+            for (int n = 0; n < 8 && !v; ++n) {
+                const int a = i - N8[n][0], b = j - N8[n][1];
+                if (a < 0 || b < 0 || a >= H || b >= W || !land.v[static_cast<size_t>(a) * W + b]) v = true;
+            }
+            rim.v[k] = v ? 1 : 0;
+        }
+    const int n = static_cast<int>(g.islands.size());
+    // 每岛的窗口：从 island_id 自己算外接框（地形 + 水系分两次调时，IslandRec 里没有窗口）
+    std::vector<int> r0v(n, H), r1v(n, -1), c0v(n, W), c1v(n, -1);
+    for (int i = 0; i < H; ++i)
+        for (int j = 0; j < W; ++j) {
+            const int id = g.island_id.v[static_cast<size_t>(i) * W + j];
+            if (id < 0) continue;
+            if (i < r0v[id]) r0v[id] = i;
+            if (i > r1v[id]) r1v[id] = i;
+            if (j < c0v[id]) c0v[id] = j;
+            if (j > c1v[id]) c1v[id] = j;
+        }
+    std::vector<double> cb, cfl, ch;
+    std::vector<uint8_t> cl, cdr;
+    for (int id = 0; id < n; ++id) {
+        const IslandRec& J = g.islands[id];
+        if (r1v[id] < r0v[id] || c1v[id] < c0v[id]) continue;      // 这个岛没有陆地
+        const int r0 = r0v[id], c0 = c0v[id], mh = r1v[id] - r0v[id] + 1, mw = c1v[id] - c0v[id] + 1;
+        const int mch = (mh + step - 1) / step, mcw = (mw + step - 1) / step;
+        const size_t CN = static_cast<size_t>(mch) * mcw;
+        cb.assign(CN, NaN);
+        cfl.assign(CN, NaN);
+        ch.assign(CN, NaN);
+        cl.assign(CN, 0);
+        cdr.assign(CN, 0);
+        for (int bi = 0; bi < mch; ++bi)
+            for (int bj = 0; bj < mcw; ++bj) {
+                double sb = 0.0, sf = 0.0, sdr = INF, cnt = 0.0;
+                bool dr = false;
+                for (int qi = 0; qi < step; ++qi)
+                    for (int qj = 0; qj < step; ++qj) {
+                        const int i = r0 + bi * step + qi, j = c0 + bj * step + qj;
+                        if (i < 0 || j < 0 || i >= H || j >= W) continue;
+                        const size_t k = static_cast<size_t>(i) * W + j;
+                        if (g.island_id.v[k] != id) continue;
+                        cnt += 1.0;
+                        sb += g.height.v[k];
+                        sf += aquifer_floor(g, J, k, min_thick);
+                        if (g.river.v[k] > 0 || g.stream.v[k] > 0 || g.lake.v[k] || rim.v[k]) {
+                            dr = true;
+                            sdr = std::min(sdr, g.height.v[k]);   // 排水口的水头 = 那一格的地表（河口 / 岸缘最低的那格）
+                        }
+                    }
+                if (cnt <= 0.0) continue;
+                const size_t q = static_cast<size_t>(bi) * mcw + bj;
+                cl[q] = 1;
+                cb[q] = dr ? std::min(sdr, sb / cnt) : sb / cnt;
+                cfl[q] = sf / cnt;
+                cdr[q] = dr ? 1 : 0;
+                ch[q] = std::max(cb[q], cfl[q]);
+            }
+        for (int it = 0; it < iters; ++it) {
+            double mx = 0.0;
+            for (int bi = 0; bi < mch; ++bi)
+                for (int bj = 0; bj < mcw; ++bj) {
+                    const size_t q = static_cast<size_t>(bi) * mcw + bj;
+                    if (!cl[q]) continue;
+                    if (cdr[q]) { ch[q] = cb[q]; continue; }
+                    double s = 0.0;
+                    int cnb = 0;
+                    for (int di = -1; di <= 1; ++di)
+                        for (int dj = -1; dj <= 1; ++dj) {
+                            if (!di && !dj) continue;
+                            const int i = bi + di, j = bj + dj;
+                            if (i < 0 || j < 0 || i >= mch || j >= mcw) continue;
+                            const size_t p = static_cast<size_t>(i) * mcw + j;
+                            if (!cl[p]) continue;
+                            s += ch[p];
+                            ++cnb;
+                        }
+                    if (!cnb) continue;
+                    double v = s / cnb + src;
+                    if (v > cb[q]) v = cb[q];
+                    if (v < cfl[q]) v = cfl[q];
+                    const double nv = ch[q] + omega * (v - ch[q]);
+                    mx = std::max(mx, std::fabs(nv - ch[q]));
+                    ch[q] = nv;
+                }
+            if (mx < tol) break;
+        }
+        for (int i = std::max(0, r0); i < std::min(H, r0 + mh); ++i)
+            for (int j = std::max(0, c0); j < std::min(W, c0 + mw); ++j) {
+                const size_t k = static_cast<size_t>(i) * W + j;
+                if (g.island_id.v[k] != id) continue;
+                const double u = (static_cast<double>(i - r0) + 0.5) / step - 0.5;
+                const double v = (static_cast<double>(j - c0) + 0.5) / step - 0.5;
+                const double fu = clip(u - std::floor(u), 0.0, 1.0), fv = clip(v - std::floor(v), 0.0, 1.0);
+                const int b0i = std::min(mch - 1, std::max(0, static_cast<int>(std::floor(u))));
+                const int b0j = std::min(mcw - 1, std::max(0, static_cast<int>(std::floor(v))));
+                const int b1i = std::min(mch - 1, b0i + 1), b1j = std::min(mcw - 1, b0j + 1);
+                const size_t qs[4] = {static_cast<size_t>(b0i) * mcw + b0j, static_cast<size_t>(b0i) * mcw + b1j,
+                                      static_cast<size_t>(b1i) * mcw + b0j, static_cast<size_t>(b1i) * mcw + b1j};
+                const double wsz[4] = {(1 - fu) * (1 - fv), (1 - fu) * fv, fu * (1 - fv), fu * fv};
+                double acc = 0.0, wsum = 0.0;
+                for (int t = 0; t < 4; ++t) {
+                    if (!cl[qs[t]]) continue;
+                    acc += ch[qs[t]] * wsz[t];
+                    wsum += wsz[t];
+                }
+                double hh = wsum > 0 ? acc / wsum : g.height.v[k];
+                hh = std::max(hh, aquifer_floor(g, J, k, min_thick));   // 不穿底（含水层底）
+                // 排水口（河道 / 溪涧 / 湖 / 岸缘）：水位就是它自己的地表——河因此是「得水河」（粗格解只能给到粗格的水头）
+                if (g.river.v[k] > 0 || g.stream.v[k] > 0 || g.lake.v[k] || rim.v[k]) hh = g.height.v[k];
+                hh = std::min(hh, g.height.v[k]);                       // 渗出面：水位不高于地表（后夹，保证不高于地表）
+                wt.v[k] = hh;
+            }
+    }
+    return wt;
+}
+
 }  // namespace
 
 GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector<double>& core_s) {
@@ -74,24 +216,38 @@ void aquifer(Group& g, const Config& c) {
         g.bfi.v[k] = b;
         g.recharge.v[k] = rr * b + cond;
     }
-    // 顺流向累计（mm·km²）：地下水跟着地表流向走（岩层里的水顺着骨架顶面往外、往低处去，与地表的大方向一致）；
-    // 河道格上的累计 = 河的基流。按流向的拓扑序（上游先加），与线程数无关
-    const std::vector<int64_t> recv = group_recv(g);
+    // ---------- 水位面（B，DESIGN-NOTES 四点四十九）----------
+    // 稳态地下水位 ∇·(T∇h) = −R：排水口 = 河道 / 溪涧 / 湖 / 岸缘（固定水头 = 地表），渗出面 = 水位高过地表的格，
+    // 底 = 骨架顶面 + 最小含水厚。在 1/gw_coarse 的粗格上解（水位面是光滑场），双线性插值回原分辨率，再按每格夹一次。
     Mask land(H, W, 0);
     for (size_t k = 0; k < N; ++k) land.v[k] = g.island_id.v[k] >= 0 ? 1 : 0;
-    const std::vector<int32_t> order = downstream_first(recv, land);
-    g.recharge_acc = GridD(H, W, 0.0);
-    for (size_t k = 0; k < N; ++k) g.recharge_acc.v[k] = g.recharge.v[k] * cell_km2;
-    for (auto it = order.rbegin(); it != order.rend(); ++it) {
-        const int64_t r = recv[*it];
-        if (r >= 0) g.recharge_acc.v[r] += g.recharge_acc.v[*it];
+    g.wt = water_table(g, c, land, wc(c, "gw_min_thick_m"));
+    // 顺流向累计（mm·km²）：**按水位面的梯度**（不是地表）——水沿着潜水面往低处汇；
+    // 排水口（河道 / 湖 / 岸缘）上的累计 = 河的基流 / 崖壁泉。拓扑序（上游先加），与线程数无关
+    GridD wr(H, W, NaN);
+    {
+        const bool has_cd = !g.coast_dist.v.empty();
+        const double tie = wc(c, "gw_tie_m_per_km") / 1000.0, tcap = wc(c, "gw_tie_km") * 1000.0;
+        for (size_t k = 0; k < N; ++k) {
+            if (!land.v[k]) continue;
+            double t = 0.0;
+            if (has_cd) t = tie * std::min(std::max(g.coast_dist.v[k], 0.0), tcap);   // 只为打破平局（水位面是光滑场，平局多）
+            wr.v[k] = g.wt.v[k] + t;
+        }
     }
-    // 崖壁泉线：流向走到岸边、一路没进河道（河、溪涧）也没进湖的出口格——这片坡的地下水没被河截走，顺着骨架顶面走到崖边，
-    // 从崖壁上岩层与浮石的交界渗出来。出口格按岛、按 8 连通成串，长串按绕岛心的方位切成 springline_seg_km 一段
+    const FlowDir wflow = d8(wr, land, g.res_km * 1000.0);
+    g.wt_outlet = Grid<uint8_t>(H, W, 0);
+    for (size_t k = 0; k < N; ++k)
+        g.wt_outlet.v[k] = (land.v[k] && (wflow.to_void[k] || wflow.ri[k] < 0)) ? 1 : 0;   // 无下游的格 = 水位面上的汇（水位出露的地方）
+    GridD wcell(H, W, 0.0);
+    for (size_t k = 0; k < N; ++k) wcell.v[k] = g.recharge.v[k] * cell_km2;
+    g.recharge_acc = accumulate(land, wflow, &wcell);
+    // 崖壁泉线：流向（在水位面上）走到岸边、一路没进河道（河、溪涧）也没进湖的出口格——这片坡的地下水没被河截走，
+    // 顺着骨架顶面走到崖边，从崖壁上岩层与浮石的交界渗出来。出口格按岛、按 8 连通成串，长串按绕岛心的方位切成 springline_seg_km 一段
     g.springline.clear();
     Mask ex(H, W, 0);
     for (size_t k = 0; k < N; ++k)
-        ex.v[k] = (g.island_id.v[k] >= 0 && g.recv_i.v[k] < 0 && g.river.v[k] == 0 && g.stream.v[k] == 0 && !g.lake.v[k] &&
+        ex.v[k] = (land.v[k] && wflow.to_void[k] && g.river.v[k] == 0 && g.stream.v[k] == 0 && !g.lake.v[k] &&
                    g.recharge_acc.v[k] > 0.0) ? 1 : 0;
     GridI lab;
     const int nl = label_components(ex, 8, lab);
@@ -109,11 +265,15 @@ void aquifer(Group& g, const Config& c) {
     }
     const int seg = std::max(1, static_cast<int>(std::nearbyint(wc(c, "springline_seg_km") / g.res_km)));
     const double to_ls = 1e6 / std::max(1.0, g.year_s);   // mm·km² / 年 → L/s（1 mm·km² = 1000 m³）
-    const double qmin = wc(c, "springline_min_ls"), qfall = wc(c, "springline_fall_ls");
+    const double qmin = wc(c, "springline_min_ls");
+    const double min_aq = wc(c, "spring_min_aquifer_m");
+    const double pct = clip(wc(c, "spring_pct"), 0.0, 1.0), fpct = clip(wc(c, "spring_fall_pct"), 0.0, 1.0);
     const double ske = c.get("strat.skel_edge_frac", 0.4);
+    std::vector<SpringSeg> all;                 // 先全收（弥散渗出），再按本岛分位与含水层厚度分等
     for (int L = 1; L <= nl; ++L) {
         std::vector<int32_t>& cs = comp[L];
         const int id = g.island_id.v[cs[0]];
+        const IslandRec& J = g.islands[id];
         const double oi = ci[id] / std::max(1.0, cn[id]), oj = cj[id] / std::max(1.0, cn[id]);
         std::vector<double> ang(cs.size());
         for (size_t q = 0; q < cs.size(); ++q) ang[q] = std::atan2(-(static_cast<double>(cs[q] / W) - oi), static_cast<double>(cs[q] % W) - oj);
@@ -124,13 +284,15 @@ void aquifer(Group& g, const Config& c) {
             const size_t s1 = std::min(ord.size(), s0 + static_cast<size_t>(seg));
             SpringSeg S;
             S.island = id;
-            double q = 0.0, hs = 0.0;
+            double q = 0.0, hs = 0.0, aq = 0.0;
             for (size_t t = s0; t < s1; ++t) {
                 const int32_t k = cs[ord[t]];
                 S.cells.push_back(k);
                 q += g.recharge_acc.v[k];
-                const IslandRec& J = g.islands[id];
-                hs += (!g.skel_top.v.empty() && !std::isnan(g.skel_top.v[k])) ? g.skel_top.v[k] : J.keel_j + ske * (J.rim_j - J.keel_j);
+                const double skel = (!g.skel_top.v.empty() && !std::isnan(g.skel_top.v[k])) ? g.skel_top.v[k]
+                                                                                           : J.keel_j + ske * (J.rim_j - J.keel_j);
+                hs += skel;
+                aq += std::max(0.0, g.wt.v[k] - skel);   // 含水层厚度（水位 − 骨架顶面）
             }
             S.q_ls = q * to_ls;
             if (S.q_ls < qmin) continue;
@@ -139,9 +301,26 @@ void aquifer(Group& g, const Config& c) {
             S.cj = mid % W;
             S.height_m = hs / static_cast<double>(s1 - s0);
             S.length_km = static_cast<double>(s1 - s0) * g.res_km;
-            S.fall = S.q_ls >= qfall;
-            g.springline.push_back(std::move(S));
+            S.aquifer_m = aq / static_cast<double>(s1 - s0);
+            all.push_back(std::move(S));
         }
+    }
+    // A（四点四十九）：段的出水 ≥ 本岛分位（spring_pct / spring_fall_pct）**且**含水层够厚（≥ spring_min_aquifer_m）才叫泉 / 崖瀑，
+    // 其余是弥散渗出——这样干湿岛的「有泉比例」一致，崖壁那条圈也断成有限几处
+    const int n_isl = static_cast<int>(g.islands.size());
+    std::vector<std::vector<double>> byq(static_cast<size_t>(n_isl));
+    for (const SpringSeg& s : all) byq[static_cast<size_t>(s.island)].push_back(s.q_ls);
+    for (auto& v : byq) std::sort(v.begin(), v.end());
+    for (SpringSeg& S : all) {
+        const std::vector<double>& v = byq[static_cast<size_t>(S.island)];
+        if (v.size() >= 4 && S.aquifer_m >= min_aq) {
+            const size_t i85 = static_cast<size_t>(std::llround(pct * static_cast<double>(v.size() - 1)));
+            const size_t i97 = static_cast<size_t>(std::llround(fpct * static_cast<double>(v.size() - 1)));
+            if (S.q_ls >= v[std::min(i97, v.size() - 1)]) S.kind = 2;
+            else if (S.q_ls >= v[std::min(i85, v.size() - 1)]) S.kind = 1;
+        }
+        S.fall = (S.kind == 2);
+        g.springline.push_back(std::move(S));
     }
 }
 

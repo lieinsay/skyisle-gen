@@ -167,6 +167,8 @@ struct RiverNet {
     std::vector<int32_t> cell;                                   // 群栅格扁平下标
     std::vector<uint8_t> level, d50c, planform, confine;         // 级别（0 溪涧 / 1–3）、河床质档、平面型、限制度
     std::vector<float> acc, q_mean, q_bf, w, d, surf, bed, slope, d50_mm, ssc, fp_l, fp_r;
+    // w / d = **平岸**宽与深（同一条水力几何式，代平岸流量）；w_mean / d_mean = 年均流量口径（栅格 terrain.npz 的 w_mean_m / d_mean_m 就是这个）
+    std::vector<float> w_mean, d_mean;
     struct Seg {
         int island = 0, down = -1, join = -1, start = 0, n = 0, basin = -1, level = 0;
         uint8_t exit = 0;                                        // 0 汇入别的段 / 1 崖边 / 2 湖 / 3 没入地里
@@ -205,13 +207,16 @@ struct Basins {
 
 // ---------------------------------------------------------------- 资源的记录（resources.hpp）
 struct SpringSeg {                    // 崖壁泉线的一段（C5）：没进河道、走到岸边的地下水从崖壁上岩层与浮石的交界渗出来
+    // B+A（四点四十九）：按水位面算；段分三等——弥散渗出 / 泉 / 崖瀑（kind；泉与崖瀑要看含水层厚度与本岛分位）
     int island = 0;
     std::vector<int32_t> cells;       // 岸边出口格（群栅格扁平下标）
     int ci = 0, cj = 0;               // 代表格（中间那格）
     double q_ls = 0;                  // 年均出水（L/s）
     double height_m = 0;              // 泉线的高程（骨架顶面在崖壁上的高度）
     double length_km = 0;
-    bool fall = false;                // 出水够大、挂成崖瀑
+    double aquifer_m = 0;             // 段内含水层厚度的均值（水位 − 骨架顶面，m）
+    bool fall = false;                // 出水够大、挂成崖瀑（kind == 2 的旧口径，调试台还在读）
+    int kind = 0;                     // 0 弥散渗出 / 1 泉 / 2 崖瀑
 };
 
 struct Deposit {                      // 点与片（resources.json 的 deposits）
@@ -352,7 +357,9 @@ struct Group {
     std::vector<double> core_s;     // 各岛集水核的强度（C4，跟山走）
     Grid<uint8_t> cloud_forest;     // 云雾林（C4：林地里凝结水多的格）
     GridD bfi, recharge, recharge_acc;   // 地下水（C5）：基流比例（按岩性）、补给（mm）、顺流向累计的补给（mm·km²；河道格 = 河的基流）
-    std::vector<SpringSeg> springline;   // 崖壁泉线（C5）
+    GridD wt;                            // 水位面（潜水面，m，零点口径；B，四点四十九）：虚空 NaN，陆地格 = 水位（≤ 地表、≥ 骨架顶面 + 最小含水厚）
+    Grid<uint8_t> wt_outlet;             // 水位面上流向的出口（陆地 & 出岛 / 无下游）：崖壁泉线的源格、IS-water 的补水口
+    std::vector<SpringSeg> springline;   // 崖壁泉线（C5；B 起按水位面算，分弥散渗出 / 泉 / 崖瀑）
     double year_s = 0;              // 一年的秒数（PlanetView，水系里记下：资源层的温泉、泉的出水要用）
     GridD rain;                     // 局地年降水（mm，P4；陆地格，关掉局地雨时 = P_mm）
     GridD runoff;                   // 年径流深（mm，A5：局地雨 × Budyko 径流系数；陆地格）

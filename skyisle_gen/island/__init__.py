@@ -15,6 +15,57 @@ import numpy as np
 from ..config import CONFIG_DIR, _deep_merge, apply_sets
 
 ISLAND_STREAM = 21   # 与十步管线的流号 1–10 错开
+ISLAND_VERSION = "3"  # 岛群层的实现版本：改了 core/src/island/（或这里的输入拼装、写产物）就 +1。
+                     # 2 = 水位面（B+A，四点四十九）：流向按潜水面、泉线分弥散渗出 / 泉 / 崖瀑、terrain.npz 多 wt_m / wt_depth_m
+                     # 3 = 河宽口径分开（四点五十）：rivers.json 的 w_bf_m / d_bf_m 改成真平岸（代 q_bf）、新增 w_mean_m / d_mean_m；
+                     #     terrain.npz 的 river_width_m / river_depth_m 改名 w_mean_m / d_mean_m（年均口径）
+                     # 写进 island.json 的 meta.stamp，控制台与 island check 拿它对盘上的产物判新旧
+
+
+def island_stamp(ctx, c: dict, eng: dict) -> str:
+    """产物的版本戳：岛群层实现版本 + [island] / [engine] 配置 + 上游 ①②③④ 的 stage key + seed。
+    改了 core/src/island、改了 [island] 的默认值、或上游重算过，戳就变——盘上戳对不上的当没生成过。
+    一次性的 --set 不进戳：否则按参数重生成一次，刷新页面就被判成旧的了。"""
+    import hashlib
+    import json
+    from ..config import canonical
+    keys = ""
+    man = ctx.out_dir / "manifest.json"
+    if man.exists():
+        sk = json.loads(man.read_text(encoding="utf-8")).get("stage_keys", {})
+        keys = "|".join(f"{k}={sk[k]}" for k in ("s01_planet", "s02_wind", "s03_islands", "s04_climate") if k in sk)
+    payload = "\x1f".join([ISLAND_VERSION, canonical(c), canonical(eng), keys, str(ctx.seed)])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def products_stale(ctx, node: int, year: int = 0) -> str | None:
+    """盘上的岛群产物是不是当前的：None = 现成（直接读），否则返回该重生成的原因。
+    判据只有三条：文件齐不齐、meta.stamp 与当前代码 / 配置 / 上游对不对得上、天气年份对不对。
+    （2026-10-01 之前只查「文件在不在」——09-25 生成的产物会一直被当成命中。）"""
+    import json
+    island_config(ctx)          # 顺带把 ctx.island_stamp 算出来
+    out = ctx.out_dir / "islands" / str(node)
+    need = ("island.json", "climate.json", "terrain.npz", "rivers.json", "resources.json",
+            "settlements.json", "preview.png", "preview_main.png", f"weather_y{year}.csv")
+    miss = [f for f in need if not (out / f).exists()]
+    if miss:
+        return "缺产物：" + "、".join(miss)
+    try:
+        J = json.loads((out / "island.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return f"island.json 读不出来（{e}）"
+    got = J.get("meta", {}).get("stamp")
+    if got != ctx.island_stamp:
+        return (f"版本戳不符（盘上 {got or '无'} ≠ 当前 {ctx.island_stamp}）："
+                f"生成器版本、[island] 配置或上游 ①②③④ 变过")
+    try:
+        C = json.loads((out / "climate.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return f"climate.json 读不出来（{e}）"
+    w = C.get("weather", {})
+    if w.get("year") != year or not isinstance(w.get("days"), list):
+        return f"逐日天气不是第 {year} 年的"
+    return None
 
 
 def island_config(ctx, sets: list[str] | None = None) -> dict:
@@ -24,6 +75,8 @@ def island_config(ctx, sets: list[str] | None = None) -> dict:
         full = tomllib.load(fh)
     base = full.get("island", {})
     cfg = _deep_merge(base, ctx.cfg.get("island", {}))
+    if not hasattr(ctx, "island_stamp"):     # 第一次调用时算（--set 之前），之后沿用：戳记的是配置本身
+        ctx.island_stamp = island_stamp(ctx, cfg, _deep_merge(full.get("engine", {}), ctx.cfg.get("engine", {})))
     if sets:
         tmp = {"island": cfg}
         apply_sets(tmp, [s for s in sets if s.startswith("island.")])
@@ -90,6 +143,8 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
         return g
     out =(ctx.out_dir / "islands" if out_root is None else Path(out_root)) / str(node)
     g["json"]["meta"]["seconds"] = round(time.perf_counter() - t0, 2)
+    g["json"]["meta"]["island_version"] = ISLAND_VERSION
+    g["json"]["meta"]["stamp"] = ctx.island_stamp
     write_terrain(out, g)
     if "climate" in g:
         from .climate import write_climate

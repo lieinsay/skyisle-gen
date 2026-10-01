@@ -327,8 +327,8 @@ nb::dict hydro_dict(Group& g) {
     d["landcover"] = grid_np(Grid<uint8_t>(g.landcover));
     d["arable"] = grid_np(Grid<uint8_t>(g.arable));
     if (!g.cultivable.v.empty()) d["cultivable"] = grid_np(Grid<uint8_t>(g.cultivable));
-    d["river_width_m"] = f32_np(g.width_m);
-    d["river_depth_m"] = f32_np(g.depth_m);
+    d["w_mean_m"] = f32_np(g.width_m);      // 河道格在**年均流量**口径下的宽 / 深（C1：w = 5·Q^0.5、d = 0.35·Q^0.4）
+    d["d_mean_m"] = f32_np(g.depth_m);      // 平岸口径（代平岸流量）在 rivers.json 的 segments 里（w_bf_m / d_bf_m）
     d["cut_m"] = f32_np(g.cut_m);
     d["slope_deg"] = f32_np(g.slope);
     d["rain_mm"] = f32_np(g.rain);
@@ -352,6 +352,8 @@ nb::dict hydro_dict(Group& g) {
         d["bfi"] = f32_np(g.bfi);
         d["recharge_mm"] = f32_np(g.recharge);
         d["recharge_acc"] = grid_np(GridD(g.recharge_acc));
+        if (!g.wt.v.empty()) d["wt"] = f32_np(g.wt);          // B：水位面（潜水面，m，零点口径；虚空 NaN）
+        if (!g.wt_outlet.v.empty()) d["wt_outlet"] = mask_np(Mask(g.wt_outlet));   // 水位面上流向的出口（IS-water 的补水口）
         nb::list sl;
         for (const SpringSeg& s : g.springline) {
             nb::dict e;
@@ -360,6 +362,8 @@ nb::dict hydro_dict(Group& g) {
             e["q_ls"] = s.q_ls;
             e["height_m"] = s.height_m;
             e["length_km"] = s.length_km;
+            e["aquifer_m"] = s.aquifer_m;                    // 段内含水层厚度均值（水位 − 骨架顶面，m）
+            e["kind"] = s.kind;                              // 0 弥散渗出 / 1 泉 / 2 崖瀑（A 判据）
             e["fall"] = s.fall;
             sl.append(e);
         }
@@ -498,8 +502,10 @@ nb::dict rivernet_dict(const RiverNet& R) {
     d["acc"] = vec_np(R.acc);
     d["q_mean"] = vec_np(R.q_mean);
     d["q_bf"] = vec_np(R.q_bf);
-    d["w"] = vec_np(R.w);
+    d["w"] = vec_np(R.w);              // 平岸宽（同上式，代平岸流量 q_bf）
     d["d"] = vec_np(R.d);
+    d["w_mean"] = vec_np(R.w_mean);    // 年均流量口径（栅格 terrain.npz 的 w_mean_m 同值）
+    d["d_mean"] = vec_np(R.d_mean);
     d["surf"] = vec_np(R.surf);
     d["bed"] = vec_np(R.bed);
     d["slope"] = vec_np(R.slope);

@@ -67,11 +67,11 @@ def test_island_deterministic_and_consistent(small_ctx):
         assert (z["landcover"][land] > 0).all() and (z["landcover"][~land] == 0).all()
         # 河道成形：常年河 / 溪涧每格有河宽水深；河道下切（主岛有河时至少一条入虚空、带瀑布落差）
         rv = z["river"] > 0
-        assert (z["river_width_m"][rv] > 0).all() and (z["river_depth_m"][rv] > 0).all()
-        assert (z["river_width_m"][~land] == 0).all() and not (z["floodplain"] & (rv | z["lake"])).any()
+        assert (z["w_mean_m"][rv] > 0).all() and (z["d_mean_m"][rv] > 0).all()
+        assert (z["w_mean_m"][~land] == 0).all() and not (z["floodplain"] & (rv | z["lake"])).any()
         if c["has_river"]["actual"]:
             r0 = J1["hydro"]["rivers"][0]
-            assert J1["hydro"]["n_rivers"] >= 1 and r0["width_m"] > 0 and r0["depth_m"] > 0 and r0["waterfall_m"] > 0
+            assert J1["hydro"]["n_rivers"] >= 1 and r0["w_mean_m"] > 0 and r0["d_mean_m"] > 0 and r0["waterfall_m"] > 0
         # 河道中心线（矢量渲染）：每条 ≥ 2 点、落在栅格内；常年河的线河宽 > 0；主岛有河时至少一条常年河线
         RV = json.loads((out / "rivers.json").read_text(encoding="utf-8"))
         Hh, Ww = z["height"].shape
@@ -546,3 +546,80 @@ def test_lod_weather_matches_generate(small_ctx, tmp_path):
     assert _done(p, weather=True, year=0) and not _done(p, weather=True, year=1)
     with np.load(p) as z:
         assert np.array_equal(z["weather_precip_mm"], arr["weather_precip_mm"]) and str(z["weather_meta"]) == str(arr["weather_meta"])
+
+
+def test_water_table_and_spring_kinds(small_ctx):
+    """水位面（B）与泉的等第（A，四点四十九）：埋深 = 地表 − 水位、水位不高于地表、排水口贴在地表上；
+    崖壁泉线分弥散渗出 / 泉 / 崖瀑，泉与崖瀑的段含水层够厚、出水过门槛；弥散渗出占多数（那一圈断成有限几处）。"""
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    out = isl.generate(small_ctx, node, res_m=400.0, steps=STEPS, log=lambda *a: None)
+    with np.load(out / "terrain.npz") as z:
+        assert "wt_m" in z.files and "wt_depth_m" in z.files
+        wt, dep, hgt, iid = z["wt_m"].astype(float), z["wt_depth_m"].astype(float), z["height"].astype(float), z["island_id"]
+        rv = (z["river"] > 0) | (z["stream"] > 0) | (z["lake"] > 0)
+    land = iid >= 0
+    assert np.allclose(wt[land], hgt[land] - dep[land], atol=0.05)      # 埋深 = 地表 − 水位
+    assert float(dep[land].min()) >= -0.05                             # 水位不高于地表（渗出面）
+    assert float(np.nanmax(dep[land])) > 1.0                           # 不是一整片埋深 0
+    assert float(np.median(dep[rv])) <= 0.5                            # 排水口（河道 / 溪涧 / 湖）贴在地表上
+    R = json.loads((out / "rivers.json").read_text(encoding="utf-8"))
+    sl = R["springline"]
+    c = isl.island_config(small_ctx)
+    amin = float(c["water"]["spring_min_aquifer_m"])
+    qmin = float(c["water"]["springline_min_ls"])
+    assert sl, "一条崖壁泉线都没有"
+    for s in sl:
+        assert len(s) >= 8 and s[2] >= qmin - 1e-6, s                   # 出水过门槛、带含水层厚度与等第
+        if s[7] >= 1:
+            assert s[6] >= amin - 1e-6, s                              # 泉 / 崖瀑的含水层够厚
+    n0 = sum(1 for s in sl if s[7] == 0)
+    n1 = sum(1 for s in sl if s[7] >= 1)
+    assert n0 > n1, (n0, n1)                                          # 弥散渗出是底噪、真泉是少数
+
+
+def test_island_stamp_tracks_config_and_upstream(small_ctx, tmp_path):
+    """版本戳（DESIGN-NOTES 四点四十八）：跟着 [island] / [engine] 配置与上游 ①②③④ 的 stage key 走——
+    任一个变了，盘上的产物就该重算；同样的输入给出同一个戳。--set 的一次性覆盖不进戳。"""
+    from skyisle_gen import island as isl
+    keys = {"s01_planet": "a", "s02_wind": "b", "s03_islands": "c", "s04_climate": "d"}
+
+    def stamp(cfg, sk, name, sets=None):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "manifest.json").write_text(json.dumps({"stage_keys": sk}), encoding="utf-8")
+        ctx = Context(json.loads(json.dumps(cfg)), small_ctx.seed, d)     # 复制一份：别把 --set 留在共享的 ctx.cfg 上
+        isl.island_config(ctx, sets)
+        return ctx.island_stamp                                           # 产物写的就是这个（--set 之前算的那一个）
+
+    base = stamp(small_ctx.cfg, keys, "a")
+    assert stamp(small_ctx.cfg, keys, "b") == base                          # 同样的输入 → 同一个戳
+    assert stamp(small_ctx.cfg, dict(keys, s04_climate="e"), "c") != base    # 上游 ④ 重算过
+    cfg2 = json.loads(json.dumps(small_ctx.cfg))
+    cfg2["island"]["terrain"]["carve_k"] = float(cfg2["island"]["terrain"]["carve_k"]) + 0.01
+    assert stamp(cfg2, keys, "d") != base                                   # [island] 的一个值改了
+    cfg3 = json.loads(json.dumps(small_ctx.cfg))
+    cfg3["engine"]["threads"] = int(cfg3["engine"].get("threads", 4)) + 1
+    assert stamp(cfg3, keys, "e") != base                                   # [engine] 改了
+    assert stamp(small_ctx.cfg, keys, "f", sets=["island.terrain.carve_k=0.99"]) == base   # --set 不进戳
+
+
+def test_products_stale_and_stamp_written(small_ctx):
+    """盘上的岛群产物该不该重算（控制台据此自动重生成）：刚生成的是现成；戳对不上、缺文件、天气年份不对都要重算。"""
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    isl.generate(small_ctx, node, res_m=400.0, steps=STEPS, log=lambda *a: None)
+    assert isl.products_stale(small_ctx, node) is None
+    assert isl.products_stale(small_ctx, node, year=1) is not None          # 没有 weather_y1.csv
+    p = small_ctx.out_dir / "islands" / str(node) / "island.json"
+    orig = p.read_text(encoding="utf-8")
+    J = json.loads(orig)
+    assert J["meta"]["island_version"] == isl.ISLAND_VERSION and len(J["meta"]["stamp"]) == 16
+    try:
+        J["meta"]["stamp"] = "0" * 16                                       # 假装是旧代码生成的
+        p.write_text(json.dumps(J, ensure_ascii=False), encoding="utf-8")
+        why = isl.products_stale(small_ctx, node)
+        assert why and "版本戳" in why, why
+    finally:
+        p.write_text(orig, encoding="utf-8")                                # 还原：小世界是模块级的，别的用例还要读它
+    assert isl.products_stale(small_ctx, node) is None

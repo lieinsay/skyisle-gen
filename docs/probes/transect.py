@@ -87,7 +87,7 @@ def group(d: Path, node: int, run: Path | None) -> dict:
         L40 += float(seg[w >= 40.0].sum())
     rv = J["hydro"].get("rivers") or []
     out.update({"river_km": round(L, 0), "river_w40_km": round(L40, 0),
-                "outlet": [rv[0]["basin_km2"], rv[0]["width_m"]] if rv else None,
+                "outlet": [rv[0]["basin_km2"], rv[0]["w_mean_m"]] if rv else None,
                 "wetland_km2": round(float(((Z["landcover"] == LC_WET) & land).sum()) * cell_km2, 1)})
     if run is not None:
         try:

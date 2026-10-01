@@ -231,7 +231,7 @@ def site_from_group(ctx, node: int, name: str, scale: str | None, cfg: dict, hal
         "arable": np.ascontiguousarray(_fields(T)[sl] >= 1),
         "terrace": np.ascontiguousarray(_fields(T)[sl] == 2),
         "landcover": np.ascontiguousarray(T["landcover"][sl]),
-        "river_depth": np.ascontiguousarray(np.where(riv, T["river_depth_m"][sl], 0.0), dtype=np.float64),
+        "river_depth": np.ascontiguousarray(np.where(riv, T["d_mean_m"][sl], 0.0), dtype=np.float64),
         "height_is_surface": J.get("hydro", {}).get("channel_height") == "surface",   # C1 起河道格的 height 是平岸水面
         "coarse_res_m": cres, "center_r": rc - r0, "center_c": cc - c0, "frame_x": frame_x, "frame_y": frame_y,
         "half_m": half, "res_m": res, "lat_deg": lat, "seed": ground_seed(ctx.seed, f"town:{node}:ground"), "rivers": rivers,

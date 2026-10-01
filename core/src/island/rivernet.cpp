@@ -272,6 +272,8 @@ void build_rivernet(Group& g, const Config& c) {
 
     // ---- 沿程每点
     const double tg = rc(c, "shields_gravel"), ts = rc(c, "shields_sand"), low_w = rc(c, "low_energy_w_m2");
+    // 水力几何式（C1，config 的 [island.hydro]）：平岸宽深 = 同式代平岸流量
+    const double wbexp = c.get("hydro.width_b", 0.5), dfexp = c.get("hydro.depth_f", 0.4);
     const double bf_farm = rc(c, "bqart_farm"), bf_for = rc(c, "bqart_forest"), tol = rc(c, "floor_tol_m");
     const double a_temp = g.clim.a_temp, a_ref = g.clim.a_ref_h;
     const size_t M = R.cell.size();
@@ -279,7 +281,7 @@ void build_rivernet(Group& g, const Config& c) {
     R.d50c.resize(M);
     R.planform.resize(M);
     R.confine.resize(M);
-    for (auto* v : {&R.acc, &R.q_mean, &R.q_bf, &R.w, &R.d, &R.surf, &R.bed, &R.slope, &R.d50_mm, &R.ssc, &R.fp_l, &R.fp_r}) v->resize(M);
+    for (auto* v : {&R.acc, &R.q_mean, &R.q_bf, &R.w, &R.d, &R.w_mean, &R.d_mean, &R.surf, &R.bed, &R.slope, &R.d50_mm, &R.ssc, &R.fp_l, &R.fp_r}) v->resize(M);
     auto fp_walk = [&](int i, int j, int a, int b, double surf, double nominal, double w) {
         if (!(nominal > 0.0) || (a == 0 && b == 0)) return 0.0;
         const double step = res_m * ((a != 0 && b != 0) ? SQRT2 : 1.0);
@@ -296,6 +298,7 @@ void build_rivernet(Group& g, const Config& c) {
     };
     for (const RiverNet::Seg& sg : R.segs) {
         const double ratio = R.basins[sg.basin >= 0 ? sg.basin : nb].bf_ratio;
+        const double rq = ratio > 0.0 ? ratio : 1.0;   // 平岸 / 年均（逐日径流指数的年最大）
         for (int t = 0; t < sg.n; ++t) {
             const size_t m = static_cast<size_t>(sg.start + t);
             const int32_t k = R.cell[m];
@@ -343,8 +346,11 @@ void build_rivernet(Group& g, const Config& c) {
             R.acc[m] = static_cast<float>(g.acc_km2.v[k]);
             R.q_mean[m] = static_cast<float>(q);
             R.q_bf[m] = static_cast<float>(qbf);
-            R.w[m] = static_cast<float>(w);
-            R.d[m] = static_cast<float>(d);
+            R.w_mean[m] = static_cast<float>(w);
+            R.d_mean[m] = static_cast<float>(d);
+            // 平岸宽与深：同一条水力几何式（w = a·Q^b、d = c·Q^f，Q 以 m³/s）代**平岸流量**——q_bf = 年均 × 所在流域的 bf_ratio
+            R.w[m] = static_cast<float>(w * np_pow(rq, wbexp));
+            R.d[m] = static_cast<float>(d * np_pow(rq, dfexp));
             R.surf[m] = static_cast<float>(surf);
             R.bed[m] = static_cast<float>(bed);
             R.slope[m] = static_cast<float>(S);

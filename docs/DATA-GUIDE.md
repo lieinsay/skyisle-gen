@@ -114,26 +114,29 @@
 
 ## 四、岛群的水：河道、谷底、河的数据、集水核、地下水（岛群层写，PLAN-NATURE C，2026-10-01）
 
-设定：spec 13 第八节（集水核）、第一节第 7 条与第二节第 6 条（闭孔两层：岩层是含水层、浮石骨架是底）。DESIGN-NOTES 四点四十七。C 之前的岛群产物没有下面带 † 的键，
-而且**河道格的 `height` 口径不同**（C 之前是河床，C 起是平岸水面）：看 `island.json` 的 `hydro.channel_height`，`"surface"` 是新口径，没有这个键的是旧的。
+设定：spec 13 第八节（集水核）、第一节第 7 条与第二节第 6 条（闭孔两层：岩层是含水层、浮石骨架是底）。DESIGN-NOTES 四点四十七、**四点四十九（水位面 B+A）**。
+C 之前的岛群产物没有下面带 † 的键，而且**河道格的 `height` 口径不同**（C 之前是河床，C 起是平岸水面）：看 `island.json` 的 `hydro.channel_height`，
+`"surface"` 是新口径，没有这个键的是旧的。**B 之前的产物（`ISLAND_VERSION < 2`）没有带 ‡ 的键**：看 `island.json` 的 `meta.island_version`。
 
 | 产物 · 键 | 含义、单位 |
 |---|---|
 | `terrain.npz` 的 `height` | 河道格（`river > 0` 或 `stream > 0`）记**平岸水面** = 谷底的滩面（涨到平岸就漫上滩）；其余格照旧是地面 |
-| `terrain.npz` 的 `bed_m` † | 河床高程，m（float32；河道中心线格有，其余 NaN）。水深 = `height − bed_m` = `river_depth_m` |
-| `terrain.npz` 的 `river_width_m` / `river_depth_m` | 平岸河宽、水深，m，**真实比例**（C1 删了 ×8 / ×3 的夸张）：w = 5·Q^0.5、d = 0.35·Q^0.4，Q = 年均流量（m³/s） |
+| `terrain.npz` 的 `bed_m` † | 河床高程，m（float32；河道中心线格有，其余 NaN）。水深 = `height − bed_m` = `d_mean_m` |
+| `terrain.npz` 的 `w_mean_m` / `d_mean_m` ‡ | 河道格在**年均流量**口径下的宽 / 深，m，**真实比例**（C1 删了 ×8 / ×3 的夸张）：w = 5·Q^0.5、d = 0.35·Q^0.4，Q = 年均流量（m³/s）。**平岸**口径在 `rivers.json` 的 segments：`w_bf_m` / `d_bf_m`（同式代 q_bf，约 ×√bf_ratio ≈ 2.6 倍）。旧键 `river_width_m` / `river_depth_m`（口径没说清）作废 |
 | `terrain.npz` 的 `river_water` † | 河宽够一格（`[island.hydro] river_water_min_cells` × 格宽）、在栅格上记成水面的河道格（bool）。**只有这些格的 `landcover` 是河（10）**；更窄的河道格的地表是岸上的（田、林、草），河由中心线 + 宽表达 |
 | `terrain.npz` 的 `floodplain` | 谷底里的岸上格（bool，只算常年河）：高出平岸水面 ≤ 0.5 m、在谷底宽以内。聚落不在上面建房 |
 | `terrain.npz` 的 `floor_w_m` † / `confine` † | 河道格上的谷底全宽（m）与限制度（uint8：1 峡谷 / 2 半限制 / 3 开阔；0 = 不是河道）。谷底宽 = 河宽 + K·A^0.4 × 岩性 × 岛龄 × 比降系数（C2） |
 | `terrain.npz` 的 `condense_mm` † | 集水核的凝结水，mm/年（float32）。**只进水账**：`runoff_mm` 含它，`rain_mm` 不含，天气也不含 |
 | `terrain.npz` 的 `cloud_forest` † | 云雾林（bool）：林地里凝结水 ≥ 150 mm 且 ≥ 局地雨的 1/4 的格 |
 | `terrain.npz` 的 `recharge_mm` † | 地下水补给，mm/年（float32）= 雨产的径流 × 基流比例（按出露岩性）+ 凝结水 |
+| `terrain.npz` 的 `wt_m` ‡ | **水位面（潜水面）**，m（float32，零点口径；虚空 NaN）。稳态解 ∇·(T∇h) = −R：排水口（河道 / 溪涧 / 湖 / 岸缘）固定水头 = 地表，水位高过地表钉回地表，不低于骨架顶面 + 最小含水厚 |
+| `terrain.npz` 的 `wt_depth_m` ‡ | **埋深** = `height − wt_m`，m（float32，虚空 NaN；≥ 0——排水口上是 0）。井打多深、挖到哪层见水、泉在哪都读它 |
 | `rivers.json` 的 `lines` | 旧的河道中心线（调试台画线用；从扫描到的第一个源头往下追，干流不一定是最长的那支）：点 = [行, 列, 河宽 m, 级别, 汇流 km²] |
 | `rivers.json` 的 `segments` † | 河网：每段从上游到下游，干流按汇水最大的一支往上追；`down` = 汇入的段、`join` = 汇入处在下游段里的点号、`exit`（汇入 / 崖边 / 湖 / 没入地里）、`basin`、`level`、`length_km`；`pts` 的列见 `cols` |
 | `rivers.json` 的 `falls` † | 瀑布与跌水：崖边瀑布（河从崖边跌下，落差 = 河面 − 岛底）、岛内的瀑布（合起来 ≥ 20 m 且平均比降 ≥ 0.25 或落在崖层上）与跌水；`seg` / `idx` 指 `segments` 里的点 |
 | `rivers.json` 的 `basins` † | 逐日径流指数（第 `year` 年，336 个数，年均 = 1）：每条出崖边的常年河一个流域，最后一个（`rest`）是其余的小流域共用；另有 `bfi`、`recession_days`、`snow_frac`（融雪占）、`cond_frac`（凝结水占）、`bf_ratio`（年最大 / 年均） |
-| `rivers.json` 的 `springline` † | 崖壁泉线：[岛, [行, 列], 出水 L/s, 渗出处的高程 m, 段长 km, 是否崖瀑]——没进河道、走到岸边的地下水从崖壁上岩层与浮石的交界渗出 |
-| `island.json` 的 `hydro.valley` † / `hydro.water` † / `hydro.river_data` † | 谷底（漫滩面积、谷底宽分位、限制度占比）、集水核与地下水（凝结水、云雾林、补给、基流占比、泉线）、河网（段数、长度、河床质 / 平面型占比、瀑布、流域）的摘要 |
+| `rivers.json` 的 `springline` † / ‡ | 崖壁泉线：[岛, [行, 列], 出水 L/s, 渗出处的高程 m, 段长 km, 是否崖瀑, ‡ 含水层厚度 m, ‡ 等第]——没进河道、走到岸边的地下水从崖壁上岩层与浮石的交界渗出；‡ 的等第 0 弥散渗出 / 1 泉 / 2 崖瀑（出水 ≥ 本岛出口段分位且含水层够厚） |
+| `island.json` 的 `hydro.valley` † / `hydro.water` † / `hydro.river_data` † | 谷底（漫滩面积、谷底宽分位、限制度占比）、集水核与地下水（凝结水、云雾林、补给、基流占比、泉线、‡ 埋深分位 / 水位浅于 5 m 的占比 / 泉的等第）、河网（段数、长度、河床质 / 平面型占比、瀑布、流域）的摘要 |
 
 `segments[].pts` 的列（`cols`）：
 
@@ -141,7 +144,7 @@
 |---|---|
 | `row` / `col` / `level` | 格（格心 = 整数 + 0.5）；0 = 季节性溪涧，1–3 小中大河 |
 | `acc_km2` / `q_mean` / `q_bf` | 汇水 km²；年均流量 m³/s（按格的 Budyko 径流累计，含凝结水）；平岸流量 = 年均 × 所在流域逐日指数的年最大 |
-| `w_bf_m` / `d_bf_m` / `surf_m` / `bed_m` | 平岸宽、深、水面、河床（同 terrain.npz） |
+| `w_bf_m` / `d_bf_m` / `surf_m` / `bed_m` | **平岸**宽、深（同一条水力几何式代 `q_bf`）、水面、河床；‡ 另有 `w_mean_m` / `d_mean_m` = 年均流量口径（= `terrain.npz` 的同名键） |
 | `slope` | 河床比降（顺流 500 m 内的落差 / 流程）；河床至少按 1 m/km 往河口降（`[island.hydro] min_grade`） |
 | `d50_mm` / `d50` | 河床质中值粒径（平岸 Shields 数：砾床 0.05，算出来 < 2 mm 的落到砂床 1.0；乘上游岩性的粗细）与档（泥 / 砂 / 砾 / 卵石 / 漂砾 / 基岩） |
 | `planform` | 平面型（Kleinhans & van den Berg 2011：潜在比河流功率对 900 / 90 × D50^0.42）：受限（峡谷，随谷）/ 低能顺直 / 曲流 / 曲流带串沟心滩 / 辫状 |

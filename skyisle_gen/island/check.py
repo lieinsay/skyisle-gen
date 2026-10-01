@@ -67,9 +67,9 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
     small_ok = all(not i.get("has_perennial_river", False) for i in J["islands"][1:])
     add("IS-river", "主岛有常年河 ⇔ has_river；小岛只有溪涧", {"main": rv.get("actual"), "target": rv["target"], "small_islands_ok": small_ok},
         "相等", rv.get("actual") == rv["target"] and small_ok)
-    if "river_width_m" in g:
+    if "w_mean_m" in g:
         rvm = g["river"] > 0
-        ok_wd = bool(((g["river_width_m"][rvm] > 0) & (g["river_depth_m"][rvm] > 0)).all()) if rvm.any() else True
+        ok_wd = bool(((g["w_mean_m"][rvm] > 0) & (g["d_mean_m"][rvm] > 0)).all()) if rvm.any() else True
         # 河道下切：横断面上两岸都高于河道——四组对边邻格（南北 / 东西 / 两条对角）里至少一组两格都是岸且都不低于河道（容 0.5 m）。
         # 不用「≤ 相邻岸格均值 / 最低者」：陡的河段每格落差十几米，下游那侧的岸本来就比这格河床低（那样陡河段只有 63–89%）
         from .grid import shift
@@ -88,11 +88,13 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
         water_ok = True
         if "river_water" in g and c is not None:
             thr_w = float(c.get("hydro", {}).get("river_water_min_cells", 1.0)) * g["res_km"] * 1000.0
-            water_ok = bool((g["river_water"].astype(bool) == (rvm & (g["river_width_m"] >= thr_w))).all())
+            water_ok = bool((g["river_water"].astype(bool) == (rvm & (g["w_mean_m"] >= thr_w))).all())
         add("IS-channel", "常年河每格有河宽 / 水深；河道切在两岸之下（横断面两侧都不低于河道）的占比；记成水面的河道格恰是河宽够一格的（C1）",
             {"width_depth_ok": ok_wd, "below_banks": round(below, 4), "river_water_ok": water_ok}, "全有 / ≥ 0.95 / 是", ok_wd and below >= 0.95 and water_ok)
     if "runoff_acc" in g:
         items.append(_water_budget(g))
+        if "wt" in g:
+            items.append(_wt_check(g, c))
     if "rivernet" in g:
         items.append(_valley_check(g, c))
     R = g.get("resources")
@@ -532,8 +534,11 @@ def _water_budget(g: dict) -> dict:
         ok = ok and over_c == 0 and over_r == 0
     if "recharge_acc" in g:
         rtot = float(g["recharge_mm"].astype(np.float64)[land].sum()) * cell
-        e_rec = abs(float(g["recharge_acc"][outlet].sum()) - rtot) / max(1e-9, rtot)
+        # B 起补给按水位面的流向累计：补水口是水位面的出口（出岛 / 无下游），不是地表的 recv_i
+        rec_outlet = land & (g["wt_outlet"] > 0) if "wt_outlet" in g else outlet
+        e_rec = abs(float(g["recharge_acc"][rec_outlet].sum()) - rtot) / max(1e-9, rtot)
         val["recharge_err"] = round(e_rec, 7)
+        val["recharge_outlets"] = int(rec_outlet.sum())
         ok = ok and e_rec < 1e-4
     if "rivernet" in g:
         e_idx = max((abs(float(np.mean(b["index"])) - 1.0) for b in g["rivernet"]["basins"] if len(b["index"])), default=0.0)
@@ -541,6 +546,33 @@ def _water_budget(g: dict) -> dict:
         ok = ok and e_idx < 1e-6
     return {"id": "IS-water", "name": "水账闭合（C6）：陆地径流 = 出口的径流累计，补给 = 出口的补给累计；凝结水、雨产的径流都不超过局地雨；逐日径流指数年均 = 1",
             "value": val, "threshold": "相对误差 < 1e−4（径流权重取整到 1/16 mm、float32）、超出 0 格", "pass": bool(ok), "hard": True, "note": None}
+
+
+def _wt_check(g: dict, c: dict | None) -> dict:
+    """IS-wt（B+A，四点四十九）：水位面不高于地表（埋深 ≥ 0）；排水口（河道 / 溪涧 / 湖 / 岸缘）的水位贴在地表上；
+    「泉 / 崖瀑」的段含水层够厚（≥ spring_min_aquifer_m）、出水量 ≥ 本岛的记录门槛。"""
+    land = g["island_id"] >= 0
+    res_m = g["res_km"] * 1000.0
+    dep = g["height"].astype(np.float64) - g["wt"].astype(np.float64)
+    neg = int((land & (dep < -0.05)).sum())
+    drain = land & ((g["river"] > 0) | (g["stream"] > 0) | (g["lake"] > 0) | (g["coast_dist_m"] < res_m))
+    dd = dep[drain]
+    drain_p50 = float(np.median(dd)) if dd.size else 0.0
+    drain_p90 = float(np.percentile(dd, 90)) if dd.size else 0.0
+    amin = float((c or {}).get("water", {}).get("spring_min_aquifer_m", 20.0))
+    qmin = float((c or {}).get("water", {}).get("springline_min_ls", 0.5))
+    sl = g.get("springline", [])
+    bad_aq = sum(1 for s in sl if int(s.get("kind", 0)) >= 1 and float(s.get("aquifer_m", 0.0)) + 1e-6 < amin)
+    bad_q = sum(1 for s in sl if float(s["q_ls"]) + 1e-6 < qmin)
+    kinds = {k: sum(1 for s in sl if int(s.get("kind", 0)) == k) for k in (0, 1, 2)}
+    km = {k: round(sum(float(s["length_km"]) for s in sl if int(s.get("kind", 0)) == k), 1) for k in (0, 1, 2)}
+    return {"id": "IS-wt", "name": "水位面（B）：不高于地表、排水口贴地表；泉 / 崖瀑的段含水层够厚、出水过门槛（A）",
+            "value": {"depth_below_zero_cells": neg, "drain_depth_p50_m": round(drain_p50, 2), "drain_depth_p90_m": round(drain_p90, 2),
+                      "springs_thin_aquifer": bad_aq, "springs_under_qmin": bad_q,
+                      "kind_n": {"弥散渗出": kinds[0], "泉": kinds[1], "崖瀑": kinds[2]},
+                      "kind_km": {"弥散渗出": km[0], "泉": km[1], "崖瀑": km[2]}},
+            "threshold": "埋深 < −0.05 m 的格 = 0、排水口埋深中位 ≤ 0.5 m 且 p90 ≤ 2 m、含水层不够的泉段 = 0、出水不足的段 = 0",
+            "pass": bool(neg == 0 and drain_p50 <= 0.5 and drain_p90 <= 2.0 and bad_aq == 0 and bad_q == 0), "hard": True, "note": None}
 
 
 def _valley_check(g: dict, c: dict | None) -> dict:

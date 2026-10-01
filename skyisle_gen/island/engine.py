@@ -267,7 +267,8 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
     for e in R["rivers"]:
         rivers_info.append({"mouth_cell": [int(e["mouth"][0]), int(e["mouth"][1])], "basin_km2": round(float(e["basin_km2"]), 1),
                             "length_km": round(float(e["length_km"]), 1), "discharge_m3s": round(float(e["discharge"]), 2),
-                            "width_m": round(float(e["width"]), 1), "depth_m": round(float(e["depth"]), 2),
+                            # 年均流量口径（平岸在 rivers.json 的 segments：w_bf_m）
+                            "w_mean_m": round(float(e["width"]), 1), "d_mean_m": round(float(e["depth"]), 2),
                             "level": int(e["level"]), "waterfall_m": round(float(e["waterfall"]), 0),
                             "incision_m": round(float(e["incision"]), 1)})
     rivers_info.sort(key=lambda r: -r["basin_km2"])
@@ -291,7 +292,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
                                                        round(float(p[4]), 2)] for p in pts.tolist()]})
     river, lake = R["river"], R["lake"]
     g["river_lines"] = river_lines
-    g.update({"river_width_m": R["river_width_m"], "river_depth_m": R["river_depth_m"], "floodplain": R["floodplain"], "cut_m": R["cut_m"]})
+    g.update({"w_mean_m": R["w_mean_m"], "d_mean_m": R["d_mean_m"], "floodplain": R["floodplain"], "cut_m": R["cut_m"]})
     g.update({"flowacc_km2": R["flowacc_km2"], "river": river, "stream": R["stream"], "lake": lake,
               "landcover": R["landcover"], "arable": R["arable"], "slope_deg": R["slope_deg"], "filled": R["filled"],
               "recv_i": R["recv_i"], "recv_j": R["recv_j"], "route_h": R["route_h"], "rain_mm": R["rain_mm"],
@@ -303,7 +304,8 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
         g["lith"] = R["lith"]
         J["lith"] = lith_summary(R["lith"], island_id)
     # C1 / C2：河床、谷底宽、限制度、记成水的河道格；C4 / C5：凝结水、云雾林、地下水、崖壁泉线
-    for k in ("bed_m", "floor_w_m", "confine", "river_water", "condense_mm", "cloud_forest", "bfi", "recharge_mm", "recharge_acc", "runoff_acc"):
+    for k in ("bed_m", "floor_w_m", "confine", "river_water", "condense_mm", "cloud_forest", "bfi", "recharge_mm", "recharge_acc", "runoff_acc",
+              "wt", "wt_outlet"):
         if k in R:
             g[k] = R[k]
     if "springline" in R:
@@ -334,7 +336,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
                   "floodplain_km2": round(float(g["floodplain"].sum()) * cell_km2, 3),
                   "max_incision_m": round(float(R["max_cut"]), 1),
                   "channel_height": "surface",
-                  "channel_note": "河宽 / 水深见 terrain.npz 的 river_width_m / river_depth_m（真实比例；溪涧为湿季值）；height 在河道格是平岸水面（= 滩面），"
+                  "channel_note": "河宽 / 水深见 terrain.npz 的 w_mean_m / d_mean_m（**年均流量**口径：w = 5·Q^0.5、d = 0.35·Q^0.4；溪涧为湿季值；平岸口径在 rivers.json 的 segments 里 w_bf_m / d_bf_m）；height 在河道格是平岸水面（= 滩面），"
                                   "河床 = height − 水深（C1；channel_height = surface，旧产物没有这个键时 height 是河床）；河宽 ≥ 一格的河道格地表记成河，"
                                   "更窄的在岸上（河槽由 rivers.json 的中心线 + 宽 + 深表达）；rivers[].waterfall_m = 河口跌下崖缘的落差",
                   "wind_ms": [round(u, 2), round(v, 2)],

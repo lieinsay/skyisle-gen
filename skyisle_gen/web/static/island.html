@@ -80,6 +80,7 @@ a{color:var(--acc2)}
       <option value="island">岛号</option>
       <option value="zone">地形区（山区 / 丘陵 / 台地 / 河谷）</option>
       <option value="lith">岩性（石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石骨架）</option>
+      <option value="wt">水位埋深（青 = 浅、褐 = 深；B 的水位面）</option>
       <option value="resource">资源分布（矿 / 石 / 土 / 林…）</option>
       <option value="temp">当日海拔温度</option>
     </select></div>
@@ -94,7 +95,8 @@ a{color:var(--acc2)}
       <option value="salt">赋存：岩盐</option>
     </select></div>
     <label class="chk"><input type="checkbox" id="ovWater" checked> 河 / 溪涧 / 湖</label>
-    <label class="chk" title="河道按中心线画成平滑曲线，线宽 = 真实河宽 × 缩放（小 / 中 / 大河最细 1.8 / 2.4 / 3 px）；关掉则按栅格逐格涂色"><input type="checkbox" id="ovVec" checked> 河道矢量（平滑、按河宽）</label>
+    <label class="chk" title="河道按中心线画成平滑曲线。**默认线宽是示意**：线宽 = 河宽 × 缩放，但有个最小像素下限（0.5–2.1 px）——拉得远时（默认视图 1 px ≈ 140 m，5 m 的河只有 0.04 px）看到的全是下限，不是真实比例；放大到 1 px ≤ 5 m 才按真实比例画。勾上下面的「按真实比例」则一律按米数画（远看会变成发丝线）"><input type="checkbox" id="ovVec" checked> 河道矢量（平滑、按河宽）</label>
+    <label class="chk" title="河宽按真实比例画（去掉最小像素下限）——远看会很细，放大看才正常；不勾则用示意线宽（细的河也看得见）"><input type="checkbox" id="ovRiverScale"> 河宽按真实比例（去掉最小线宽）</label>
     <label class="chk" title="河谷底的漫滩：高程 = 河床 + 水深，涨水即漫"><input type="checkbox" id="ovFlood"> 漫滩</label>
     <label class="chk" title="黄 = 已垦的田、橙 = 已垦的梯田、嫩绿 = 已垦的圩田（P6）、褐 = 撂荒（悬停看年头）、淡绿 = 宜垦但没开（P5）"><input type="checkbox" id="ovArable" checked> 已垦 / 梯田 / 圩田 / 撂荒（淡绿 = 宜垦没开）</label>
     <label class="chk"><input type="checkbox" id="ovCliff"> 崖缘</label>
@@ -106,7 +108,7 @@ a{color:var(--acc2)}
     <label class="chk" title="村（圆的大小 = 户数）、镇（橙圈，管几个村）、专业聚落（紫菱：矿镇 / 浮石采石村 / 窑村 / 烧炭营 / 温泉地 / 盐井村；空心 = 工棚 / 季节住）、散户、泊场（拉近才画，方框 + H）/ 蓄水池、废村（灰 ✕）、有人用的岛（青三角：放牧 / 夏牧 / 庙 / 墓岛）；P7：航船线（青线，从最远的村开到镇上的大泊场）、镇朝大泊场的街（橙线 + 蓝方块）、中转站（红三角 = 有常住户，粉 = 轮班的烽火台）"><input type="checkbox" id="ovSettle" checked> 聚落</label>
     <label class="chk" title="水利分级（四点四十）：岛群层只画邑级的——橙红鱼嘴 = 大堰（都江堰级，邑管），粗青线 = 它的干渠 / 支渠，青绿 = 大堰灌到的在种的地，拉近后青方块 = 每个用水的村的分水口（虚线连到村）；圩田与纵浦横塘照旧。村级的渠、塘归营建器（village_works = true 时才在这里画出来：嫩绿 = 圩田（排干的湿地，深绿框是一个个圩）；渠（青：干渠粗、支渠细，从渠首的红三角散开；纵浦 / 横塘 / 排水渠蓝）；拉近后才画塘（蓝圆：村塘 / 山塘 / 圩塘 / 堰塘）与闸（褐方块：渠首闸 / 圩闸 / 排水闸）。P6b：每处都有管它的村（拉近后渠首、圩画一条细线连到管它的村；圩村 = 绿边的村）；灰色虚线 / 灰三角 / 灰圆 = 废村旁没人管的废渠、废渠首、废塘）"><input type="checkbox" id="ovWorks" checked> 水利（灌区 / 渠 / 圩田；拉近看塘、闸、管它的村）</label>
     <label class="chk" title="特殊的山（B3，island.json 的 landforms）：平行岭谷、掀斜断块山、峰林、冰川 / 冰斗 / 角峰、临空断山、天上的山、辉长岩锯齿峰、蛇纹岩秃山、方山 / 孤山、穿山天窗——橙三角 + 名字；拉近后加各类的量"><input type="checkbox" id="ovLand" checked> 特殊的山</label>
-    <label class="chk" title="崖壁泉线（C5：没进河道的地下水从崖壁上岩层与浮石的交界渗出；青点，大小按出水 L/s，实心 = 挂成崖瀑）与瀑布（C3：蓝倒三角 = 河从崖边跌下，白三角 = 岛内的瀑布，灰 = 跌水；溪涧的崖边瀑布拉近才画）"><input type="checkbox" id="ovSpring" checked> 泉线与瀑布</label>
+    <label class="chk" title="崖壁泉线（C5；B+A）：按水位面（潜水面）的流向走到岸边的地下水从崖壁上岩层与浮石的交界渗出——青点，大小按出水 L/s；实心 = 泉 / 崖瀑（出水 ≥ 本岛出口段分位且含水层够厚），空心淡点 = 弥散渗出（整条岸线的底噪）。瀑布（C3）：蓝倒三角 = 河从崖边跌下，白三角 = 岛内的瀑布，灰 = 跌水；溪涧的崖边瀑布拉近才画"><input type="checkbox" id="ovSpring" checked> 泉线与瀑布</label>
     <label class="chk" title="采场（矿坑 ■ / 硫磺坑 ✕ / 盐井 ■ / 淘金点 ● / 采石场 ◆ / 土坑、采砂场 ·）、点（洞穴 ▲ / 泉眼 ○ / 温泉 ✱ / 盐泉 ○ / 贝壳化石 ◆）、片（泥炭 / 鸟粪 / 浮石露头）；拉近后标出赋存区。林木与各类赋存只在「资源分布」底图上"><input type="checkbox" id="ovRes"> 资源点位（采场 / 点 / 片）</label>
     <div class="row"><label>夸张</label><input type="range" id="exag" min="1" max="12" step="0.5" value="1.5"><span id="exagV" class="small">1.5</span></div>
     <div id="legend" class="legend"></div>
@@ -210,6 +212,7 @@ async function load(force = false, sets = null){
       rd: rr.river_depth_u8 ? b64(rr.river_depth_u8, Uint8Array) : null,
       nat: rr.landcover_natural_u8 ? b64(rr.landcover_natural_u8, Uint8Array) : null, lu: rr.landuse_u8 ? b64(rr.landuse_u8, Uint8Array) : null,   // P6b：原始地表、人工改造
       lith: rr.lith_u8 ? b64(rr.lith_u8, Uint8Array) : null,   // B2：出露岩性
+      wtd: rr.wtdepth_u8 ? b64(rr.wtdepth_u8, Uint8Array) : null,   // B：水位埋深（m，255 = 虚空）
       conf: rr.confine_u8 ? b64(rr.confine_u8, Uint8Array) : null, fw: rr.floor_w_u8 ? b64(rr.floor_w_u8, Uint8Array) : null,   // C2 限制度、谷底宽
       cond: rr.condense_u8 ? b64(rr.condense_u8, Uint8Array) : null, cfor: rr.cloud_forest_u8 ? b64(rr.cloud_forest_u8, Uint8Array) : null };   // C4 凝结水、云雾林
     R.res_m = D.island.raster.res_m * R.step;
@@ -270,9 +273,10 @@ function renderSide(){
       + (S.city ? `<tr><td>都</td><td><b style="color:#ffd75a">${S.city.role}</b> ${S.city.households} 户（城 ${S.city.inner_households} + 郭 ${S.city.guo_households}，郭 ${S.city.n_guo_islands} 岛）· 邦人口 ${fmt(S.city.state_pop, 0)} × 集聚率 ${S.city.gather_rate}<div class="small">${S.city.note}</div></td></tr>` : '')
       + `<tr><td>主家候选</td><td>${(S.home_candidates||[]).map(h => `<div><b>${h.id}·${h.kind}</b>（岛 ${h.island}，${fmt(h.elev_m,0)} m，离邑治 ${h.dist_seat_km ?? '—'} km，离主泊场 ${h.dist_main_landing_km ?? h.dist_main_dock_km ?? '—'} km）：${h.note}；${h.season_type}，雪 ${h.snow_days} 日 / 风暴 ${h.storm_days} 日 / 可出航 ${h.sailable_days} 日${h.island_has_river ? '，岛上有河' : ''}${h.island_lakes ? '，湖 ' + h.island_lakes : ''}</div>`).join('')}</td></tr>`; }
   const rv = hy.rivers || [];
-  $('rivers').innerHTML = rv.length ? `<tr><th>#</th><th>流域</th><th>长</th><th>流量</th><th>宽 / 深</th><th>下切</th><th>瀑布</th></tr>` + rv.slice(0, 8).map((r, k) =>
-      `<tr><td><button class="mini" data-rc="${r.mouth_cell.join(',')}">${k + 1}${['','小','中','大'][r.level]}</button></td><td>${fmt(r.basin_km2, 0)} km²</td><td>${fmt(r.length_km, 0)} km</td><td>${fmt(r.discharge_m3s, 1)} m³/s</td><td>${fmt(r.width_m, 0)} m / ${fmt(r.depth_m, 1)} m</td><td>${fmt(r.incision_m, 0)} m</td><td>${fmt(r.waterfall_m, 0)} m</td></tr>`).join('')
-      + `<tr><td colspan="7" class="small">常年河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
+  const bfR = hy.river_data && hy.river_data.bf_ratio_range;
+  $('rivers').innerHTML = rv.length ? `<tr><th>#</th><th>流域</th><th>长</th><th>流量</th><th>宽 / 深（年均）</th><th>下切</th><th>瀑布</th></tr>` + rv.slice(0, 8).map((r, k) =>
+      `<tr><td><button class="mini" data-rc="${r.mouth_cell.join(',')}">${k + 1}${['','小','中','大'][r.level]}</button></td><td>${fmt(r.basin_km2, 0)} km²</td><td>${fmt(r.length_km, 0)} km</td><td>${fmt(r.discharge_m3s, 1)} m³/s</td><td>${fmt(r.w_mean_m, 0)} m / ${fmt(r.d_mean_m, 1)} m</td><td>${fmt(r.incision_m, 0)} m</td><td>${fmt(r.waterfall_m, 0)} m</td></tr>`).join('')
+      + `<tr><td colspan="7" class="small">宽 / 深是**年均流量**口径（w = 5·Q^0.5、d = 0.35·Q^0.4，C1 的真实比例）${bfR ? `；**平岸**宽 = 年均 × √(平岸/年均)，本群流域的平岸 / 年均在 ${fmt(bfR[0], 1)}–${fmt(bfR[1], 1)}（即 ×${fmt(Math.sqrt(bfR[0]), 2)}–${fmt(Math.sqrt(bfR[1]), 2)}），逐点的平岸宽见 rivers.json 的 w_bf_m` : ''}。常年河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
     : `<tr><td class="small">无常年河${hy.n_waterfalls ? '（溪涧跌落 ' + hy.n_waterfalls + ' 处）' : ''}</td></tr>`;
   $('rivers').querySelectorAll('button[data-rc]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.rc.split(',').map(Number); flyToCell(i, j, 8); });
   const RS = D.resources;
@@ -284,7 +288,7 @@ function renderSide(){
   $('islandList').querySelectorAll('button').forEach(b => b.onclick = () => zoomIsland(+b.dataset.i));
   const f = `/api/island/preview?run=${run}&node=${node}`;
   $('files').innerHTML = `<div>${D.island.meta.run}/islands/${node}/：island.json · height.png · landcover.png · water.png · farmland.png · terrain.npz · climate.json · weather_y${year}.csv</div>
-    <div>resources.json · resources.png · terrain_zone.png（terrain.npz 另有 river_width_m / river_depth_m / floodplain / terrain_zone / resource（主导）/ res_field（赋存）/ patch_id）</div>
+    <div>resources.json · resources.png · terrain_zone.png（terrain.npz 另有 w_mean_m / d_mean_m（河道宽深，年均口径）/ floodplain / terrain_zone / resource（主导）/ res_field（赋存）/ patch_id / wt_m / wt_depth_m）</div>
     <div><a href="${D.preview}" target="_blank">preview.png</a> · <a href="${D.preview_main}" target="_blank">preview_main.png</a>${D.preview_res ? ` · <a href="${D.preview_res}" target="_blank">preview_resources.png</a>` : ''}</div>`;
 }
 
@@ -432,7 +436,10 @@ function drawRivers(ctx){
         else {
           const w = lv > 0 ? 1 : Math.round(4 * smooth((A / Math.max(aMin, 1e-6) - 0.75) / 0.5)) / 4;
           const wm = 0.5 * (a[2] + b[2]) * (1 + (wf - 1) * w);
-          let lw = Math.max(riverMinPx(wm, lv), wm * pxPerM); lw *= 0.6 + 0.4 * w; lw = Math.max(w < 1 ? 1.2 - 0.7 * w : 0.5, lw);
+          const trueScale = $('ovRiverScale') && $('ovRiverScale').checked;
+          let lw = trueScale ? Math.max(0.12, wm * pxPerM) : Math.max(riverMinPx(wm, lv), wm * pxPerM);
+          lw *= 0.6 + 0.4 * w;
+          if (!trueScale) lw = Math.max(w < 1 ? 1.2 - 0.7 * w : 0.5, lw);   // 示意线宽：给个下限，细的河也看得见
           lw = Math.round(lw * 4) / 4; const col = colOf(lv, w), kk = col + lw;
           if (kk !== key) { if (open) ctx.stroke(); ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(xa, ya); key = kk; open = true; }
           ctx.lineTo(xb, yb);
@@ -500,6 +507,11 @@ function buildBase(){
     else if (mode === 'temp') { const T = tsea - lapse * hv / 1000; c = tempColor(T); const l = 0.5 + 0.5 * sh[p]; c = c.map(x => x * l); }
     else if (mode === 'zone') { const z = R.zone && RS ? RS.zones.palette[R.zone[p]] : [128,128,128]; const l = 0.45 + 0.65 * sh[p]; c = z.map(x => x * l); }
     else if (mode === 'lith') { const LP = D.island.lith ? D.island.lith.palette : null; const z = R.lith && LP ? LP[R.lith[p]] : [128,128,128]; const l = 0.4 + 0.7 * sh[p]; c = z.map(x => x * l); }
+    else if (mode === 'wt') {   // B：水位埋深（0 = 水位贴在地表、255 = 虚空）：青（浅）→ 黄褐（深）
+      const v = R.wtd ? R.wtd[p] : 255;
+      if (v >= 255) c = [26, 30, 40];
+      else { const t = Math.min(1, v / 220); const a = t < 0.5 ? [70 + 130 * (t / 0.5), 180 + 20 * (t / 0.5), 220 - 90 * (t / 0.5)] : [200 - 60 * ((t - 0.5) / 0.5), 200 - 110 * ((t - 0.5) / 0.5), 130 - 60 * ((t - 0.5) / 0.5)];
+        const l = 0.55 + 0.55 * sh[p]; c = a.map(x => x * l); } }
     else if (mode === 'resource' && rfT >= 0) { const l = 0.15 + 0.55 * sh[p]; c = [150 * l, 150 * l, 150 * l]; const v = R.rf[rfOff + p];   // 某一类的赋存：品位按 viridis（石料的调色是灰，和晕渲分不开）
       if (v) { const a = 0.45 + 0.5 * v / 255, q = viridis(v / 255); c = c.map((x, t) => x * (1 - a) + q[t] * a);
         if (v >= rfThr && (p % cols === 0 || p % cols === cols - 1 || p < cols || p >= NN - cols || R.rf[rfOff + p - 1] < rfThr || R.rf[rfOff + p + 1] < rfThr || R.rf[rfOff + p - cols] < rfThr || R.rf[rfOff + p + cols] < rfThr)) c = c.map(x => x * 0.5); } }
@@ -529,6 +541,10 @@ function renderLegend(mode, hmin, hmax){
   else if (mode === 'island') html = '每岛一色（0 = 主岛）';
   else if (mode === 'lith') html = R.lith && D.island.lith ? D.island.lith.classes.slice(1).map((n, k) => `<span><span class="sw" style="background:rgb(${D.island.lith.palette[k + 1].join(',')})"></span>${n} ${fmt((D.island.lith.share[n] || 0) * 100, 0)}%</span>`).join('')
     : '<span><b>这份产物没有岩性</b>（PLAN-NATURE B 之前生成的：重新生成 / 重启服务）</span>';
+  else if (mode === 'wt') { const W = D.island.hydro && D.island.hydro.water ? D.island.hydro.water : null;
+    html = `<span><b>水位埋深</b>（地表 − 水位，0 = 水位贴地表）：<span class="sw" style="background:rgb(70,180,220)"></span>0 <span class="sw" style="background:rgb(200,200,130)"></span>110 <span class="sw" style="background:rgb(140,90,70)"></span>≥220 m</span>`
+      + (W && W.wt_depth_m ? `<span>· 本群 中位 ${W.wt_depth_m.p50} m · p90 ${W.wt_depth_m.p90} m · 最深 ${W.wt_depth_m.max} m · 水位浅于 5 m 的占陆地 ${fmt(W.wt_shallow_share * 100, 0)}%</span>` : '')
+      + (R.wtd ? '' : '<span><b>· 这份产物没有水位面（重新生成 / 重启服务）</b></span>'); }
   else if (mode === 'resource' && D.resources && D.resources.fields && $('resKind').value !== 'dom') { const f = D.resources.fields, t = f.kinds.indexOf($('resKind').value);
     html = `<span>赋存：${f.names[t]} 品位 <span class="sw" style="background:rgb(${viridis(0).join(',')})"></span>0 → <span class="sw" style="background:rgb(${viridis(1).join(',')})"></span>1（viridis；深色边 = 赋存区界，品位 ≥ ${f.thr[f.kinds[t]]}；灰 = 没有）</span>`; }
   else if ((mode === 'zone' || mode === 'resource') && D.resources) { const C = mode === 'zone' ? D.resources.zones : D.resources.resources;
@@ -586,6 +602,8 @@ function draw(){
     if (water && water !== '湖' && R.conf && R.conf[p]) water += ` · 谷底 ${R.fw ? R.fw[p] * 20 : '—'} m，${['', '峡谷', '半限制', '开阔'][R.conf[p]]}`;
     if (!water && R.flood && R.flood[p]) water = liveOn() && dayTab && dayTab.flood[day] ? '漫滩（今日被淹：暴雨 / 风暴）' : '漫滩';
     const RS = D.resources; const zr = RS && R.zone ? RS.zones.classes[R.zone[p]] : ''; const rs = RS && R.res && R.res[p] ? RS.resources.classes[R.res[p]] : '';
+    const wtd = R.wtd && R.wtd[p] < 255 ? R.wtd[p] : null;   // B：水位埋深（m）
+    const wtm = wtd !== null ? `<br>水位：${wtd === 0 ? '贴在地表（河道 / 湖 / 岸缘在排水）' : `埋深 ${wtd} m（水位 ${fmt(hv - wtd, 0)} m）`}` : '';
     const NN = R.rows * R.cols; const fs = R.rf && RS && RS.fields ? RS.fields.kinds.map((k, t) => [RS.fields.names[t], R.rf[t * NN + p] / 255, RS.fields.thr[k]]).filter(x => x[1] > 0).map(x => `${x[0]} ${fmt(x[1], 2)}${x[1] >= x[2] ? '' : '（区外）'}`).join(' · ') : '';
     const sn = settlementNear(e.offsetX, e.offsetY);
     let nt = '';                                           // P6b：原始地貌 → 现状（人工改造）
@@ -593,7 +611,7 @@ function draw(){
       if (u) { const now = LU_NOW[u] || LC_NAMES[ck]; nt = `<br>原始：${LC_NAMES[nk]} → 现状：${now}（人工：${LU_HOW[u]}）`; }
       else if (nk !== ck) nt = `<br>原始：${LC_NAMES[nk]} → 现状：${LC_NAMES[ck]}`;
       else nt = `<br>原始地貌（没动过）`; }
-    tip.innerHTML = (sn ? `<b>${sn.name}</b> ${sn.hh} 户${sn.polder ? '（圩村）' : ''} · ${sn.town ? '集镇（营建在第四步）' : '双击营建此聚落'}<br>` : '') + `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? FARM_TIP[R.arable[p]] : ''}${water ? ' · ' + water : ''}${nt}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${R.lith && D.island.lith && R.lith[p] ? ' · 岩性 ' + D.island.lith.classes[R.lith[p]] : ''}${R.cond && R.cond[p] ? '<br>集水核凝结水 ' + R.cond[p] * 4 + ' mm/年' + (R.cfor && R.cfor[p] ? ' · 云雾林' : '') : ''}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
+    tip.innerHTML = (sn ? `<b>${sn.name}</b> ${sn.hh} 户${sn.polder ? '（圩村）' : ''} · ${sn.town ? '集镇（营建在第四步）' : '双击营建此聚落'}<br>` : '') + `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? FARM_TIP[R.arable[p]] : ''}${water ? ' · ' + water : ''}${nt}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${R.lith && D.island.lith && R.lith[p] ? ' · 岩性 ' + D.island.lith.classes[R.lith[p]] : ''}${wtm}${R.cond && R.cond[p] ? '<br>集水核凝结水 ' + R.cond[p] * 4 + ' mm/年' + (R.cfor && R.cfor[p] ? ' · 云雾林' : '') : ''}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
     tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 14) + 'px';
     $('coords').textContent = `x ${fmt(kmx, 2)} km, y ${fmt(kmy, 2)} km · 格 (${i}, ${j})`;
   });
@@ -604,7 +622,7 @@ function draw(){
   ['baseSel','resKind','ovWater','ovVec','ovFlood','ovArable','ovCliff','ovContour','ovLive'].forEach(id => $(id).addEventListener('change', () => { base = null; dayLayer = null; draw(); renderDay(); }));
   const resRow = () => { $('resKindRow').style.display = $('baseSel').value === 'resource' ? '' : 'none'; }; $('baseSel').addEventListener('change', resRow); resRow();
   $('ovFx').addEventListener('change', () => { if (!$('ovFx').checked) { const f = $('fx'); f.getContext('2d').clearRect(0, 0, f.width, f.height); } });
-  ['ovLinks','ovLabels','ovSettle','ovRes','ovWorks','ovLand','ovSpring'].forEach(id => $(id).addEventListener('change', draw));
+  ['ovLinks','ovLabels','ovSettle','ovRes','ovWorks','ovLand','ovSpring','ovRiverScale'].forEach(id => $(id).addEventListener('change', draw));
   $('exag').addEventListener('input', () => { $('exagV').textContent = $('exag').value; base = null; draw(); });
   $('btnFit').onclick = () => { fitView(); draw(); }; $('btnMain').onclick = () => zoomIsland(0);
   $('btnGo').onclick = () => { run = $('runIn').value.trim(); node = +$('nodeIn').value; load(); };
@@ -633,8 +651,15 @@ function drawSprings(ctx){
   const cellPos = c => [(c[1] + 0.5) / R.step * view.s + view.tx, (c[0] + 0.5) / R.step * view.s + view.ty];
   const zoomed = view.s * (10 / R.step) > 6;
   for (const s of D.rivers.springline || []) {
-    const [x, y] = cellPos(s[1]); const r = Math.max(1.2, Math.min(5, 1 + Math.sqrt(s[2]))); ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
-    ctx.strokeStyle = '#5ff0ff'; ctx.lineWidth = 1; ctx.stroke(); if (s[5]) { ctx.fillStyle = '#5ff0ff'; ctx.fill(); }
+    const [x, y] = cellPos(s[1]);
+    const kind = s.length > 7 ? s[7] : (s[5] ? 2 : 0);        // 0 弥散渗出 / 1 泉 / 2 崖瀑（B+A）
+    if (kind === 0) {                                          // 弥散渗出：整条岸线的底噪，画得很淡很小（不抢泉的眼）
+      ctx.beginPath(); ctx.arc(x, y, 1.0, 0, 2 * Math.PI); ctx.strokeStyle = 'rgba(140,210,230,.30)'; ctx.lineWidth = 0.9; ctx.stroke(); continue;
+    }
+    const r = Math.max(1.6, Math.min(5, 1 + Math.sqrt(s[2])));
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#5ff0ff'; ctx.lineWidth = 1.2; ctx.stroke();
+    if (kind === 2) { ctx.fillStyle = '#5ff0ff'; ctx.fill(); } else { ctx.fillStyle = 'rgba(95,240,255,.45)'; ctx.fill(); }
   }
   ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
   for (const f of D.rivers.falls || []) {
@@ -810,7 +835,7 @@ function drawWorks(ctx){
 let dayTab = null, dayLayer = null, dayLayerDay = -1, dayStats = null, cellStatic = null;
 const NBIN = 24, LAPSE = 6.0;
 function liveOn(){ return $('ovLive').checked && !!(D && D.climate.weather && D.climate.weather.days); }
-function liveDraw(){ return liveOn() && !['zone', 'lith', 'resource', 'natural', 'landuse'].includes($('baseSel').value); }   // 地形区 / 岩性 / 资源 / 原始地貌 / 人工改造底图上不盖季相层（河湖由底图自己画）
+function liveDraw(){ return liveOn() && !['zone', 'lith', 'wt', 'resource', 'natural', 'landuse'].includes($('baseSel').value); }   // 地形区 / 岩性 / 水位面 / 资源 / 原始地貌 / 人工改造底图上不盖季相层（河湖由底图自己画）
 function smooth(t){ t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
 function buildDayTables(){
   if (!D.climate.weather || !D.climate.weather.days) { dayTab = null; return; }
@@ -829,7 +854,9 @@ function buildDayTables(){
   //      溪涧整条隔一两天就有 / 无一次（#1165 一年切换 42 次），河隔天冻、隔天化。现在：
   //      基流 S（τ 30 日）定溪涧流到哪：汇流 ≥ aMin 的段有水，aMin = A_REF × S_REF / S，夹在 [溪涧阈, 常年河阈]——干旱时从源头往下游一段段断流，常年河永远有水；
   //      快流 Q（τ 3 日）定涨水加宽与漫滩（持续几天、逐日消退）；冰按岸缘气温的度日累积（负温一度日 +1，正温 −2），≥ 8 溪涧冻、≥ 20 河湖冻
-  const TAU_B = 30, TAU_Q = 3, MELT = 3.0, A_REF = 2.0, ICE_S = 8, ICE_R = 20;
+  // A_REF = 1.0（用户 10-01 定，四点五十）：溪涧遮罩是按**年均**汇流（stream_min_km2）画的，所以中位那天的门槛 = 映射阈值、整张映射网都在流；
+  // 干季 S 下降 → aMin 升 → 从源头往下游一段段断流，湿季被地板（aStream）夹住（映射网就是上限，不会再扩张）
+  const TAU_B = 30, TAU_Q = 3, MELT = 3.0, A_REF = 1.0, ICE_S = 8, ICE_R = 20;
   const hyd = D.island.hydro || {};
   const aStream = hyd.stream_min_km2 || 1.0, aPer = hyd.river_threshold_km2 || Infinity;
   const kb = Math.exp(-1 / TAU_B), kq = Math.exp(-1 / TAU_Q);

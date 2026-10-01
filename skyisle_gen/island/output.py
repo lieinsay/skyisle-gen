@@ -101,11 +101,15 @@ def write_terrain(out: Path, g: dict) -> None:
     # C1 / C2（DESIGN-NOTES 四点四十七）：河道格的 height 是平岸水面（= 谷底的滩面），bed_m = 河床（其余 NaN），river_water = 河宽够一格、记成水面的河道格；
     # floor_w_m / confine = 河道格上的谷底宽（m）与限制度（1 峡谷 / 2 半限制 / 3 开阔）；floodplain = 谷底里的岸上格；
     # C4 / C5：condense_mm = 集水核的凝结水（只进水账，runoff_mm 含它、rain_mm 不含），cloud_forest = 云雾林，recharge_mm = 地下水补给
-    for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "river_width_m",
-              "river_depth_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse",
+    for k in ("flowacc_km2", "river", "lake", "landcover", "cultivable", "cultivated", "fallow_years", "slope_deg", "stream", "w_mean_m",
+              "d_mean_m", "floodplain", "terrain_zone", "resource", "res_field", "patch_id", "rain_mm", "runoff_mm", "polder_id", "landcover_natural", "landuse",
               "lith", "rockwall_m", "rockwall_dir", "coast_dist_m", "bed_m", "river_water", "floor_w_m", "confine", "condense_mm", "cloud_forest", "recharge_mm"):
         if k in g:
             arrays[k] = g[k]
+    if "wt" in g:
+        # B（四点四十九）：水位面（潜水面，m，零点口径；虚空 NaN）与埋深（地表 − 水位，m）。井打多深、挖到哪层见水、泉在哪，都读它
+        arrays["wt_m"] = g["wt"].astype(np.float32)
+        arrays["wt_depth_m"] = (g["height"] - g["wt"]).astype(np.float32)
     np.savez_compressed(out / "terrain.npz", **arrays)
     if "lith" in g:
         from .landforms import LITH_PALETTE
@@ -129,10 +133,13 @@ def write_terrain(out: Path, g: dict) -> None:
             from .rivernet import rivers_doc
             doc.update(rivers_doc(g))
         if "springline" in g:
-            doc["springline_note"] = ("崖壁泉线（C5）：没进河道、顺流向走到岸边的地下水，从崖壁上岩层与浮石的交界渗出；按段记：岛号、代表格 [行, 列]、"
-                                      "出水 L/s、渗出处的高程（骨架顶面，m）、段长 km、是否成挂在崖壁上的泉瀑")
+            doc["springline_note"] = ("崖壁泉线（C5；B+A，四点四十九）：按水位面（潜水面）的流向走到岸边的地下水，从崖壁上岩层与浮石的交界渗出；按段记："
+                                      "岛号、代表格 [行, 列]、出水 L/s、渗出处的高程（骨架顶面，m）、段长 km、是否成崖瀑（kind 2 的旧口径）、"
+                                      "段内含水层厚度 m（水位 − 骨架顶面）、等第 kind（0 弥散渗出 / 1 泉 / 2 崖瀑：出水 ≥ 本岛出口段分位且含水层够厚）")
+            doc["springline_kind"] = {"0": "弥散渗出", "1": "泉", "2": "崖瀑"}
             doc["springline"] = [[int(s["island"]), [int(x) for x in s["cell"]], round(float(s["q_ls"]), 2), round(float(s["height_m"]), 0),
-                                  round(float(s["length_km"]), 2), bool(s["fall"])] for s in g["springline"]]
+                                  round(float(s["length_km"]), 2), bool(s["fall"]), round(float(s.get("aquifer_m", 0.0)), 1),
+                                  int(s.get("kind", 0))] for s in g["springline"]]
         (out / "rivers.json").write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (out / "island.json").write_text(json.dumps(g["json"], ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
