@@ -7,9 +7,6 @@
 
 namespace skyisle::island {
 
-// 大流域常驻河的宽浅断面系数；地形切槽和逐日河段导出共用。
-double channel_width_a(const Config& c, double acc_km2, bool perennial);
-
 struct Channels {
     GridD h_new, width, depth;
     GridD bed;                             // 河床高程（河道格；其余 NaN）

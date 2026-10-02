@@ -7,7 +7,6 @@
 
 #include "skyisle/flow.hpp"
 #include "skyisle/island/groundwater.hpp"
-#include "skyisle/island/river.hpp"
 
 namespace skyisle::island {
 
@@ -299,7 +298,7 @@ void build_rivernet(Group& g, const Config& c) {
     // 平岸宽深 = 年均宽深 × (平岸 / 年均)^站内指数（L&M 1964：w ∝ Q^0.26、d ∝ Q^0.40）——别用下游的 0.5（四点五十一）
     const double wbexp = c.get("hydro.at_station_width_b", 0.26), dfexp = c.get("hydro.at_station_depth_f", 0.40);
     // 年均流量下的水面宽深（下游关系，L&M 1953）：w = width_a·Q^width_b、d = depth_c·Q^depth_f
-    const double wb = c.get("hydro.width_b", 0.5);
+    const double wa = c.get("hydro.width_a", 5.0), wb = c.get("hydro.width_b", 0.5);
     const double dc0 = c.get("hydro.depth_c", 0.35), df0 = c.get("hydro.depth_f", 0.4);
     const double bf_farm = rc(c, "bqart_farm"), bf_for = rc(c, "bqart_forest"), tol = rc(c, "floor_tol_m");
     const double a_temp = g.clim.a_temp, a_ref = g.clim.a_ref_h;
@@ -380,7 +379,7 @@ void build_rivernet(Group& g, const Config& c) {
             R.q_bf[m] = static_cast<float>(qbf);
             // 三个口径各算各的（别叠乘）：年均流量下的水面 = 直接按式子（不依赖栅格，栅格里的已经是河道）；
             // 真平岸 = 年均 × (q_bf/q_mean)^站内指数；栅格 w_ch_m / d_ch_m = 河道 = 年均 × (假设比值)^站内指数（river.cpp 切的）
-            const double w_mean = channel_width_a(c, g.acc_km2.v[k], perennial) * np_pow(q, wb), d_mean = dc0 * np_pow(q, df0);
+            const double w_mean = wa * np_pow(q, wb), d_mean = dc0 * np_pow(q, df0);
             R.w_mean[m] = static_cast<float>(w_mean);
             R.d_mean[m] = static_cast<float>(d_mean);
             // 平岸宽与深：年均口径 × (平岸 / 年均)^站内指数（L&M 1964：宽 0.26、深 0.40）——q_bf = 年均 × 所在流域的 bf_ratio
