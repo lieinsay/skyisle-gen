@@ -470,12 +470,39 @@ function riverNow(seg, p, atDay = day) {
     d: p[9] * idx ** (D.rivers.depth_exponent || 0.40), wet: p[4] > 0 && idx > 0};
 }
 function riverXY(p) { return [(p[1] + 0.5) / R.step * view.s + view.tx, (p[0] + 0.5) / R.step * view.s + view.ty]; }
+// SOURCE_CURVE_BEGIN：与游戏的 source_curve 同口径，源点和汇流点固定。
+const sourceCurveCache = new WeakMap();
 function riverEdges(seg) {
-  const pts = seg.pts;
-  // 汇入点属于下游段；补连接边，绘制和拾取必须走同一条线。
-  if (seg.down >= 0) return pts.concat([D.rivers.segments[seg.down].pts[seg.join]]);
-  return pts;
+  if (sourceCurveCache.has(seg)) return sourceCurveCache.get(seg);
+  const pts = seg.pts.map(p => p.slice());
+  if (seg.down >= 0 && pts.length) {
+    const down = D.rivers.segments[seg.down].pts[seg.join], join = pts.at(-1).slice();
+    for (const i of [0,1,10,11]) join[i] = down[i];
+    pts.push(join);
+  }
+  const tangent = i => {
+    const a=pts[Math.max(0,i-1)], b=pts[i], c=pts[Math.min(i+1,pts.length-1)];
+    const ax=b[0]-a[0], ay=b[1]-a[1], bx=c[0]-b[0], by=c[1]-b[1];
+    const la=Math.hypot(ax,ay), lb=Math.hypot(bx,by);
+    if (la<1e-9) return [bx,by]; if (lb<1e-9) return [ax,ay];
+    const x=ax/la+bx/lb, y=ay/la+by/lb, l=Math.hypot(x,y);
+    return l<1e-9 ? [0,0] : [x*Math.min(la,lb)/l,y*Math.min(la,lb)/l];
+  };
+  const out=[];
+  for (let k=0;k+1<pts.length;k++) {
+    const a=pts[k], b=pts[k+1], ta=tangent(k), tb=tangent(k+1);
+    const steps=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])*D.island.raster.res_m/8));
+    for (let j=0;j<steps;j++) {
+      const t=j/steps, t2=t*t, t3=t2*t;
+      const p=a.map((v,i)=>[2,14,15,19,20].includes(i)?v:v+(b[i]-v)*t);
+      for (let i=0;i<2;i++) p[i]=(2*t3-3*t2+1)*a[i]+(t3-2*t2+t)*ta[i]+(-2*t3+3*t2)*b[i]+(t3-t2)*tb[i];
+      p.sourceIndex=Math.min(k,seg.pts.length-1); out.push(p);
+    }
+  }
+  if (pts.length) { const p=pts.at(-1); p.sourceIndex=seg.pts.length-1; out.push(p); }
+  sourceCurveCache.set(seg,out); return out;
 }
+// SOURCE_CURVE_END
 function drawSourceRivers(ctx) {
   const scale = view.s / R.res_m, trueScale = $('ovRiverScale').checked, cs = view.s / R.step;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -512,9 +539,9 @@ function pickRiver(x,y) {
       if (d < distance) {
         distance=d;
         // 跨供水类型不混合流量，防止把下游基流插值到干涸上游。
-        const p=a[20] === b[20] && k < seg.pts.length-1 ? a.map((v,i)=>[2,14,15,19,20].includes(i)?v:v+(b[i]-v)*t) : a.slice();
+        const p=a[20] === b[20] ? a.map((v,i)=>[2,14,15,19,20].includes(i)?v:v+(b[i]-v)*t) : a.slice();
         p[0]=a[0]+(b[0]-a[0])*t; p[1]=a[1]+(b[1]-a[1])*t;
-        best={seg,p,k};
+        best={seg,p,k:a.sourceIndex};
       }
     }
   }
