@@ -496,6 +496,7 @@ nb::dict rivernet_dict(const RiverNet& R) {
     nb::dict d;
     d["cell"] = vec_np(R.cell);
     d["level"] = vec_np(R.level);
+    d["flow_regime"] = vec_np(R.flow_regime);
     d["d50c"] = vec_np(R.d50c);
     d["planform"] = vec_np(R.planform);
     d["confine"] = vec_np(R.confine);
@@ -553,6 +554,8 @@ nb::dict rivernet_dict(const RiverNet& R) {
         e["cond_frac"] = b.cond_frac;
         e["bf_ratio"] = b.bf_ratio;
         e["index"] = vec_np(b.index);
+        e["event_index"] = vec_np(b.event_index);
+        e["event_bf_ratio"] = b.event_bf_ratio;
         basins.append(e);
     }
     d["segs"] = segs;

@@ -170,6 +170,7 @@ struct RiverNet {
     // w / d = **平岸**宽与深（= 年均口径 × (q_bf/q_mean)^站内指数 0.26 / 0.40）；w_mean / d_mean = 年均流量下的水面宽深
     // （栅格 terrain.npz 的 w_ch_m / d_ch_m 是**河道** = 平岸宽深，用假设的 bf_ratio_channel 切出来的）
     std::vector<float> w_mean, d_mean;
+    std::vector<uint8_t> flow_regime; // 0 临时雨雪径流路径，1 常驻河（与大小级别独立输出）
     struct Seg {
         int island = 0, down = -1, join = -1, start = 0, n = 0, basin = -1, level = 0;
         uint8_t exit = 0;                                        // 0 汇入别的段 / 1 崖边 / 2 湖 / 3 没入地里
@@ -185,9 +186,11 @@ struct RiverNet {
     struct Basin {
         int seg = -1, island = 0, ci = 0, cj = 0;
         double area_km2 = 0, q_mean = 0, bfi = 0, recession_days = 0, quick_days = 0, snow_frac = 0, bf_ratio = 0, cond_frac = 0;
-        std::vector<double> index;                               // 逐日径流指数（年均 = 1）
+        std::vector<double> index;                               // 持续补给逐日径流指数（年均 = 1）
+        std::vector<double> event_index;                         // 雨雪事件径流；无补给且汇流结束时严格为 0
+        double event_bf_ratio = 0;
     };
-    std::vector<Basin> basins;                                   // 每条出崖边的常年河一个；最后一个是「其余」（小流域共用）
+    std::vector<Basin> basins; // 每个河网出口独立流域；最后是无河网坡面，不再供小流路共用
 };
 
 // 地貌（B3，landforms.cpp）：一处特殊的山 / 地貌。kind 是 ASCII 代码（前端映射中文）；r、c 是群栅格的行列（格心 = 整数 + 0.5，同 LinePt），

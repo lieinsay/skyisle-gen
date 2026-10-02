@@ -398,3 +398,30 @@ def test_cpp_generate_passes_checks(small_ctx):
     items = evaluate(g, out, ctx=small_ctx, node=node, c=small_ctx.cfg["island"], det_hashes=(h1, hash_products(out)), daily_years=10)
     bad = [i["id"] for i in items if not i["pass"] and i["hard"]]
     assert not bad, bad
+
+
+def test_core_gain_increases_supply_without_adding_rivers(small_ctx):
+    node = _nodes(small_ctx, 1)[0]
+    a = _build(small_ctx, node, sets=["island.water.core_gain=0"])
+    b = _build(small_ctx, node, sets=["island.water.core_gain=3"])
+    for key in ("rain_mm", "flowacc_km2", "river", "stream"):
+        assert np.array_equal(a[key], b[key], equal_nan=True), key
+    assert np.nansum(b["runoff_mm"]) > np.nansum(a["runoff_mm"])
+
+
+def test_river_event_profiles_are_local_and_can_dry(small_ctx):
+    from skyisle_gen import island as isl
+    from skyisle_gen.island.rivernet import rivers_doc
+    node = _nodes(small_ctx, 1)[0]
+    g = isl.generate(small_ctx, node, write=False, res_m=300.0, log=lambda *a: None)
+    net = g["rivernet"]
+    assert set(np.unique(net["flow_regime"])) == {0, 1}
+    roots = [s for s in net["segs"] if s["down"] < 0]
+    assert len({s["basin"] for s in roots}) == len(roots)
+    assert all(s["basin"] >= 0 for s in net["segs"])
+    events = [np.asarray(b["event_index"]) for b in net["basins"][:-1]]
+    assert any((x == 0).any() and (x > 0).any() for x in events)
+    assert all(np.isfinite(x).all() and (x >= 0).all() and (not x.any() or abs(x.mean()-1) < 1e-9) for x in events)
+    doc = rivers_doc(g)
+    assert doc["cols"][20] == "flow_regime"
+    assert all(len(p) == len(doc["cols"]) for s in doc["segments"] for p in s["pts"])

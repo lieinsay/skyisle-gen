@@ -6,6 +6,7 @@
 #include <cstdlib>
 
 #include "skyisle/flow.hpp"
+#include "skyisle/island/rivernet.hpp"
 #include "skyisle/grid.hpp"
 #include "skyisle/rng.hpp"
 #include "skyisle/town/contour.hpp"
@@ -34,6 +35,17 @@ static int fails = 0;
     } while (0)
 
 int main() {
+    {
+        using skyisle::island::event_runoff_index;
+        const auto dry = event_runoff_index(std::vector<double>(12, 0.0), 0.5);
+        CHECK(std::all_of(dry.begin(), dry.end(), [](double q) { return q == 0.0; }));
+        std::vector<double> rain(12, 0.0); rain[11] = 20.0;
+        const auto flow = event_runoff_index(rain, 0.5);
+        CHECK(flow[11] > flow[0] && flow[0] > 0.0); // 跨年退水，不凭空丢掉去年末的雨
+        double total = 0.0;
+        for (int d = 0; d < 12; ++d) { total += flow[d]; if (d > 0 && d < 11) CHECK(flow[d] == 0.0); }
+        CHECK(std::abs(total - 12.0) < 1e-12); // 年水量守恒
+    }
     CHECK(crc32("island:2051:layout") == 4019611777u);
     {
         Rng r = entity_rng(42, 21, "island:2051:layout");

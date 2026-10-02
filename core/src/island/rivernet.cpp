@@ -25,6 +25,22 @@ int sgn(int x) { return (x > 0) - (x < 0); }
 
 }  // namespace
 
+std::vector<double> event_runoff_index(const std::vector<double>& liquid, double quick_days) {
+    const int n = static_cast<int>(liquid.size());
+    std::vector<double> out(n, 0.0);
+    if (!n) return out;
+    // 有限传播时间，不用无限指数尾巴把雨水沟变成泉水。窗宽为三倍快流时间常数。
+    const int window = std::min(n, std::max(1, static_cast<int>(std::ceil(3.0 * quick_days))));
+    double total = 0.0;
+    for (int d = 0; d < n; ++d) {
+        for (int lag = 0; lag < window; ++lag)
+            out[d] += std::max(0.0, liquid[(d - lag + n) % n]) * (window - lag);
+        total += out[d];
+    }
+    if (total > 0.0) for (double& x : out) x *= n / total;
+    return out;
+}
+
 void build_rivernet(Group& g, const Config& c) {
     RiverNet& R = g.rnet;
     R = RiverNet();
@@ -121,9 +137,11 @@ void build_rivernet(Group& g, const Config& c) {
     const bool has_farm = !g.cultivated.v.empty();
     const std::vector<int32_t> order = downstream_first(recv, land);
     std::vector<float> a_n(N, 0.f), a_z(N, 0.f), a_L(N, 0.f), a_c(N, 0.f), a_farm(N, 0.f), a_for(N, 0.f), a_zmax(N, 0.f);
+    std::vector<double> rain_acc(N, 0.0);
     for (int32_t k : order) {
         const uint8_t li = has_lith ? g.lith.v[k] : 0;
         a_n[k] = 1.f;
+        rain_acc[k] = std::max(0.0, g.runoff.v[k] - (g.condense.v.empty() ? 0.0 : g.condense.v[k])) * cell_km2;
         a_z[k] = static_cast<float>(g.height.v[k]);
         a_zmax[k] = static_cast<float>(g.height.v[k]);
         a_L[k] = static_cast<float>(lith_at(Lt, li, 1.0));
@@ -136,6 +154,7 @@ void build_rivernet(Group& g, const Config& c) {
         if (r < 0) continue;
         const int32_t k = *it;
         a_n[r] += a_n[k];
+        rain_acc[r] += rain_acc[k];
         a_z[r] += a_z[k];
         a_L[r] += a_L[k];
         a_c[r] += a_c[k];
@@ -144,11 +163,11 @@ void build_rivernet(Group& g, const Config& c) {
         a_zmax[r] = std::max(a_zmax[r], a_zmax[k]);
     }
 
-    // ---- 流域：每条出崖边的常年河一个；陆地格按拓扑序（下游先）继承下游的流域
+    // ---- 每个河网出口（含临时流路、入湖）单独汇水，不能把无关的小流域混成一个供水源。
     std::vector<int> basin_of(N, -1);
     for (size_t s = 0; s < R.segs.size(); ++s) {
         RiverNet::Seg& sg = R.segs[s];
-        if (sg.down < 0 && sg.exit == 1 && sg.level >= 1) {
+        if (sg.down < 0) {
             RiverNet::Basin B;
             B.seg = static_cast<int>(s);
             B.island = sg.island;
@@ -161,10 +180,10 @@ void build_rivernet(Group& g, const Config& c) {
     }
     for (int32_t k : order) {
         const int64_t r = recv[k];
-        if (r >= 0) basin_of[k] = basin_of[r];
+        if (r >= 0 && basin_of[k] < 0) basin_of[k] = basin_of[r];
     }
     const int nb = static_cast<int>(R.basins.size());
-    R.basins.push_back(RiverNet::Basin());   // 其余：小流域与直接出崖边的坡面共用
+    R.basins.push_back(RiverNet::Basin());   // 其余无河网坡面，仅用于水账
     for (RiverNet::Seg& sg : R.segs) {
         const int b = basin_of[R.cell[sg.start + sg.n - 1]];
         sg.basin = b;
@@ -229,6 +248,7 @@ void build_rivernet(Group& g, const Config& c) {
         std::vector<double> swe(nbands, 0.0);
         double Sq = 0.0, Ss = 0.0, tot = 0.0, from_snow = 0.0, gen = 0.0;
         B.index.assign(nd, 0.0);
+        std::vector<double> event_liquid(nd, 0.0);
         for (int pass = 0; pass < 2; ++pass)
             for (int d = 0; d < nd; ++d) {
                 double quick = 0.0, slow = Csum / nd;
@@ -247,6 +267,7 @@ void build_rivernet(Group& g, const Config& c) {
                     slow += B.bfi * r;
                     if (pass == 1) {
                         gen += r;
+                        event_liquid[d] += r;
                         from_snow += bw[t] * m / bp[t];
                     }
                 }
@@ -268,6 +289,8 @@ void build_rivernet(Group& g, const Config& c) {
         }
         B.bf_ratio = mx;
         B.snow_frac = gen > 0.0 ? from_snow / gen : 0.0;
+        B.event_index = event_runoff_index(event_liquid, B.quick_days);
+        for (double x : B.event_index) B.event_bf_ratio = std::max(B.event_bf_ratio, x);
     }
 
     // ---- 沿程每点
@@ -281,6 +304,7 @@ void build_rivernet(Group& g, const Config& c) {
     const double a_temp = g.clim.a_temp, a_ref = g.clim.a_ref_h;
     const size_t M = R.cell.size();
     R.level.resize(M);
+    R.flow_regime.resize(M);
     R.d50c.resize(M);
     R.planform.resize(M);
     R.confine.resize(M);
@@ -300,13 +324,17 @@ void build_rivernet(Group& g, const Config& c) {
         return clip(std::min((n + 0.5) * step - w / 2.0, nominal), 0.0, nominal);
     };
     for (const RiverNet::Seg& sg : R.segs) {
-        const double ratio = R.basins[sg.basin >= 0 ? sg.basin : nb].bf_ratio;
-        const double rq = ratio > 0.0 ? ratio : 1.0;   // 平岸 / 年均（逐日径流指数的年最大）
+        const auto& basin = R.basins[sg.basin >= 0 ? sg.basin : nb];
         for (int t = 0; t < sg.n; ++t) {
             const size_t m = static_cast<size_t>(sg.start + t);
             const int32_t k = R.cell[m];
             const int i = k / W, j = k % W;
-            const double q = g.runoff_acc.v[k] * 1000.0 / year_s;
+            const bool perennial = g.river.v[k] > 0;
+            R.flow_regime[m] = perennial ? 1 : 0;
+            const double ratio = perennial ? basin.bf_ratio : basin.event_bf_ratio;
+            const double rq = ratio > 0.0 ? ratio : 1.0;
+            // 临时流路无已建模的稳定出露水源。凝结补给留在地下，遇常驻河后才计入河水。
+            const double q = (perennial ? g.runoff_acc.v[k] : rain_acc[k]) * 1000.0 / year_s;
             const double qbf = q * (ratio > 0.0 ? ratio : 1.0);
             const double w = g.width_m.v[k], d = g.depth_m.v[k], surf = g.height.v[k];
             const double bed = std::isnan(g.bed_m.v[k]) ? surf - d : g.bed_m.v[k];
