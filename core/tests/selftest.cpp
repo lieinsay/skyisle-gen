@@ -7,6 +7,7 @@
 
 #include "skyisle/flow.hpp"
 #include "skyisle/island/rivernet.hpp"
+#include "skyisle/island/channel_geometry.hpp"
 #include "skyisle/grid.hpp"
 #include "skyisle/rng.hpp"
 #include "skyisle/town/contour.hpp"
@@ -35,6 +36,27 @@ static int fails = 0;
     } while (0)
 
 int main() {
+    {
+        skyisle::Config c;
+        using skyisle::island::channel_geometry;
+        CHECK(channel_geometry(0, c).max_depth == 0);
+        // Integrate bed height numerically: the empirical depth must equal A/W,
+        // for creeks, tributaries and trunks, not the maximum point depth.
+        double last_width = 0;
+        for (double q : {0.0001, 0.01, 1.0, 30.0, 100.0}) {
+            const auto ch = channel_geometry(q, c);
+            double area = 0;
+            for (int i = 0; i < 10000; ++i) {
+                const double u = (i + 0.5) / 10000.0;
+                area += ch.max_depth_at_mean_flow * (1 - std::pow(u, 0.40/0.26)) * ch.width_at_mean_flow / 10000;
+            }
+            CHECK(std::abs(area/ch.width_at_mean_flow - 0.35*std::pow(q,0.4)) < 1e-7);
+            CHECK(ch.width > last_width);
+            CHECK(std::abs(ch.width*std::pow(q/ch.q_reference,0.26)-ch.width_at_mean_flow) < 1e-10);
+            CHECK(std::abs(ch.max_depth*std::pow(q/ch.q_reference,0.40)-ch.max_depth_at_mean_flow) < 1e-10);
+            last_width = ch.width;
+        }
+    }
     {
         using skyisle::island::event_runoff_index;
         const auto dry = event_runoff_index(std::vector<double>(12, 0.0), 0.5);

@@ -425,3 +425,23 @@ def test_river_event_profiles_are_local_and_can_dry(small_ctx):
     doc = rivers_doc(g)
     assert doc["cols"][20] == "flow_regime"
     assert all(len(p) == len(doc["cols"]) for s in doc["segments"] for p in s["pts"])
+
+
+def test_channel_geometry_matches_carving_and_is_independent_of_weather_year(small_ctx):
+    from skyisle_gen import island as isl
+    node = _nodes(small_ctx, 1)[0]
+    a = isl.generate(small_ctx, node, write=False, res_m=300.0, year=0, log=lambda *a: None)
+    b = isl.generate(small_ctx, node, write=False, res_m=300.0, year=1, log=lambda *a: None)
+    for g in (a, b):
+        net = g["rivernet"]
+        cells = net["cell"].astype(np.int64)
+        assert set(np.unique(net["flow_regime"])) == {0, 1}
+        assert np.array_equal(net["w"], g["w_ch_m"].ravel()[cells].astype(np.float32))
+        assert np.array_equal(net["d"], g["d_ch_m"].ravel()[cells].astype(np.float32))
+        # Float32 elevation at kilometre heights is precise to a fraction of a mm.
+        np.testing.assert_allclose(net["surf"]-net["bed"], net["d"], atol=0.002, rtol=0)
+        np.testing.assert_allclose(net["q_bf"], net["q_mean"]*5, atol=1e-6, rtol=1e-6)
+        np.testing.assert_allclose(net["d_mean"]*0.4/0.66, 0.35*net["q_mean"]**0.4, atol=0.001, rtol=0.01)
+    for key in ("cell", "w", "d", "surf", "bed", "q_bf", "flow_regime"):
+        assert np.array_equal(a["rivernet"][key], b["rivernet"][key]), key
+    assert any(not np.array_equal(x["index"], y["index"]) for x, y in zip(a["rivernet"]["basins"], b["rivernet"]["basins"]))

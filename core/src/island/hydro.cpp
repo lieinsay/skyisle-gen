@@ -487,8 +487,12 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                         if (li >= 1 && li - 1 < static_cast<int>(vl.size())) flith(i, j) = vl[li - 1];
                     }
         }
+        // 切槽与河网输出采用相同供水口径：临时流路不使用尚未出露的凝结补给。
+        GridD channel_q = R.Q;
+        if (local_rain) for (size_t q = 0; q < n; ++q)
+            if (R.stream.v[q] && !R.river.v[q]) channel_q.v[q] = rain_q.v[q];
         R.ch = carve_channels(hh, R.hr, mk, R.lake, R.recv, R.Akm, R.river, R.stream, P_mm, runoff, J.rim_j, J.keel_j, res_m, year_s, c, k == 0,
-                              local_rain ? &R.Q : nullptr, wall.v.empty() ? nullptr : &wall, flith.v.empty() ? nullptr : &flith, J.age_j);
+                              local_rain ? &channel_q : nullptr, wall.v.empty() ? nullptr : &wall, flith.v.empty() ? nullptr : &flith, J.age_j);
         R.cut = GridD(h, w, 0.0);
         R.h_final = GridD(h, w, NaN);
         for (size_t q = 0; q < n; ++q) {

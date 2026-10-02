@@ -283,7 +283,7 @@ function renderSide(){
   const bfR = hy.river_data && hy.river_data.bf_ratio_range;
   $('rivers').innerHTML = rv.length ? `<tr><th>#</th><th>流域</th><th>长</th><th>流量</th><th>宽 / 深（河道）</th><th>下切</th><th>瀑布</th></tr>` + rv.slice(0, 8).map((r, k) =>
       `<tr><td><button class="mini" data-rc="${r.mouth_cell.join(',')}">${k + 1}${['','小','中','大'][r.level]}</button></td><td>${fmt(r.basin_km2, 0)} km²</td><td>${fmt(r.length_km, 0)} km</td><td>${fmt(r.discharge_m3s, 1)} m³/s</td><td>${fmt(r.w_ch_m, 0)} m / ${fmt(r.d_ch_m, 1)} m</td><td>${fmt(r.incision_m, 0)} m</td><td>${fmt(r.waterfall_m, 0)} m</td></tr>`).join('')
-      + `<tr><td colspan="7" class="small">宽 / 深是**河道（平岸）**口径 = 年均流量下的水面宽深（w = 5·Q^0.5、d = 0.35·Q^0.4）× (bf_ratio_channel)^站内指数（0.26 / 0.40）${bfR ? `；**平岸**宽 = 年均 × (平岸/年均)^0.26（站内关系，L&M 1964），本群流域的平岸 / 年均在 ${fmt(bfR[0], 1)}–${fmt(bfR[1], 1)}（即 ×${fmt(Math.pow(bfR[0], 0.26), 2)}–${fmt(Math.pow(bfR[1], 0.26), 2)}），逐点的平岸宽见 rivers.json 的 w_bf_m` : ''}。常年河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
+      + `<tr><td colspan="7" class="small">宽 / 深为参考满槽宽与中心最大深度，与地形切槽一致。参考流量倍数是待校准的工程假设，不能解读为实测洪水重现期。${bfR ? `本年最大日流量 / 年均为 ${fmt(bfR[0],1)}–${fmt(bfR[1],1)}，只作水文统计。` : ''}常驻河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2,1)} km² · 漫滩 ${fmt(hy.floodplain_km2,1)} km² · 最深下切 ${fmt(hy.max_incision_m,0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
     : `<tr><td class="small">无常年河${hy.n_waterfalls ? '（溪涧跌落 ' + hy.n_waterfalls + ' 处）' : ''}</td></tr>`;
   $('rivers').querySelectorAll('button[data-rc]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.rc.split(',').map(Number); flyToCell(i, j, 8); });
   const RS = D.resources;
@@ -466,8 +466,19 @@ function riverSeries(seg, p) {
 }
 function riverNow(seg, p, atDay = day) {
   const series = riverSeries(seg, p), idx = Math.max(0, series[atDay % series.length] || 0);
-  return {q: p[4] * idx, w: p[8] * idx ** (D.rivers.width_exponent || 0.26),
-    d: p[9] * idx ** (D.rivers.depth_exponent || 0.40), wet: p[4] > 0 && idx > 0};
+  const b=D.rivers.width_exponent||0.26, f=D.rivers.depth_exponent||0.40;
+  const q=p[4]*idx, flow=p[5]>0?q/p[5]:0, d=p[7]*flow**f, half=p[6]/2;
+  // Same reference channel and asymmetric overbank section as the game.
+  const bankSlope=0.04, wetHalf=flow<=1?half*flow**b:half+(d-p[7])/bankSlope;
+  const left=Math.min(wetHalf,half+p[17]), right=Math.min(wetHalf,half+p[18]);
+  const sideArea=a=>{
+    if (!(half>0)) return 0;
+    const inner=Math.min(a,half), outer=Math.max(0,a-half), exponent=f/b;
+    return d*inner-p[7]*half*(inner/half)**(exponent+1)/(exponent+1)
+      +(d-p[7])*outer-0.5*bankSlope*outer*outer;
+  };
+  const area=Math.max(0,sideArea(left)+sideArea(right));
+  return {q,w:left+right,d,area,speed:area>0?q/area:0,wet:q>0};
 }
 function riverXY(p) { return [(p[1] + 0.5) / R.step * view.s + view.tx, (p[0] + 0.5) / R.step * view.s + view.ty]; }
 // SOURCE_CURVE_BEGIN：与游戏的 source_curve 同口径，源点和汇流点固定。
@@ -552,9 +563,9 @@ function renderRiverInspector() {
   const {seg,p,k}=selectedRiver, st=riverNow(seg,p), series=riverSeries(seg,p), transient=p[20]===0;
   const b=D.rivers.basins[seg.basin], wetDays=series.filter(x=>x>0).length;
   const rows=[['类型',transient?'临时流水路径':'常驻河'],['当前状态',st.wet?'有水':'断流 · 无水面'],
-    ['当前水面宽',fmt(st.w,3)+' m'],['当前水深',fmt(st.d,3)+' m'],['当前流量',fmt(st.q*1000,3)+' L/s'],
-    ['当前平均流速',fmt(st.w*st.d>0?st.q/(st.w*st.d):0,3)+' m/s'],
-    ['平岸宽 / 深',fmt(p[6],3)+' / '+fmt(p[7],3)+' m'],['年均流量',fmt(p[4]*1000,3)+' L/s'],
+    ['当前水面宽',fmt(st.w,3)+' m'],['当前中心水深',fmt(st.d,3)+' m'],['当前流量',fmt(st.q*1000,3)+' L/s'],
+    ['当前湿断面积',fmt(st.area,4)+' m²'],['当前平均流速',fmt(st.speed,3)+' m/s'],
+    ['参考满槽宽 / 中心深',fmt(p[6],3)+' / '+fmt(p[7],3)+' m'],['年均流量',fmt(p[4]*1000,3)+' L/s'],
     ['上游汇水面积',fmt(p[3],2)+' km²'],['本年有水日',wetDays+' / '+series.length],
     ['供水',transient?'降雨 / 融雪，有限时间汇流':`基流 + 雨雪径流；流域凝结水占比 ${fmt((b?.cond_frac||0)*100,1)}%`]];
   $('riverInspector').innerHTML=`<h3>河段 #${seg.id} · 点 ${k} · 第 ${day} 日</h3><table class="kv">${rows.map(([a,b])=>`<tr><td>${a}</td><td>${b}</td></tr>`).join('')}</table><p class="small">${transient?'褐线表示潜在流路，断流时河槽仍存在。':'常驻供水采用流域基流近似，尚未逐个定位泉眼。'} 拖动日期滑块，数值与地图同步。地图示意线有最小像素宽度，实际宽度以上表为准。</p>`;

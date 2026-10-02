@@ -14,14 +14,14 @@ COLS = ["row", "col", "level", "acc_km2", "q_mean", "q_bf", "w_bf_m", "d_bf_m", 
         "ssc_mgl", "fp_left_m", "fp_right_m", "confine", "flow_regime"]
 NOTE = ("河网（C3）：segments 每段从上游到下游，干流按汇水最大的一支往上追，down = 汇入的段号（−1 = 出口）、join = 汇入处在下游段里的点号；"
         "exit：汇入 / 崖边 / 湖 / 没入地里；basin = 所在流域（basins 的下标，−1 = 其余）。pts 的列见 cols：行列是群栅格的格（格心 = 整数 + 0.5），"
-        "level 0 = 临时流路、1–3 小中大河；q_mean 年均流量（m³/s，按格的 Budyko 径流累计，常驻河含集水核的凝结水，临时路径不含）、q_bf 平岸流量（= 年均 × 所在流域逐日径流指数的年最大）；"
-        "**w_bf_m / d_bf_m 平岸宽与深**（= 年均口径 × (q_bf/q_mean)^站内指数，L&M 1964：宽 0.26、深 0.40；比 w_mean_m 宽 (平岸/年均)^0.26 ≈ 1.5–2 倍）、"
-        "**w_mean_m / d_mean_m 年均流量下的水面宽深**（w = 5·Q^0.5 直接算；屏幕上那条河画的是栅格 terrain.npz 的 w_ch_m / d_ch_m = **河道**，两者差一个假设的 bf_ratio_channel）；surf_m 平岸水面（= 该格 height）、bed_m 河床；slope 河床比降（顺流 500 m）；"
+        "level 0 = 临时流路、1–3 小中大河；q_mean 年均流量（m³/s，常驻河含凝结水，临时路径不含）；q_bf 为参考满槽流量，沿用 bf_ratio_channel 假设，不是年最大日流量或已验证的洪水重现期。"
+        "w_bf_m / d_bf_m 与栅格 w_ch_m / d_ch_m 同一静态断面，深度是中心最大深度；surf_m=bed_m+d_bf_m。"
+        "w_mean_m / d_mean_m 是年均流量工况的宽与中心深度，不是宽深时间序列的年平均；经验式 0.35·Q^0.4 代表 A/W，需按幂函数断面积转换。系数适用性仍待分河型校准。slope 河床比降（顺流 500 m）；"
         "d50_mm 河床质中值粒径（平岸 Shields 数：砾床 0.05、砂床 1；乘上游岩性的粗细）与档 d50（d50_classes）；"
         "planform 平面型（Kleinhans & van den Berg 2011，planform_classes）；ssc_mgl 年均悬沙浓度（BQART，Syvitski & Milliman 2007，按上游的林与已垦）；"
         "fp_left_m / fp_right_m 顺流向左右的谷底宽（到谷坡脚）；confine 限制度（confine_classes）")
 INDEX_NOTE = ("每个河网出口独立汇水；rest 只含无河网坡面。flow_regime=1 的常驻河读取 index，=0 的临时流水读取 event_index。"
-              "两者非零时年均指数=1；当前 Q=q_mean×指数，水宽=w_mean_m×指数^0.26，水深=d_mean_m×指数^0.40。"
+              "两者非零时年均指数=1；当前 Q=q_mean×指数；槽内水宽=w_bf_m×(Q/q_bf)^0.26，中心水深=d_bf_m×(Q/q_bf)^0.40；超过参考满槽水位时需按左右漫滩断面计算。"
               "常驻河沿用降雨汇流候选与岩性基流水库的近似，不代表已经求解局地泉眼。集水核增强既有河的供水，不扩张候选。"
               "临时路径由降雨与融雪驱动，按三倍快流时间常数的有限汇流窗退水，结束后严格为零。"
               "临时路径年均水量不含凝结水；它留在地下，进入常驻河后计入持续供水。当前不模拟玩家改造地形导致的改道。")
@@ -45,7 +45,7 @@ def rivers_doc(g: dict) -> dict:
            "fp_right_m": np.round(N["fp_r"].astype(np.float64), 0), "confine": N["confine"].astype(np.int64),
            "flow_regime": N["flow_regime"].astype(np.int64)}
     # 亚米级流水的水力数据不能先量化到厘米、万分之一立方米；界面只在显示时舍入。
-    for col, key in (("q_mean", "q_mean"), ("q_bf", "q_bf"), ("w_bf_m", "w"), ("d_bf_m", "d"), ("w_mean_m", "w_mean"), ("d_mean_m", "d_mean")):
+    for col, key in (("q_mean", "q_mean"), ("q_bf", "q_bf"), ("w_bf_m", "w"), ("d_bf_m", "d"), ("w_mean_m", "w_mean"), ("d_mean_m", "d_mean"), ("surf_m", "surf"), ("bed_m", "bed")):
         num[col] = np.round(N[key].astype(np.float64), 6)
     cols = [num[k].tolist() for k in COLS]
     rows = [list(r) for r in zip(*cols)]
@@ -73,7 +73,9 @@ def rivers_doc(g: dict) -> dict:
         basins.append(e)
     return {"network_note": NOTE, "cols": COLS, "d50_classes": D50_ZH, "planform_classes": PLANFORM_ZH, "confine_classes": CONFINE_ZH,
             "segments": segs, "falls_note": FALLS_NOTE, "falls": falls, "index_note": INDEX_NOTE, "year": int(g.get("year", 0)), "basins": basins,
-            "flow_regime_classes": ["临时流水路径", "常驻河"], "width_exponent": 0.26, "depth_exponent": 0.40}
+            "flow_regime_classes": ["临时流水路径", "常驻河"], "width_exponent": 0.26, "depth_exponent": 0.40,
+            "geometry_model": "reference-power-section-v1", "depth_convention": "maximum_at_center",
+            "reference_discharge_note": "bf_ratio_channel 的工程假设，非实测平岸洪水或单年最大日流量"}
 
 
 def river_data_summary(g: dict) -> dict:
