@@ -808,6 +808,12 @@ windward_ref_m_per_km = 50.0
 width_a = 5.0                 # 下游关系（跨河、同一重现期，Leopold & Maddock 1953）：w ≈ 5·Q^0.5 m、d ≈ 0.35·Q^0.4 m（Q 以 m³/s 计），**Q 是年均流量**
 width_b = 0.5                 # 这是**年均流量下的水面宽**：5.0 落在实测带 3–5.3 里（泰晤士 Q 66 → 水面宽约 43 m / 平岸 60 m；莱茵巴塞尔 Q 1060 → 约 146 / 200）。
                               # 旧键 width_scale / depth_scale（夸张）C1 删了
+# 宽浅干流标定（2026-10-03）：大流域常驻河逐渐采用另一组断面系数。
+# 这是生成器的河床几何参数，地形切槽与 rivers.json 同算，非显示倍率；不改变流量、降雨和河网资格。
+# 年均水深仍按 depth_c·Q^depth_f；流速由真实 Q / 断面积得到。小支流与临时流路继续用 width_a。
+trunk_width_a = 15.0
+trunk_start_km2 = 80.0
+trunk_full_km2 = 180.0
 at_station_width_b = 0.26     # **站内关系**（同一条河从年均涨到平岸，L&M 1964 的经典值 w ∝ Q^0.26、d ∝ Q^0.40、v ∝ Q^0.34）：
 at_station_depth_f = 0.40     # 平岸宽 = 年均宽 × (平岸/年均)^0.26、平岸深 = 年均深 × (平岸/年均)^0.40（rivers.json 的 w_bf_m / d_bf_m）
                               # ⚠ 别用下游的 0.5 去换算站内（四点五十一）：那会把平岸宽多放大 (平岸/年均)^0.24 ≈ 1.6 倍
@@ -874,7 +880,7 @@ capture_max_frac = 0.2
 #   核强度 = (高出岸缘的山体体积 km³)^(1/3) / core_len_km，夹 core_s_max（大山根深核大，碎的小岛核弱）；
 #   迎风 = 1 + core_windward_gain × clip(山脉尺度的迎风坡 / [island.hydro] windward_ref_m_per_km, −1, 1)；
 #   湿度 = min(1, 局地雨 / core_hum_full_mm)^core_hum_exp（像除湿器：干的群照样干，湿的山更湿，干湿格局不乱）；最多到局地雨的 1 倍
-core_gain = 1.0
+core_gain = 10.0              # 增强已有河的稳定供水；凝结仍受局地雨一倍上限限制，不扩大河网候选
 core_len_km = 10.0
 core_s_max = 1.5
 core_elev_exp = 1.5

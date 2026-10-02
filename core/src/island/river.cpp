@@ -6,6 +6,15 @@
 
 namespace skyisle::island {
 
+double channel_width_a(const Config& c, double acc_km2, bool perennial) {
+    const double small = c.get("hydro.width_a", 5.0);
+    if (!perennial) return small;
+    const double large = c.get("hydro.trunk_width_a", small);
+    const double lo = c.get("hydro.trunk_start_km2", 80.0), hi = c.get("hydro.trunk_full_km2", 180.0);
+    const double t = clip((acc_km2 - lo) / std::max(1e-6, hi - lo), 0.0, 1.0);
+    return small + (large - small) * t * t * (3.0 - 2.0 * t);
+}
+
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
                         const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double runoff, double rim,
                         double keel, double res_m, double year_s, const Config& c, bool /*is_main*/, const GridD* Qin,
@@ -39,7 +48,7 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     // 5.0 落在实测带 3–5.3 里：泰晤士 Q 66 → 水面宽约 43 m（平岸约 60）、莱茵巴塞尔 Q 1060 → 约 146（平岸约 200）。
     // **平岸**宽深在 rivernet 里按站内指数换算（w ∝ Q^0.26、d ∝ Q^0.40，四点五十一）。
     // C1 起没有夸张（旧 width_scale / depth_scale 删了）
-    const double wa = c.get("hydro.width_a"), wb = c.get("hydro.width_b");
+    const double wb = c.get("hydro.width_b");
     const double dc = c.get("hydro.depth_c"), df = c.get("hydro.depth_f");
     const double sm = c.get("hydro.stream_width_mult");
     // 切出来的河道 = **平岸河道**：年均流量下的水面宽深 × (平岸 / 年均)^站内指数（地形阶段只有假设的比值 bf_ratio_channel，
@@ -56,7 +65,7 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     for (size_t k = 0; k < N; ++k) {
         Q[k] = Qin ? Qin->v[k] : Akm.v[k] * 1e6 * (P_mm / 1000.0) * runoff / year_s;
         const double q = std::max(Q[k], 0.0);
-        const double w = wa * np_pow(q, wb) * ch_w;      // 河道（平岸）宽
+        const double w = channel_width_a(c, Akm.v[k], center_r.v[k] != 0) * np_pow(q, wb) * ch_w;
         const double d = dc * np_pow(q, df) * ch_d;      // 河道（平岸）深
         width[k] = center_r.v[k] ? w : (center_s.v[k] ? sm * w : 0.0);
         depth[k] = center_r.v[k] ? d : (center_s.v[k] ? sm * d : 0.0);

@@ -409,6 +409,24 @@ def test_core_gain_increases_supply_without_adding_rivers(small_ctx):
     assert np.nansum(b["runoff_mm"]) > np.nansum(a["runoff_mm"])
 
 
+def test_trunk_width_preserves_small_channels_and_supply(small_ctx, monkeypatch):
+    from copy import deepcopy
+    monkeypatch.setitem(small_ctx.cfg, "island", deepcopy(small_ctx.cfg.get("island", {})))
+    node = _nodes(small_ctx, 1)[0]
+    a = _build(small_ctx, node, sets=["island.hydro.trunk_width_a=5"])
+    largest = float(np.nanmax(a["flowacc_km2"]))
+    lo, hi = largest * .3, largest * .7
+    b = _build(small_ctx, node, sets=["island.hydro.trunk_width_a=15",
+        f"island.hydro.trunk_start_km2={lo}", f"island.hydro.trunk_full_km2={hi}"])
+    for key in ("rain_mm", "runoff_mm", "flowacc_km2", "river", "stream"):
+        assert np.array_equal(a[key], b[key], equal_nan=True), key
+    small = (a["river"] == 0) | (a["flowacc_km2"] <= lo)
+    assert np.array_equal(a["w_ch_m"][small], b["w_ch_m"][small])
+    large = (a["river"] > 0) & (a["flowacc_km2"] >= hi)
+    assert large.any()
+    np.testing.assert_allclose(b["w_ch_m"][large], a["w_ch_m"][large] * 3, rtol=1e-6)
+
+
 def test_river_event_profiles_are_local_and_can_dry(small_ctx):
     from skyisle_gen import island as isl
     from skyisle_gen.island.rivernet import rivers_doc
