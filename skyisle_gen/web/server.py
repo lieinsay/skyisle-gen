@@ -270,8 +270,6 @@ class Handler(BaseHTTPRequestHandler):
         S = json.loads((out / "settlements.json").read_text(encoding="utf-8")) if (out / "settlements.json").exists() else None
         RS = json.loads((out / "resources.json").read_text(encoding="utf-8")) if (out / "resources.json").exists() else None
         RV = json.loads((out / "rivers.json").read_text(encoding="utf-8")) if (out / "rivers.json").exists() else None
-        if RV and "segments" in RV:      # C3 的逐点数据几 MB，调试台只画中心线、瀑布、泉线：段只留个数
-            RV["n_segments"] = len(RV.pop("segments"))
         return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "settlements": S, "resources": RS, "rivers": RV, "island_cfg": ctx.cfg.get("island", {}),
                 "preview_res": f"/api/island/preview?run={rid}&node={node}&res=1&t={int(time.time())}",
                 "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
