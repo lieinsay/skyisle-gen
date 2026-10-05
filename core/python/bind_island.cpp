@@ -10,6 +10,7 @@
 #include "bind_util.hpp"
 #include "skyisle/island/build.hpp"
 #include "skyisle/island/aquifer_balance.hpp"
+#include "skyisle/island/spring_routing.hpp"
 #include "skyisle/island/climate.hpp"
 #include "skyisle/island/generate.hpp"
 #include "skyisle/island/landforms.hpp"
@@ -676,6 +677,35 @@ void bind_island(nb::module_& m) {
     }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "recharge_ms"_a, "land"_a,
        "previous_head"_a, "specific_yield"_a, "cell_m"_a, "dt_s"_a,
        "max_iterations"_a = 5000, "relative_tolerance"_a = 1e-7);
+    m.def("step_spring_routing", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
+                                    ArrD2 rain, ArrD2 core, ArrD2 fraction, ArrB2 land,
+                                    nb::ndarray<const int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> receiver,
+                                    ArrD2 previous, ArrD2 specific_yield,
+                                    double cell_m, double dt_s, int max_iterations,
+                                    double relative_tolerance) {
+        const auto top = grid_from(surface), base = grid_from(bottom), km = grid_from(conductivity);
+        const auto rain_grid = grid_from(rain), core_grid = grid_from(core), bf = grid_from(fraction);
+        const auto mask = mask_from(land);
+        const std::vector<int64_t> recv(receiver.data(), receiver.data()+receiver.size());
+        const auto old = grid_from(previous), sy = grid_from(specific_yield);
+        SpringRoutingStep result;
+        {
+            nb::gil_scoped_release release;
+            result = step_spring_routing(top, base, km, rain_grid, core_grid, bf, mask,
+                                        recv, old, sy, cell_m, dt_s, max_iterations, relative_tolerance);
+        }
+        nb::dict d;
+        d["aquifer"] = aquifer_dict(result.aquifer);
+        d["local_surface_m3s"] = grid_np(std::move(result.local_surface_m3s));
+        d["river_m3s"] = grid_np(std::move(result.river_m3s));
+        d["rain_input_m3s"] = result.rain_input_m3s;
+        d["core_input_m3s"] = result.core_input_m3s;
+        d["surface_outlet_m3s"] = result.surface_outlet_m3s;
+        return d;
+    }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "rain_runoff_ms"_a,
+       "core_ms"_a, "recharge_fraction"_a, "land"_a, "receiver"_a, "previous_head"_a,
+       "specific_yield"_a, "cell_m"_a, "dt_s"_a, "max_iterations"_a = 5000,
+       "relative_tolerance"_a = 1e-7);
     nb::class_<PlanetView>(m, "Planet", "行星层的网格与全体群（make_planet 转好，按 run 缓存）");
     nb::class_<Config>(m, "Config", "展平的配置：[island] 段或行星层的 shared / skeleton / s01–s04（make_config 转好）");
     m.def("make_planet", [](nb::dict planet) { return planet_from(planet); });
