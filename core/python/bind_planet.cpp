@@ -334,6 +334,25 @@ void bind_planet(nb::module_& m) {
         return d;
     });
 
+    // Separate diagnostic product: old climate caches do not contain this
+    // information. Return empty rather than reconstructing it from normalized q.
+    m.def("climate_moisture_arrays", [](const Climate& C) {
+        nb::dict d;
+        const auto& b = C.moisture;
+        if (!b.seasons) return d;
+        const size_t S = static_cast<size_t>(b.seasons), H = b.ax.nlat, W = b.ax.nlon;
+        d["lats"] = arr(b.ax.lats);
+        d["lons"] = arr(b.ax.lons);
+        d["model_to_column_mm"] = b.model_to_column_mm;
+        d["year_days_86400s"] = b.year_days;
+        for (auto [key, values] : std::initializer_list<std::pair<const char*, const std::vector<double>*>>{
+                 {"water_column_mm", &b.column_mm}, {"rain_flux_mm_day", &b.rain_mm_day},
+                 {"source_flux_mm_day", &b.source_mm_day}, {"wind_u_ms", &b.u_ms},
+                 {"wind_v_ms", &b.v_ms}, {"rain_rate_per_day", &b.rain_rate_day}})
+            d[key] = arr3(*values, S, H, W);
+        return d;
+    });
+
     // ---------------------------------------------------------------- 从产物读回（npz 的数组 dict / json 的 dict）
     m.def("planet_from_json", [](nb::dict planet) { return planet_from_py(planet); });
     m.def("winds_from", [](nb::dict wind, nb::dict bands) {

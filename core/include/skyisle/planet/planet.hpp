@@ -158,6 +158,15 @@ Islands stage3(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
 
 // ---------------------------------------------------------------- ④ 局地风与气候（s04_climate.py、localwind.py、moisture.py、skeleton.season_range）
 extern const char* const EDGE_KEYS[8];   // eq_n trades_n calm_n west_n eq_s trades_s calm_s west_s
+// Native moisture grid before display normalization/clipping. Units follow the
+// existing precipitation calibration; these are model estimates, not measured
+// humidity, cloud liquid water, or water that a mountain can necessarily collect.
+struct MoistureBudget {
+    Axes ax;
+    int seasons = 0;
+    double model_to_column_mm = 0.0, year_days = 0.0;
+    std::vector<double> column_mm, rain_mm_day, source_mm_day, u_ms, v_ms, rain_rate_day;
+};
 struct Climate {
     Axes ax;
     // wind_local.npz（浮点存 float32）
@@ -180,6 +189,7 @@ struct Climate {
     // 摘要（水汽模型）
     double dt_s = 0;
     int64_t n_steps = 0;
+    MoistureBudget moisture;
 };
 // skeleton.season_range：全年温差 = 2 × 日照年变化一阶谐波 / λ × 振幅保留（lat 与 cont 等长）
 std::vector<double> season_range(const std::vector<double>& lat_deg, const std::vector<double>& cont, double tilt_deg, double year_days,

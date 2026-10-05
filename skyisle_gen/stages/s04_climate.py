@@ -21,6 +21,7 @@ def run(ctx):
     Cl = cc.planet_stage4(cc.make_config(planet_config(ctx.cfg)), int(ctx.seed), part(ctx, 1), part(ctx, 2), part(ctx, 3))
     put_part(ctx, 4, Cl)
     R = cc.climate_arrays(Cl)
+    R["water_budget"] = cc.climate_moisture_arrays(Cl)
     R["moisture"] = {"dt_s": round(R.pop("dt_s"), 1), "n_steps": int(R.pop("n_steps"))}
     return _write(ctx, R)
 
@@ -28,6 +29,11 @@ def run(ctx):
 def _write(ctx, R: dict) -> dict:
     """写 wind_local / band_local / climate_grid / climate_islands 四个 npz、出摘要（R 里的浮点是双精度原值，这里照旧转 float32）。"""
     f32 = np.float32
+    # Native moisture-solver grid and common physical-unit calibration. Keep
+    # doubles for budget diagnostics, separately from display-normalized q.
+    # This product is model-derived; it is not RH or a collectable-water quota.
+    if R.get("water_budget"):
+        ctx.save_npz(4, "moisture_budget", **R["water_budget"])
     ctx.save_npz(4, "wind_local", lats=R["lats"], lons=R["lons"],
                  u=R["u"].astype(f32), v=R["v"].astype(f32),
                  u_bg=R["u_bg"].astype(f32), v_bg=R["v_bg"].astype(f32),

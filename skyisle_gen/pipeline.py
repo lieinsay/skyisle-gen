@@ -37,7 +37,7 @@ STAGE_VERSIONS = {i: "1" for i, _ in STAGES}
 STAGE_VERSIONS[1] = "3"  # 骨架第二版：months_per_season 写进 calendar；零点与垂直结构写进 vertical（PLAN-NATURE A1）
 STAGE_VERSIONS[3] = "11"  # 陆地 = 势力范围 × 陆地占比（R8）；可用地率（R9）；主岛/墙高（第三批 1）；板块密度与岛龄（第三批 2）；纬度密度剖面 + D 纬度域（骨架第二版）
 STAGE_VERSIONS[2] = "3"  # 费雷尔 / 极地环流的经向分量；wind_profile / g_vortex 拆成函数供 ④ 复用（第三批 3）；G 锚定带界可配（骨架第二版）
-STAGE_VERSIONS[4] = "9"  # ②b 岛对风的扰动与局部带界（第三批 3）；上风水汽追踪降水（第三批 4）；河流（第三批 1）；风暴按带界分幅度 + 季节强度场（骨架第二版）；摘要加岛面气压（A1）；四季各解一遍水汽 + 逆温层抬升率 + 岛群季风（A2）；毫米换算与降水线（A3）
+STAGE_VERSIONS[4] = "10"  # v9 气候规则不变；新增原生水汽格的分季节水柱、通量和共同单位换算（moisture_budget.npz）
 STAGE_VERSIONS[5] = "5"  # perm_no_g；D 的 Φ 域与 s03 对齐；Φ 改读局部带界（第三批 3）；lat_band 障碍 + D 纬度域可配（骨架第二版）
 STAGE_VERSIONS[6] = "5"  # betweenness_sources；cost_no_g；源权重改用集雨容量；读 ④ 扰动风 + 可靠局地风（第三批 3）
 STAGE_VERSIONS[7] = "6"  # 适宜度含岛群陆地规模项；中心窗读局部带界（第三批 3）；次级极大每圈保底 secondary_per_circle；中心窗按纬度区间 + 谷物冬温门槛（骨架第二版）；降水项改按毫米的驼峰（A4）
