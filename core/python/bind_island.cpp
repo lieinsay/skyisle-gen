@@ -83,6 +83,7 @@ NodeInputs inp_from(const nb::dict& d) {
     opt("people_per_arable_km2", x.people_per_arable_km2);
     opt("precip_mm_ref", x.precip_mm_ref);
     if (d.contains("precip_share") && !d["precip_share"].is_none()) x.precip_share = nb::cast<std::vector<double>>(d["precip_share"]);
+    if (d.contains("water_column_mm") && !d["water_column_mm"].is_none()) x.water_column_mm = nb::cast<std::vector<double>>(d["water_column_mm"]);
     if (d.contains("pop") && !d["pop"].is_none()) x.pop = dget(d, "pop");
     if (d.contains("capital") && !d["capital"].is_none()) {
         nb::dict cap = nb::cast<nb::dict>(d["capital"]);

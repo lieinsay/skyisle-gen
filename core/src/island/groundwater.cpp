@@ -166,8 +166,25 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
     const int n = static_cast<int>(g.islands.size());
     GridD out(H, W, 0.0);
     core_s.assign(n, 0.0);
+    // Opt-in research model, no production default. The time includes unresolved
+    // vertical contact / transport; it is a world-setting input, NOT a measured
+    // dehumidifier efficiency or a value inferred from desired river widths.
+    const double exchange_days = c.get("water.core_exchange_days", 0.0);
+    if (!std::isfinite(exchange_days) || exchange_days < 0.0)
+        throw std::invalid_argument("water.core_exchange_days must be finite and nonnegative");
+    double column_mm = 0.0;
+    if (exchange_days > 0.0) {
+        if (g.inp.water_column_mm.empty())
+            throw std::invalid_argument("balanced core requires physical water_column_mm; old climate cache has no column budget");
+        for (double q : g.inp.water_column_mm) {
+            if (!std::isfinite(q) || q < 0.0)
+                throw std::invalid_argument("water_column_mm must be finite and nonnegative");
+            column_mm += q;
+        }
+        column_mm /= static_cast<double>(g.inp.water_column_mm.size());
+    }
     const double gain = wc(c, "core_gain");
-    if (!(gain > 0.0)) return out;
+    if (!(gain > 0.0) && !(exchange_days > 0.0)) return out;
     const double cell_km2 = g.res_km * g.res_km;
     // 核的强度跟山走：高出岸缘的山体（km³）的立方根 / core_len_km——大山根深、核大；碎的小岛核弱（spec 13 第八节第 6 条）
     std::vector<double> vol(n, 0.0);
@@ -186,6 +203,17 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
         if (id < 0) continue;
         const IslandRec& J = g.islands[id];
         const double e = clip((g.height.v[k] - J.rim_j) / std::max(1.0, J.peak_j - J.rim_j), 0.0, 1.0);
+        if (exchange_days > 0.0) {
+            // Prescribed stable background maintained by matching ocean
+            // evaporation (user setting, 2026-10-05). Equal-duration seasons.
+            // Keep the existing mountain footprint and annual rain ceiling for
+            // this isolated comparison; neither is a physical law. No fog gate,
+            // rainfall-as-humidity factor, windward multiplier or legacy gain.
+            const double annual = column_mm / exchange_days * (g.year_s / 86400.0)
+                                * core_s[id] * np_pow(e, eexp);
+            out.v[k] = std::min(g.rain.v[k], annual);
+            continue;
+        }
         const double wf = Gw.v.empty() ? 1.0 : clip(1.0 + wg * clip(Gw.v[k] / gref, -1.0, 1.0), 0.0, 2.0);
         const double P = g.rain.v[k];
         const double hum = np_pow(clip(P / hfull, 0.0, 1.0), hexp);

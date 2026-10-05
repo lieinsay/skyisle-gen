@@ -39,6 +39,9 @@ struct NodeInputs {
     double precip = 0, temp_sea = 0, lapse_c_per_km = 6.0, arable_frac = 0, river_size = 0;
     double precip_mm_ref = 4000.0;   // 相对降水 1 的毫米数（④ 的 precip_mm_ref，A3 起线性换算）；arable_frac 是降水线之后的（④ 的 arable_frac_eff）
     std::vector<double> precip_share;   // ④ 各季降水占全年的份额（A2 起；空 = 旧产物，四季降水按带界摆动取样）
+    // Model transported column, mm, equal-duration seasons. Empty in old
+    // caches; never reconstruct from normalized display humidity or rainfall.
+    std::vector<double> water_column_mm;
     bool has_river = false;
     // 气候用（④ 的岛上年均值）
     double temp = 0, storm = 0, window = 0, season_range = 0, season_range_sea = 0, temp_winter = 0, temp_summer = 0;

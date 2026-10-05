@@ -489,6 +489,7 @@ void bind_planet(nb::module_& m) {
         d["temp_summer"] = x.temp_summer;
         d["precip_mm_ref"] = x.precip_mm_ref;
         d["precip_share"] = x.precip_share.empty() ? nb::none() : nb::cast(x.precip_share);
+        d["water_column_mm"] = x.water_column_mm.empty() ? nb::none() : nb::cast(x.water_column_mm);
         return d;
     });
 
