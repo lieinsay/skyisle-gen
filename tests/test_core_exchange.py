@@ -29,11 +29,12 @@ def case():
     return inp, core.planet_view(P, I, C, pc), cfg['island']
 
 
-def run(case, column=None, tau=0., gain=None):
+def run(case, column=None, tau=0., gain=None, footprint=0.):
     inp, planet, cfg = case
     inp, cfg = copy.deepcopy(inp), copy.deepcopy(cfg)
     inp['water_column_mm'] = column
     cfg['water']['core_exchange_days'] = tau
+    cfg['water']['core_footprint_scale'] = footprint
     if gain is not None:
         cfg['water']['core_gain'] = gain
     return core.generate(inp, planet, flat_config(cfg), steps=2, res_m=300., threads=2)
@@ -70,3 +71,39 @@ def test_zero_water_ceiling_and_legacy(case):
 def test_missing_or_invalid_inputs_fail(case, column, tau):
     with pytest.raises(ValueError):
         run(case, column, tau)
+
+
+def test_footprint_has_finite_extent_and_source_ledger(case):
+    a = run(case, [10.]*4, 4., footprint=1.)
+    h, t = a['hydro'], a['terrain']
+    ids = t['island_id']
+    ri, cj = np.indices(ids.shape)
+    x = t['origin_x']+(cj+.5)*t['res_km']
+    y = t['origin_y']-(ri+.5)*t['res_km']
+    within = np.zeros(ids.shape, dtype=bool)
+    expected_volume = 0.
+    for s in h['core_water_sources']:
+        within |= (ids == s['island']) & ((x-s['x_km'])**2+(y-s['y_km'])**2 < s['radius_km']**2)
+        expected_volume += s['condense_m3s']
+    assert np.any(h['condense_mm'] > 0)
+    assert not np.any(h['condense_mm'][~within])
+    volume = h['condense_mm'].astype(float).sum()*t['res_km']**2*1000/h['year_s']
+    assert volume == pytest.approx(expected_volume, rel=1e-7)
+
+
+def test_footprint_has_no_rain_cap_or_legacy_gain(case):
+    # Large test column proves removal of the rain ceiling; not a proposal for
+    # production humidity or core capability.
+    a = run(case, [100.]*4, 4., footprint=2.)['hydro']
+    b = run(case, [200.]*4, 8., gain=100., footprint=2.)['hydro']
+    assert np.any(a['condense_mm'] > a['rain_mm'])
+    np.testing.assert_array_equal(a['condense_mm'], b['condense_mm'])
+    np.testing.assert_array_equal(a['rain_mm'], b['rain_mm'])
+    zero = run(case, [0.]*4, 4., footprint=2.)['hydro']
+    assert not np.any(zero['condense_mm'])
+
+
+@pytest.mark.parametrize('tau,scale', [(0., 1.), (4., -1.), (4., float('nan'))])
+def test_invalid_footprint_inputs(case, tau, scale):
+    with pytest.raises(ValueError):
+        run(case, [1.]*4, tau, footprint=scale)

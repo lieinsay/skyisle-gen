@@ -160,16 +160,21 @@ GridD water_table(const Group& g, const Config& c, const Mask& land, double min_
 
 }  // namespace
 
-GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector<double>& core_s) {
+GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector<double>& core_s,
+                   std::vector<CoreWaterSource>* sources) {
     const int H = g.H, W = g.W;
     const size_t N = static_cast<size_t>(H) * W;
     const int n = static_cast<int>(g.islands.size());
     GridD out(H, W, 0.0);
     core_s.assign(n, 0.0);
+    if (sources) sources->clear();
     // Opt-in research model, no production default. The time includes unresolved
     // vertical contact / transport; it is a world-setting input, NOT a measured
     // dehumidifier efficiency or a value inferred from desired river widths.
     const double exchange_days = c.get("water.core_exchange_days", 0.0);
+    const double footprint_scale = c.get("water.core_footprint_scale", 0.0);
+    if (!std::isfinite(footprint_scale) || footprint_scale < 0 || (footprint_scale > 0 && !(exchange_days > 0)))
+        throw std::invalid_argument("core footprint requires a positive exchange time and finite nonnegative scale");
     if (!std::isfinite(exchange_days) || exchange_days < 0.0)
         throw std::invalid_argument("water.core_exchange_days must be finite and nonnegative");
     double column_mm = 0.0;
@@ -195,6 +200,63 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
     }
     const double lref = wc(c, "core_len_km"), smax = wc(c, "core_s_max");
     for (int k = 0; k < n; ++k) core_s[k] = clip(std::cbrt(vol[k]) / lref, 0.0, smax);
+    if (footprint_scale > 0) {
+        // User-confirmed setting: source location/size/range, no mountain-top
+        // elevation gate and no rainfall ceiling. Kernel shape, range scale,
+        // mountain-load proxy and exchange time are explicit model assumptions.
+        // A compact smooth footprint avoids infinite weak supply everywhere.
+        if (!(std::isfinite(lref) && lref > 0 && std::isfinite(smax) && smax > 0))
+            throw std::invalid_argument("invalid core structural strength scale");
+        std::vector<CoreWaterSource> all;
+        std::vector<std::vector<size_t>> by_island(n);
+        std::vector<double> vx(n, 0.0), vy(n, 0.0);
+        for (int i = 0; i < H; ++i) for (int j = 0; j < W; ++j) {
+            const int id = g.island_id(i, j);
+            if (id < 0) continue;
+            const double v = std::max(0.0, g.height(i, j)-g.islands[id].rim_j)*cell_km2/1000.0;
+            vx[id] += v*(g.origin_x+(j+0.5)*g.res_km);
+            vy[id] += v*(g.origin_y-(i+0.5)*g.res_km);
+        }
+        auto add = [&](int id, double x, double y, double volume) {
+            if (!(volume > 0)) return;
+            const double length = std::cbrt(volume);
+            CoreWaterSource s;
+            s.island = id; s.x_km = x; s.y_km = y; s.mountain_volume_km3 = volume;
+            s.radius_km = footprint_scale*length;
+            s.strength = std::min(smax, length/lref);
+            by_island[id].push_back(all.size());
+            all.push_back(s);
+        };
+        for (int id = 0; id < n; ++id) {
+            if (!(vol[id] > 0)) continue;
+            const auto& J = g.islands[id];
+            if (J.cores.empty()) add(id, vx[id]/vol[id], vy[id]/vol[id], vol[id]);
+            else {
+                double total = 0;
+                for (const auto& core : J.cores) total += std::max(0.0, core.load);
+                if (!(total > 0)) throw std::invalid_argument("multicore supply lacks positive mountain loads");
+                for (const auto& core : J.cores)
+                    add(id, J.gcx+core.load_x, J.gcy+core.load_y, vol[id]*std::max(0.0, core.load)/total);
+            }
+        }
+        const double annual_mm = column_mm/exchange_days*(g.year_s/86400.0);
+        for (int i = 0; i < H; ++i) for (int j = 0; j < W; ++j) {
+            const int id = g.island_id(i, j);
+            if (id < 0) continue;
+            const double x = g.origin_x+(j+0.5)*g.res_km, y = g.origin_y-(i+0.5)*g.res_km;
+            for (size_t s : by_island[id]) {
+                auto& source = all[s];
+                const double dx = x-source.x_km, dy = y-source.y_km;
+                const double u = (dx*dx+dy*dy)/(source.radius_km*source.radius_km);
+                if (u >= 1) continue;
+                const double mm = annual_mm*source.strength*(1-u)*(1-u);
+                out(i, j) += mm;
+                source.condense_m3s += mm*cell_km2*1000.0/g.year_s;
+            }
+        }
+        if (sources) *sources = std::move(all);
+        return out;
+    }
     // 落在核山的迎风高处（凝结是气流被山逼着抬升、贴着林子与岩面过去时截下来的）；跟着湿度走：像除湿器，空气干就凝得少
     const double eexp = wc(c, "core_elev_exp"), wg = wc(c, "core_windward_gain"), hfull = wc(c, "core_hum_full_mm"), hexp = wc(c, "core_hum_exp");
     const double gref = c.get("hydro.windward_ref_m_per_km");

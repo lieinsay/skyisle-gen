@@ -104,6 +104,14 @@ struct CoreRec {
     double peak = 0, load = 0, load_x = 0, load_y = 0, mean_above = 0;
 };
 
+// Explicit candidate supply footprint. Mountain load is a proxy for core size,
+// not a measured volume of magical material. Coordinates are group km.
+struct CoreWaterSource {
+    int island = 0;
+    double x_km = 0, y_km = 0, mountain_volume_km3 = 0;
+    double radius_km = 0, strength = 0, condense_m3s = 0;
+};
+
 struct IslandRec {
     int id = 0;
     std::vector<CoreRec> cores;          // 多核嵌合的岛才有（P4）
@@ -362,6 +370,7 @@ struct Group {
     Grid<uint8_t> river_water;      // 河宽过一格、在栅格上记成水的河道格（C1；其余河道格的地表是岸上的）
     GridD condense;                 // 集水核的凝结水（mm/年，C4；只进水账：runoff 已含它，rain 不含）
     std::vector<double> core_s;     // 各岛集水核的强度（C4，跟山走）
+    std::vector<CoreWaterSource> core_water_sources; // Explicit footprint mode only.
     Grid<uint8_t> cloud_forest;     // 云雾林（C4：林地里凝结水多的格）
     GridD bfi, recharge, recharge_acc;   // 地下水（C5）：基流比例（按岩性）、补给（mm）、顺流向累计的补给（mm·km²；河道格 = 河的基流）
     GridD wt;                            // 水位面（潜水面，m，零点口径；B，四点四十九）：虚空 NaN，陆地格 = 水位（≤ 地表、≥ 骨架顶面 + 最小含水厚）

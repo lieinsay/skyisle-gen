@@ -289,7 +289,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         g.runoff_ratio = ps > 0 ? rs / ps : 0.0;
     }
     // 集水核（C4，spec 13 第八节）：凝结水只进水账——渗进岩层，从泉与溪流出来，河的流量变大、雨量不变；runoff 含它，rain 与 runoff_ratio 不含
-    g.condense = condensation(g, Gw, c, g.core_s);
+    g.condense = condensation(g, Gw, c, g.core_s, &g.core_water_sources);
     for (size_t k = 0; k < N; ++k) g.runoff.v[k] += g.condense.v[k];
     const double runoff = g.runoff_ratio;
     const double rq = 16.0;   // 径流加权汇流的量子（1/16 mm）：权重取整后求和与次序无关

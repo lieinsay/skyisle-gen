@@ -350,6 +350,19 @@ nb::dict hydro_dict(Group& g) {
         d["condense_mm"] = f32_np(g.condense);
         d["core_s"] = to_np(std::vector<double>(g.core_s), {g.core_s.size()});
     }
+    if (!g.core_water_sources.empty()) {
+        nb::list sources;
+        for (const auto& source : g.core_water_sources) {
+            nb::dict s;
+            s["island"] = source.island;
+            s["x_km"] = source.x_km; s["y_km"] = source.y_km;
+            s["mountain_volume_km3"] = source.mountain_volume_km3;
+            s["radius_km"] = source.radius_km; s["strength"] = source.strength;
+            s["condense_m3s"] = source.condense_m3s;
+            sources.append(s);
+        }
+        d["core_water_sources"] = sources;
+    }
     if (!g.cloud_forest.v.empty()) d["cloud_forest"] = mask_np(Mask(g.cloud_forest));
     if (!g.recharge.v.empty()) {
         d["bfi"] = f32_np(g.bfi);
@@ -869,7 +882,19 @@ void bind_island(nb::module_& m) {
             r.age_j = dget(e, "age");
             // 谷收拢（P4）看岛龄档与是不是多核岛：新岛 × capture_young、多核岛不收（多核的核在这里只要「有没有」）
             if (e.contains("young") && nb::cast<bool>(e["young"])) r.kind = YOUNG;
-            if (e.contains("multicore") && nb::cast<bool>(e["multicore"])) r.cores.resize(1);
+            if (e.contains("cores")) {
+                const auto gc = nb::cast<std::vector<double>>(e["gc"]);
+                if (gc.size() != 2) throw std::invalid_argument("invalid core coordinate frame");
+                r.gcx = gc[0]; r.gcy = gc[1];
+                for (nb::handle item : nb::cast<nb::list>(e["cores"])) {
+                    const auto core = nb::cast<nb::dict>(item);
+                    const auto xy = nb::cast<std::vector<double>>(core["load_xy"]);
+                    if (xy.size() != 2) throw std::invalid_argument("invalid core load center");
+                    CoreRec cr;
+                    cr.load = dget(core, "load"); cr.load_x = xy[0]; cr.load_y = xy[1];
+                    r.cores.push_back(cr);
+                }
+            } else if (e.contains("multicore") && nb::cast<bool>(e["multicore"])) r.cores.resize(1);
             if (e.contains("strat") && !e["strat"].is_none()) {   // B2 岩层（build_terrain 交出来的原数）
                 nb::dict st = nb::cast<nb::dict>(e["strat"]);
                 r.strat.on = true;

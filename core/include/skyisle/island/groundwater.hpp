@@ -16,7 +16,8 @@ namespace skyisle::island {
 // Research opt-in: water.core_exchange_days > 0 uses inp.water_column_mm and a
 // prescribed balanced ocean source; requires explicit physical inputs. Existing
 // default remains unchanged. See DESIGN-NOTES 2026-10-05 for unvalidated terms.
-GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector<double>& core_s);
+GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector<double>& core_s,
+                   std::vector<CoreWaterSource>* sources = nullptr);
 
 // C5：含水层。水系、岩性之后调：各格的基流比例（按出露岩性）、补给（= 雨的径流 × 基流比例 + 凝结水）、
 // 顺流向累计的补给（河道格 = 河的基流）、崖壁泉线（没进河道、从岸边走出的地下水，按段合起来）
