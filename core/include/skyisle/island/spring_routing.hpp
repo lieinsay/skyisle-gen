@@ -4,6 +4,21 @@
 
 namespace skyisle::island {
 
+struct SpringRainStep {
+    GridD snowpack_mm, liquid_runoff_ms;
+    double precipitation_m3 = 0, snow_storage_change_m3 = 0;
+    double runoff_m3 = 0, nonrunoff_m3 = 0;
+};
+
+// Existing degree-day snow and annual Budyko yield fraction, applied to actual
+// daily weather without rescaling the year's total to the climate mean. The
+// nonrunoff term is a bulk loss estimate, not a resolved daily soil/ET model.
+SpringRainStep spring_rain_step(const GridD& precipitation_scale,
+    const GridD& runoff_fraction, const GridD& temperature_offset_c,
+    const GridD& previous_snow_mm, const Mask& land,
+    double precipitation_mm, double temperature_c, double cell_m, double dt_s,
+    double snow_t_c, double melt_t_c, double degree_day_mm);
+
 struct SpringRoutingStep {
     AquiferBalance aquifer;
     GridD local_surface_m3s, river_m3s;

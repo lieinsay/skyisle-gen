@@ -690,6 +690,29 @@ void bind_island(nb::module_& m) {
     }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "recharge_ms"_a, "land"_a,
        "previous_head"_a, "specific_yield"_a, "cell_m"_a, "dt_s"_a,
        "max_iterations"_a = 5000, "relative_tolerance"_a = 1e-7);
+    m.def("spring_rain_step", [](ArrD2 pscale, ArrD2 fraction, ArrD2 toffset,
+                                 ArrD2 snow, ArrB2 land, double precipitation_mm,
+                                 double temperature_c, double cell_m, double dt_s,
+                                 double snow_t_c, double melt_t_c, double degree_day_mm) {
+        const auto p = grid_from(pscale), f = grid_from(fraction), t = grid_from(toffset), s = grid_from(snow);
+        const auto mask = mask_from(land);
+        SpringRainStep r;
+        {
+            nb::gil_scoped_release release;
+            r = spring_rain_step(p, f, t, s, mask, precipitation_mm, temperature_c,
+                                 cell_m, dt_s, snow_t_c, melt_t_c, degree_day_mm);
+        }
+        nb::dict d;
+        d["snowpack_mm"] = grid_np(std::move(r.snowpack_mm));
+        d["liquid_runoff_ms"] = grid_np(std::move(r.liquid_runoff_ms));
+        d["precipitation_m3"] = r.precipitation_m3;
+        d["snow_storage_change_m3"] = r.snow_storage_change_m3;
+        d["runoff_m3"] = r.runoff_m3;
+        d["nonrunoff_m3"] = r.nonrunoff_m3;
+        return d;
+    }, "precipitation_scale"_a, "runoff_fraction"_a, "temperature_offset_c"_a,
+       "previous_snow_mm"_a, "land"_a, "precipitation_mm"_a, "temperature_c"_a,
+       "cell_m"_a, "dt_s"_a, "snow_t_c"_a, "melt_t_c"_a, "degree_day_mm"_a);
     m.def("step_spring_routing", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
                                     ArrD2 rain, ArrD2 core, ArrD2 fraction, ArrB2 land,
                                     nb::ndarray<const int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> receiver,
