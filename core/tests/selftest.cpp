@@ -7,6 +7,7 @@
 
 #include "skyisle/flow.hpp"
 #include "skyisle/grid.hpp"
+#include "skyisle/island/coast.hpp"
 #include "skyisle/rng.hpp"
 #include "skyisle/town/contour.hpp"
 #include "skyisle/town/geom.hpp"
@@ -193,6 +194,18 @@ int main() {
         for (int j = 0; j < W; ++j) ramp(20, j) = std::nanf("");   // 横着一行 NaN：竖线断成两段
         CHECK(iso_lines(s, ramp, 20.5, 1, c0, 100.0).size() == 2);
         CHECK(iso_lines(s, cone, 10.0, 1, c0, 5.0).empty());      // 半径外不看
+    }
+    {
+        // 非正方形格网与偏离对角线的岸线，防止行列互换被对称图形掩盖。
+        GridD phi(5, 9, 0.0);
+        for (int axis = 0; axis < 2; ++axis) {
+            for (int i = 0; i < phi.H; ++i)
+                for (int j = 0; j < phi.W; ++j)
+                    phi(i, j) = (axis == 0 ? j - 5.25 : i - 1.75);
+            const auto distance = island::coast_distance(phi, 20.0);
+            for (size_t k = 0; k < phi.size(); ++k)
+                CHECK(std::fabs(distance.v[k] - phi.v[k] * 20.0) < 1e-9);
+        }
     }
     if (fails) {
         std::printf("%d 项失败\n", fails);
