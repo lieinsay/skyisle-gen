@@ -25,6 +25,14 @@ struct SpringRoutingStep {
     double rain_input_m3s = 0, core_input_m3s = 0, surface_outlet_m3s = 0;
 };
 
+struct SurfaceRoutingResult {
+    GridD river_m3s;
+    double input_m3s = 0, outlet_m3s = 0;
+};
+
+SurfaceRoutingResult route_surface_water(const GridD& local_m3s, const Mask& land,
+                                         const std::vector<int64_t>& receiver);
+
 // Rain runoff is the net liquid yield after evapotranspiration/snow accounting.
 // The recharge fraction partitions it; core water enters the aquifer only.
 // Aquifer surface emergence joins D8 flow once; coastal groundwater leaves the

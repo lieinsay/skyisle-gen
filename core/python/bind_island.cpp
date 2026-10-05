@@ -10,6 +10,7 @@
 #include "bind_util.hpp"
 #include "skyisle/island/build.hpp"
 #include "skyisle/island/aquifer_balance.hpp"
+#include "skyisle/island/layered_aquifer.hpp"
 #include "skyisle/island/spring_routing.hpp"
 #include "skyisle/island/climate.hpp"
 #include "skyisle/island/generate.hpp"
@@ -658,7 +659,81 @@ nb::dict aquifer_dict(const AquiferBalance& result) {
     return d;
 }
 
+namespace {
+nb::dict layered_aquifer_dict(const LayeredAquiferResult& r) {
+    nb::dict out;
+    out["head_m"] = to_np(std::vector<double>(r.head_m), {r.head_m.size()});
+    out["residual_m3s"] = to_np(std::vector<double>(r.residual_m3s), {r.residual_m3s.size()});
+    out["surface_m3s"] = grid_np(GridD(r.surface_m3s));
+    out["coast_m3s"] = grid_np(GridD(r.coast_m3s));
+    out["storage_change_m3"] = grid_np(GridD(r.storage_change_m3));
+    out["converged"] = r.converged; out["iterations"] = r.iterations;
+    out["input_m3s"] = r.input_m3s; out["output_m3s"] = r.output_m3s;
+    out["total_storage_change_m3"] = r.total_storage_change_m3;
+    out["absolute_residual_m3s"] = r.absolute_residual_m3s;
+    return out;
+}
+}
+
 void bind_island(nb::module_& m) {
+    m.def("route_surface_water", [](ArrD2 local, ArrB2 land, nb::ndarray<const int64_t, nb::c_contig, nb::device::cpu> receiver) {
+        const auto supply = grid_from(local); const auto mask = mask_from(land);
+        const std::vector<int64_t> recv(receiver.data(), receiver.data()+receiver.size());
+        SurfaceRoutingResult r;
+        { nb::gil_scoped_release release; r = route_surface_water(supply, mask, recv); }
+        nb::dict out; out["river_m3s"] = grid_np(std::move(r.river_m3s));
+        out["input_m3s"] = r.input_m3s; out["outlet_m3s"] = r.outlet_m3s; return out;
+    }, "local_m3s"_a, "land"_a, "receiver"_a);
+    nb::class_<LayeredAquifer>(m, "LayeredAquifer")
+        .def_prop_ro("node_cells", &LayeredAquifer::node_cells)
+        .def_prop_ro("node_bottoms", &LayeredAquifer::node_bottoms)
+        .def_prop_ro("node_tops", &LayeredAquifer::node_tops)
+        .def_prop_ro("node_lithologies", &LayeredAquifer::node_lithologies)
+        .def("solve", [](const LayeredAquifer& model, ArrD2 recharge, int count, double tolerance) {
+            const auto r = grid_from(recharge);
+            LayeredAquiferResult result;
+            { nb::gil_scoped_release release; result = model.solve(r, count, tolerance); }
+            return layered_aquifer_dict(result);
+        }, "recharge_ms"_a, "max_iterations"_a = 10000, "relative_tolerance"_a = 1e-7)
+        .def("step", [](const LayeredAquifer& model, ArrD2 recharge, ArrAny previous, double dt, int count, double tolerance) {
+            if (previous.ndim() != 1) throw std::invalid_argument("layer head must be a node vector");
+            const auto r = grid_from(recharge);
+            const std::vector<double> head(previous.data(), previous.data()+previous.size());
+            LayeredAquiferResult result;
+            { nb::gil_scoped_release release; result = model.step(r, head, dt, count, tolerance); }
+            return layered_aquifer_dict(result);
+        }, "recharge_ms"_a, "previous_head"_a, "dt_s"_a, "max_iterations"_a = 10000, "relative_tolerance"_a = 1e-7);
+    m.def("make_layered_aquifer", [](ArrD2 surface, ArrD2 structural, ArrD2 skeleton, ArrB2 land,
+        nb::object strata, const std::vector<double>& kh, const std::vector<double>& kv,
+        const std::vector<double>& sy, const std::vector<double>& ss, double dx,
+        double shallow_depth, const std::vector<double>& shallow_kh, const std::vector<double>& shallow_kv) {
+        if (kh.size() != LI_COUNT-1 || kv.size() != LI_COUNT-1 || sy.size() != LI_COUNT-1 || ss.size() != LI_COUNT-1)
+            throw std::invalid_argument("five explicit hydraulic material entries required");
+        std::array<HydraulicMaterial, LI_COUNT> materials{};
+        for (int li = 1; li < LI_COUNT; ++li) materials[li] = {kh[li-1], kv[li-1], sy[li-1], ss[li-1]};
+        auto shallow_materials = materials;
+        if (shallow_depth > 0 || !shallow_kh.empty() || !shallow_kv.empty()) {
+            if (!(shallow_depth > 0) || shallow_kh.size() != LI_COUNT-1 || shallow_kv.size() != LI_COUNT-1)
+                throw std::invalid_argument("positive depth and both shallow conductivity tables required");
+            for (int li = 1; li < LI_COUNT; ++li) {
+                shallow_materials[li].horizontal_ms = shallow_kh[li-1];
+                shallow_materials[li].vertical_ms = shallow_kv[li-1];
+            }
+        }
+        StratRec s;
+        if (!strata.is_none()) {
+            const auto v = nb::cast<nb::dict>(strata);
+            s.on = true;
+            s.t_cap = dget(v, "t_cap"); s.t_sed = dget(v, "t_sed"); s.t_gab = dget(v, "t_gab");
+            s.bed_lime = dget(v, "bed_lime"); s.bed_marl = dget(v, "bed_marl");
+            s.bed_phase = dget(v, "bed_phase"); s.scale = dget(v, "scale");
+        }
+        return LayeredAquifer(grid_from(surface), grid_from(structural), grid_from(skeleton), mask_from(land),
+            s, materials, dx, shallow_depth, shallow_materials);
+    }, "surface_m"_a, "structural_top_m"_a, "skeleton_top_m"_a, "land"_a, "strata"_a.none(),
+       "horizontal_ms"_a, "vertical_ms"_a, "specific_yield"_a, "specific_storage_per_m"_a, "cell_m"_a,
+       "shallow_depth_m"_a = 0., "shallow_horizontal_ms"_a = std::vector<double>{},
+       "shallow_vertical_ms"_a = std::vector<double>{});
     m.def("strat_column", [](double surface, double top, double skel, nb::dict v) {
         StratRec s;
         s.on = true;
