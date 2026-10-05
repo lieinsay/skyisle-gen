@@ -204,6 +204,9 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print, c: dict | None 
     g = {"height": height, "island_id": island_id, "cliff": cliff, "json": J, "rims": rims, "res_km": res_km,
          "masks_pos": masks_pos, "inp": inp}
     g["core_layout_raw"] = [{"gc": e["gc"], "cores": e["cores"]} for e in R["islands"]]
+    for name in ("core_member", "core_neighbor", "core_member_weight"):
+        if name in R:
+            g[name] = R[name]
     if "coast_dist_m" in R:          # B4 亚格岸距
         g["coast_dist_m"] = R["coast_dist_m"]
     if "strat_top" in R:             # B2 层面：地形与水系分两次调时原样交回 build_hydro（谷坡角、lith 读它）
@@ -234,8 +237,13 @@ def build_hydro_cpp(ctx, node: int, c: dict, g: dict, log=print) -> None:
     if "core_layout_raw" in g:
         for e, raw in zip(state["islands"], g["core_layout_raw"]):
             e.update(raw)
-    elif c.get("water", {}).get("core_footprint_scale", 0) > 0:
+    elif c.get("water", {}).get("core_footprint_scale", 0) > 0 or c.get("water", {}).get("core_mountain_domain", False):
         raise ValueError("Core footprint requires original core positions and mountain loads; regenerate terrain")
+    if c.get("water", {}).get("core_mountain_domain", False):
+        for name in ("core_member", "core_neighbor", "core_member_weight"):
+            if name not in g:
+                raise ValueError("Mountain supply requires original core ownership; regenerate terrain")
+            state[name] = np.ascontiguousarray(g[name], dtype=float if name.endswith("weight") else np.int8)
     R = core().build_hydro(state, planet_obj(ctx), flat_config(c), threads(ctx))
     _hydro_from(c, g, R, log)
 
@@ -311,7 +319,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
         J["lith"] = lith_summary(R["lith"], island_id)
     # C1 / C2：河床、谷底宽、限制度、记成水的河道格；C4 / C5：凝结水、云雾林、地下水、崖壁泉线
     for k in ("bed_m", "floor_w_m", "confine", "river_water", "condense_mm", "core_water_sources", "cloud_forest", "bfi", "recharge_mm", "recharge_acc", "runoff_acc",
-              "wt", "wt_outlet"):
+              "wt", "wt_outlet", "core_member", "core_neighbor", "core_member_weight"):
         if k in R:
             g[k] = R[k]
     if "springline" in R:

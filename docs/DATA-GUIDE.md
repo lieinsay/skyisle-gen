@@ -159,6 +159,8 @@ C 之前的岛群产物没有下面带 † 的键，而且**河道格的 `height
 | `rivers.json` 的 `springline` † / ‡ | 崖壁泉线：[岛, [行, 列], 出水 L/s, 渗出处的高程 m, 段长 km, 是否崖瀑, ‡ 含水层厚度 m, ‡ 等第]——没进河道、走到岸边的地下水从崖壁上岩层与浮石的交界渗出；‡ 的等第 0 弥散渗出 / 1 泉 / 2 崖瀑（出水 ≥ 本岛出口段分位且含水层够厚） |
 | `island.json` 的 `hydro.valley` † / `hydro.water` † / `hydro.river_data` † | 谷底（漫滩面积、谷底宽分位、限制度占比）、集水核与地下水（凝结水、云雾林、补给、基流占比、泉线、‡ 埋深分位 / 水位浅于 5 m 的占比 / 泉的等第）、河网（段数、长度、河床质 / 平面型占比、瀑布、流域）的摘要 |
 
+研究入口 `water.core_mountain_domain` 的 C++/Python 内存结果另含 `core_member`、`core_neighbor`、`core_member_weight`：沿造山原始平滑混合权重分配山体，各核索引只在所属岛内有效。`core_water_sources` 逐核给出 `domain=supported_mountain`、`island`、`core_index`、`mountain_volume_km3`、`domain_area_km2`、`activity_per_km_day`、`capacity_m3s` 和实际积分的 `condense_m3s`；后两项应一致。`strength` 是旧结构尺度显示值，不是该模式的产水倍率，`radius_km=0` 不代表无覆盖。参数化及未验证项见 DESIGN-NOTES「整座山体作用域与单核能力分离」。这些研究字段尚不是正式游戏包契约。
+
 `segments[].pts` 的列（`cols`）：
 
 | 列 | 含义 |

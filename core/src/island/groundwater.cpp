@@ -173,12 +173,16 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
     // dehumidifier efficiency or a value inferred from desired river widths.
     const double exchange_days = c.get("water.core_exchange_days", 0.0);
     const double footprint_scale = c.get("water.core_footprint_scale", 0.0);
+    const bool mountain_domain = c.get("water.core_mountain_domain", 0.0) != 0;
+    const double activity = c.get("water.core_activity_per_km_day", NaN);
+    if (mountain_domain && (!(std::isfinite(activity) && activity >= 0) || exchange_days != 0 || footprint_scale != 0))
+        throw std::invalid_argument("mountain core requires explicit nonnegative activity; do not mix old exchange/footprint modes");
     if (!std::isfinite(footprint_scale) || footprint_scale < 0 || (footprint_scale > 0 && !(exchange_days > 0)))
         throw std::invalid_argument("core footprint requires a positive exchange time and finite nonnegative scale");
     if (!std::isfinite(exchange_days) || exchange_days < 0.0)
         throw std::invalid_argument("water.core_exchange_days must be finite and nonnegative");
     double column_mm = 0.0;
-    if (exchange_days > 0.0) {
+    if (exchange_days > 0.0 || mountain_domain) {
         if (g.inp.water_column_mm.empty())
             throw std::invalid_argument("balanced core requires physical water_column_mm; old climate cache has no column budget");
         for (double q : g.inp.water_column_mm) {
@@ -189,7 +193,7 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
         column_mm /= static_cast<double>(g.inp.water_column_mm.size());
     }
     const double gain = wc(c, "core_gain");
-    if (!(gain > 0.0) && !(exchange_days > 0.0)) return out;
+    if (!(gain > 0.0) && !(exchange_days > 0.0) && !mountain_domain) return out;
     const double cell_km2 = g.res_km * g.res_km;
     // 核的强度跟山走：高出岸缘的山体（km³）的立方根 / core_len_km——大山根深、核大；碎的小岛核弱（spec 13 第八节第 6 条）
     std::vector<double> vol(n, 0.0);
@@ -200,7 +204,7 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
     }
     const double lref = wc(c, "core_len_km"), smax = wc(c, "core_s_max");
     for (int k = 0; k < n; ++k) core_s[k] = clip(std::cbrt(vol[k]) / lref, 0.0, smax);
-    if (footprint_scale > 0) {
+    if (footprint_scale > 0 || mountain_domain) {
         // User-confirmed setting: source location/size/range, no mountain-top
         // elevation gate and no rainfall ceiling. Kernel shape, range scale,
         // mountain-load proxy and exchange time are explicit model assumptions.
@@ -218,10 +222,11 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
             vy[id] += v*(g.origin_y-(i+0.5)*g.res_km);
         }
         auto add = [&](int id, double x, double y, double volume) {
-            if (!(volume > 0)) return;
+            if (!(volume > 0) && !mountain_domain) return;
             const double length = std::cbrt(volume);
             CoreWaterSource s;
             s.island = id; s.x_km = x; s.y_km = y; s.mountain_volume_km3 = volume;
+            s.core_index = static_cast<int>(by_island[id].size());
             s.radius_km = footprint_scale*length;
             s.strength = std::min(smax, length/lref);
             by_island[id].push_back(all.size());
@@ -231,13 +236,56 @@ GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector
             if (!(vol[id] > 0)) continue;
             const auto& J = g.islands[id];
             if (J.cores.empty()) add(id, vx[id]/vol[id], vy[id]/vol[id], vol[id]);
-            else {
+            else if (mountain_domain) {
+                for (const auto& core : J.cores) add(id, J.gcx+core.load_x, J.gcy+core.load_y, 0);
+            } else {
                 double total = 0;
                 for (const auto& core : J.cores) total += std::max(0.0, core.load);
                 if (!(total > 0)) throw std::invalid_argument("multicore supply lacks positive mountain loads");
                 for (const auto& core : J.cores)
                     add(id, J.gcx+core.load_x, J.gcy+core.load_y, vol[id]*std::max(0.0, core.load)/total);
             }
+        }
+        if (mountain_domain) {
+            if (g.core_member.size() != N || g.core_neighbor.size() != N || g.core_member_weight.size() != N)
+                throw std::invalid_argument("mountain core supply requires the terrain's original ownership weights");
+            for (auto& source : all) source.mountain_volume_km3 = 0;
+            auto each_share = [&](size_t k, const auto& use) {
+                const int id = g.island_id.v[k];
+                if (id < 0 || by_island[id].empty()) return;
+                const int primary = g.core_member.v[k], secondary = g.core_neighbor.v[k];
+                const double weight = g.core_member_weight.v[k];
+                if (!(std::isfinite(weight) && weight >= 0 && weight <= 1) || primary < 0 ||
+                    primary >= static_cast<int>(by_island[id].size()) ||
+                    (weight < 1 && (secondary < 0 || secondary >= static_cast<int>(by_island[id].size()))))
+                    throw std::invalid_argument("invalid terrain core ownership");
+                use(all[by_island[id][primary]], weight);
+                if (weight < 1) use(all[by_island[id][secondary]], 1-weight);
+            };
+            // Recompute each load from the actually pasted terrain and its
+            // existing blend weights. A clipped-away mountain cannot retain
+            // a budget, nor can two overlapping cores count the same load twice.
+            for (size_t k = 0; k < N; ++k) each_share(k, [&](CoreWaterSource& source, double weight) {
+                source.domain_area_km2 += weight*cell_km2;
+                source.mountain_volume_km3 += weight*cell_km2*
+                    std::max(0.0, g.height.v[k]-g.islands[source.island].rim_j)/1000.0;
+            });
+            for (auto& source : all) {
+                source.strength = std::min(smax, std::cbrt(source.mountain_volume_km3)/lref);
+                source.activity_per_km_day = activity;
+                // mm * km^3 * (km day)^-1 -> mm km^2/day -> m^3/s.
+                // This is an explicit world ability per supported mountain
+                // volume, NOT an Earth measurement or a radius multiplier.
+                source.capacity_m3s = column_mm*source.mountain_volume_km3*activity*1000.0/86400.0;
+            }
+            for (size_t k = 0; k < N; ++k) each_share(k, [&](CoreWaterSource& source, double weight) {
+                if (!(source.domain_area_km2 > 0)) return;
+                const double mm = source.capacity_m3s*g.year_s/(source.domain_area_km2*1000.0)*weight;
+                out.v[k] += mm;
+                source.condense_m3s += mm*cell_km2*1000.0/g.year_s;
+            });
+            if (sources) *sources = std::move(all);
+            return out;
         }
         const double annual_mm = column_mm/exchange_days*(g.year_s/86400.0);
         for (int i = 0; i < H; ++i) for (int j = 0; j < W; ++j) {

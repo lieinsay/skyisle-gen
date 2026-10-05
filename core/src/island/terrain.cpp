@@ -210,6 +210,10 @@ void multicore_form(CoreSpec& sp, const Shape& s, const std::vector<int32_t>& ce
     L.sy = sy;
     L.strength = sp.strength;
     L.member = Grid<int8_t>(n, n, -1);
+    if (c.get("water.core_mountain_domain", 0) != 0) {
+        L.neighbor = Grid<int8_t>(n, n, -1);
+        L.member_weight = GridD(n, n, 0.0);
+    }
     L.seam = GridD(n, n, NaN);
     std::vector<double> D(nc);
     for (int32_t q : cells) {
@@ -237,6 +241,10 @@ void multicore_form(CoreSpec& sp, const Shape& s, const std::vector<int32_t>& ce
         const double ridged = 1.0 - std::fabs(fn_ridge.sample(X, Y));
         const double t = clip(delta / blend, 0.0, 1.0);
         const double w = t * t * (3 - 2 * t);
+        if (!L.neighbor.v.empty()) {
+            L.neighbor.v[q] = static_cast<int8_t>(k2);
+            L.member_weight.v[q] = 0.5+0.5*w;
+        }
         const double S = surf(k1, X, Y, ridged) * (0.5 + 0.5 * w) + surf(k2, X, Y, ridged) * (0.5 - 0.5 * w);
         const double dq = delta / sw;
         const double seam = samp * (0.5 * (sp.strength[k1] + sp.strength[k2])) * std::exp(-(dq * dq));
@@ -733,6 +741,20 @@ Sculpt sculpt_island(Rng& rng, const Shape& s, double age, double area_km2, doub
         r.load_y = ok ? np_sum(ay.data(), ay.size()) / r.load : r.seed_y;
         r.mean_above = r.cells ? r.load / static_cast<double>(r.cells) : 0.0;
         out.cores.push_back(r);
+    }
+    if (c.get("water.core_mountain_domain", 0) != 0) {
+        if (lay.n > 0) {
+            out.core_member = std::move(lay.member);
+            out.core_neighbor = std::move(lay.neighbor);
+            out.core_member_weight = std::move(lay.member_weight);
+        } else {
+            out.core_member = Grid<int8_t>(n, n, -1);
+            out.core_neighbor = Grid<int8_t>(n, n, -1);
+            out.core_member_weight = GridD(n, n, 0.0);
+            for (size_t q = 0; q < N; ++q) if (s.mask.v[q]) {
+                out.core_member.v[q] = 0; out.core_member_weight.v[q] = 1;
+            }
+        }
     }
     return out;
 }

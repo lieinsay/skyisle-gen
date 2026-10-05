@@ -15,7 +15,10 @@ namespace skyisle::island {
 // core_s（出）：各岛集水核的强度（跟山走：高出岸缘的山体体积的立方根 / core_len_km，夹 core_s_max）
 // Research opt-in: water.core_exchange_days > 0 uses inp.water_column_mm and a
 // prescribed balanced ocean source; requires explicit physical inputs. Existing
-// default remains unchanged. See DESIGN-NOTES 2026-10-05 for unvalidated terms.
+// default remains unchanged. core_mountain_domain instead covers original terrain
+// ownership and uses explicit core_activity_per_km_day times supported volume
+// and physical column; no old gain, peak mask or rain cap. Neither ability is an
+// Earth measurement. See DESIGN-NOTES 2026-10-05 for assumptions and validation.
 GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector<double>& core_s,
                    std::vector<CoreWaterSource>* sources = nullptr);
 

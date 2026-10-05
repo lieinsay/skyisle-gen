@@ -29,15 +29,18 @@ def case():
     return inp, core.planet_view(P, I, C, pc), cfg['island']
 
 
-def run(case, column=None, tau=0., gain=None, footprint=0.):
+def run(case, column=None, tau=0., gain=None, footprint=0., mountain=False, activity=None, steps=2):
     inp, planet, cfg = case
     inp, cfg = copy.deepcopy(inp), copy.deepcopy(cfg)
     inp['water_column_mm'] = column
     cfg['water']['core_exchange_days'] = tau
     cfg['water']['core_footprint_scale'] = footprint
+    cfg['water']['core_mountain_domain'] = mountain
+    if activity is not None:
+        cfg['water']['core_activity_per_km_day'] = activity
     if gain is not None:
         cfg['water']['core_gain'] = gain
-    return core.generate(inp, planet, flat_config(cfg), steps=2, res_m=300., threads=2)
+    return core.generate(inp, planet, flat_config(cfg), steps=steps, res_m=300., threads=2)
 
 
 def test_column_units_and_source_isolation(case):
@@ -107,3 +110,100 @@ def test_footprint_has_no_rain_cap_or_legacy_gain(case):
 def test_invalid_footprint_inputs(case, tau, scale):
     with pytest.raises(ValueError):
         run(case, [1.]*4, tau, footprint=scale)
+
+
+def test_mountain_domain_capacity_and_source_ledger(case):
+    result = run(case, [10.]*4, mountain=True, activity=.5)
+    h, t = result['hydro'], result['terrain']
+    land = t['island_id'] >= 0
+    sources = h['core_water_sources']
+    assert np.all(h['condense_mm'][land] > 0)
+    assert not np.any(h['condense_mm'][~land])
+    assert sum(s['domain_area_km2'] for s in sources) == pytest.approx(land.sum()*t['res_km']**2)
+    for s in sources:
+        assert s['capacity_m3s'] == pytest.approx(10*s['mountain_volume_km3']*.5*1000/86400)
+        assert s['condense_m3s'] == pytest.approx(s['capacity_m3s'], rel=1e-12)
+    actual = h['condense_mm'].astype(float).sum()*t['res_km']**2*1000/h['year_s']
+    assert actual == pytest.approx(sum(s['capacity_m3s'] for s in sources), rel=1e-7)
+    # Ownership export must retain the terrain stage's exact membership.
+    for name in ['core_member', 'core_neighbor', 'core_member_weight']:
+        np.testing.assert_array_equal(t[name], h[name])
+
+
+def test_mountain_ability_is_linear_and_independent_of_old_gain(case):
+    a = run(case, [10.]*4, mountain=True, activity=.5)
+    b = run(case, [10.]*4, mountain=True, activity=1.)
+    c = run(case, [20.]*4, gain=100, mountain=True, activity=.5)
+    np.testing.assert_allclose(b['hydro']['condense_mm'], 2*a['hydro']['condense_mm'], rtol=2e-7)
+    np.testing.assert_array_equal(b['hydro']['condense_mm'], c['hydro']['condense_mm'])
+    # Tracking ownership cannot alter terrain RNG or rainfall.
+    old = run(case)
+    original = run(case, steps=1)['terrain']
+    tracked = run(case, mountain=True, steps=1)['terrain']
+    np.testing.assert_array_equal(original['height'], tracked['height'])
+    np.testing.assert_array_equal(old['hydro']['rain_mm'], a['hydro']['rain_mm'])
+    zero = run(case, [10.]*4, mountain=True, activity=0.)
+    assert not np.any(zero['hydro']['condense_mm'])
+    high = run(case, [1e4]*4, mountain=True, activity=.5)
+    assert np.any(high['hydro']['condense_mm'] > high['hydro']['rain_mm'])
+
+
+@pytest.mark.parametrize('column,activity,tau,footprint', [
+    (None, .5, 0, 0), ([1.]*4, None, 0, 0), ([1.]*4, -1, 0, 0),
+    ([1.]*4, float('nan'), 0, 0), ([1.]*4, .5, 4, 0), ([1.]*4, .5, 4, 2)])
+def test_invalid_mountain_inputs(case, column, activity, tau, footprint):
+    with pytest.raises(ValueError):
+        run(case, column, tau, footprint=footprint, mountain=True, activity=activity)
+
+
+def test_multicore_mountain_shares_do_not_duplicate_load(case):
+    inp, planet, cfg = case
+    cfg = copy.deepcopy(cfg)
+    cfg['terrain'].update(multicore_frac=1., multicore_min_km2=1.,
+        multicore_kernel_full=1e-10, multicore_three_frac=1., age_young=0.)
+    # Choose an existing convergent input; do not fake plate or core locations.
+    pc = core.make_config(planet_config(load_config(sets=['s03.islands.n_islands=1600'])))
+    _, _, islands, climate = core.planet_run(pc, 7, 4, 4, False)
+    arrays = core.islands_arrays(islands)
+    candidates = np.flatnonzero((arrays['main_area_km2'] > 200) & (arrays['main_area_km2'] < 500))
+    selected = None
+    for node in candidates:
+        candidate = core.node_inputs(islands, climate, int(node), 7, pc)
+        terrain = run((candidate, planet, cfg), [10.]*4, mountain=True, activity=.5, steps=1)['terrain']
+        if len(terrain['islands'][0]['cores']) > 1:
+            selected = candidate
+            break
+    assert selected is not None, 'Fixture must exercise actual multicore blending'
+    r = run((selected, planet, cfg), [10.]*4, mountain=True, activity=.5)
+    t, h = terrain, r['hydro']
+    for island in t['islands']:
+        pick = t['island_id'] == island['id']
+        sources = [s for s in h['core_water_sources'] if s['island'] == island['id']]
+        if not sources:
+            continue
+        # condensation precedes channel incision, using pre-hydro terrain/rim.
+        volume = np.maximum(t['height'][pick]-round(island['rim'], 1), 0).sum()*t['res_km']**2/1000
+        assert sum(s['mountain_volume_km3'] for s in sources) == pytest.approx(volume, rel=1e-10)
+        assert sum(s['domain_area_km2'] for s in sources) == pytest.approx(pick.sum()*t['res_km']**2)
+        for s in sources:
+            w = np.where(h['core_member'] == s['core_index'], h['core_member_weight'], 0.)
+            w += np.where(h['core_neighbor'] == s['core_index'], 1-h['core_member_weight'], 0.)
+            assert s['domain_area_km2'] == pytest.approx(w[pick].sum()*t['res_km']**2)
+            assert s['condense_m3s'] == pytest.approx(s['capacity_m3s'], rel=1e-12)
+    assert np.any((h['core_member_weight'] > .5) & (h['core_member_weight'] < 1))
+    # The separate terrain/hydro entry point must carry the exact same domains.
+    state = dict(inp=copy.deepcopy(selected), height=t['height'], island_id=t['island_id'],
+        cliff=t['cliff'], res_km=t['res_km'], origin_x=t['origin_x'], origin_y=t['origin_y'],
+        strat_top=t['strat_top'], skel_top=t['skel_top'], islands=[])
+    state['inp']['water_column_mm'] = [10.]*4
+    for name in ['core_member', 'core_neighbor', 'core_member_weight']:
+        state[name] = t[name]
+    for island in t['islands']:
+        state['islands'].append(dict(rim_m=round(island['rim'], 1), keel_m=round(island['keel'], 1),
+            peak_m=round(island['peak'], 1), age=round(island['age'], 3), young=False,
+            gc=island['gc'], cores=island['cores'], strat=island['strat']))
+    cfg['water'].update(core_mountain_domain=True, core_activity_per_km_day=.5,
+        core_exchange_days=0., core_footprint_scale=0.)
+    staged = core.build_hydro(state, planet, flat_config(cfg), threads=2)
+    np.testing.assert_array_equal(staged['condense_mm'], h['condense_mm'])
+    assert staged['core_water_sources'] == h['core_water_sources']

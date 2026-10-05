@@ -30,6 +30,7 @@ namespace {
 
 using ArrAny = nb::ndarray<const double, nb::c_contig, nb::device::cpu>;
 using ArrAnyI = nb::ndarray<const int32_t, nb::c_contig, nb::device::cpu>;
+using ArrByte2 = nb::ndarray<const int8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 
 double dget(const nb::dict& d, const char* k) { return nb::cast<double>(d[k]); }
 std::vector<double> vget(const nb::dict& d, const char* k) {
@@ -212,8 +213,17 @@ nb::ndarray<nb::numpy, float> f32_np(const Grid<T>& g) {
     return to_np(std::move(v), {static_cast<size_t>(g.H), static_cast<size_t>(g.W)});
 }
 
+void core_domain_dict(const Group& g, nb::dict& d) {
+    if (!g.core_member.v.empty()) {
+        d["core_member"] = grid_np(Grid<int8_t>(g.core_member));
+        d["core_neighbor"] = grid_np(Grid<int8_t>(g.core_neighbor));
+        d["core_member_weight"] = grid_np(GridD(g.core_member_weight));
+    }
+}
+
 nb::dict terrain_dict(Group& g) {
     nb::dict d;
+    core_domain_dict(g, d);
     d["H"] = g.H;
     d["W"] = g.W;
     d["n"] = g.n;
@@ -320,6 +330,7 @@ nb::dict terrain_dict(Group& g) {
 
 nb::dict hydro_dict(Group& g) {
     nb::dict d;
+    core_domain_dict(g, d);
     d["height"] = grid_np(GridD(g.height));
     d["filled"] = grid_np(GridD(g.filled));
     d["route_h"] = grid_np(GridD(g.route_h));
@@ -356,10 +367,15 @@ nb::dict hydro_dict(Group& g) {
         for (const auto& source : g.core_water_sources) {
             nb::dict s;
             s["island"] = source.island;
+            s["core_index"] = source.core_index;
             s["x_km"] = source.x_km; s["y_km"] = source.y_km;
             s["mountain_volume_km3"] = source.mountain_volume_km3;
             s["radius_km"] = source.radius_km; s["strength"] = source.strength;
             s["condense_m3s"] = source.condense_m3s;
+            s["domain_area_km2"] = source.domain_area_km2;
+            s["capacity_m3s"] = source.capacity_m3s;
+            s["activity_per_km_day"] = source.activity_per_km_day;
+            s["domain"] = source.domain_area_km2 > 0 ? "supported_mountain" : "finite_footprint";
             sources.append(s);
         }
         d["core_water_sources"] = sources;
@@ -983,6 +999,19 @@ void bind_island(nb::module_& m) {
         g.island_id = Grid<int16_t>(g.H, g.W);
         std::memcpy(g.island_id.v.data(), ii.data(), g.island_id.v.size() * sizeof(int16_t));
         g.cliff = mask_from(nb::cast<ArrB2>(state["cliff"]));
+        if (state.contains("core_member")) {
+            auto read_owner = [&](const char* name) {
+                const auto a = nb::cast<ArrByte2>(state[name]);
+                if (a.shape(0) != g.H || a.shape(1) != g.W)
+                    throw std::invalid_argument("core ownership shape mismatch");
+                Grid<int8_t> out(g.H, g.W);
+                std::copy(a.data(), a.data()+a.size(), out.v.begin());
+                return out;
+            };
+            g.core_member = read_owner("core_member");
+            g.core_neighbor = read_owner("core_neighbor");
+            g.core_member_weight = grid_from(nb::cast<ArrD2>(state["core_member_weight"]));
+        }
         g.res_km = dget(state, "res_km");
         g.origin_x = dget(state, "origin_x");
         g.origin_y = dget(state, "origin_y");

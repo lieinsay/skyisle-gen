@@ -22,6 +22,8 @@ struct CoreLayout {                     // base_form 摆出的核（局部栅格
     int n = 0, primary = 0;
     std::vector<double> sx, sy, strength;
     Grid<int8_t> member;                // 每格归哪个核（掩膜外 −1）
+    Grid<int8_t> neighbor;              // 同一造形过程的次近核；仅在水核山体作用域模式保留
+    GridD member_weight;                // 造形已使用的平滑主核权重；不是新造的供水圈
     GridD seam;                         // 离缝多远（km，(到第二近的核 − 到最近的核) / 2，按扭曲后的坐标；掩膜外 NaN）：B3 的褶皱
 };
 GridD base_form(Rng& rng, const Shape& s, double age, double area_km2, double res_km, const Config& c, AgeKind& kind,
@@ -54,6 +56,8 @@ struct SculptEnv {
 
 struct Sculpt {
     GridD h;   // 掩膜外 NaN
+    Grid<int8_t> core_member, core_neighbor;
+    GridD core_member_weight;
     AgeKind kind = MID;
     double rim = 0, peak = 0;
     std::vector<CoreRec> cores;         // 多核岛才有
