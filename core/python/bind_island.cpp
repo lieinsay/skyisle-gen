@@ -9,6 +9,7 @@
 
 #include "bind_util.hpp"
 #include "skyisle/island/build.hpp"
+#include "skyisle/island/aquifer_balance.hpp"
 #include "skyisle/island/climate.hpp"
 #include "skyisle/island/generate.hpp"
 #include "skyisle/island/landforms.hpp"
@@ -629,6 +630,29 @@ const Config& cfg_of(nb::handle h, Config& tmp) {
 }
 
 void bind_island(nb::module_& m) {
+    m.def("solve_aquifer_balance", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
+                                      ArrD2 recharge, ArrB2 land, double cell_m,
+                                      int max_iterations, double relative_tolerance) {
+        const auto top = grid_from(surface), base = grid_from(bottom), km = grid_from(conductivity), r = grid_from(recharge);
+        const auto mask = mask_from(land);
+        AquiferBalance result;
+        {
+            nb::gil_scoped_release release;
+            result = solve_aquifer_balance(top, base, km, r, mask, cell_m,
+                                          max_iterations, relative_tolerance);
+        }
+        nb::dict d;
+        d["head_m"] = grid_np(GridD(result.head));
+        d["surface_m3s"] = grid_np(GridD(result.surface_m3s));
+        d["coast_m3s"] = grid_np(GridD(result.coast_m3s));
+        d["residual_m3s"] = grid_np(GridD(result.residual_m3s));
+        d["converged"] = result.converged;
+        d["iterations"] = result.iterations;
+        d["recharge_m3s"] = result.recharge_m3s;
+        d["discharge_m3s"] = result.discharge_m3s;
+        return d;
+    }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "recharge_ms"_a, "land"_a,
+       "cell_m"_a, "max_iterations"_a = 5000, "relative_tolerance"_a = 1e-7);
     nb::class_<PlanetView>(m, "Planet", "行星层的网格与全体群（make_planet 转好，按 run 缓存）");
     nb::class_<Config>(m, "Config", "展平的配置：[island] 段或行星层的 shared / skeleton / s01–s04（make_config 转好）");
     m.def("make_planet", [](nb::dict planet) { return planet_from(planet); });
