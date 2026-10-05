@@ -99,7 +99,15 @@ AquiferBalance solve_aquifer_balance(const GridD& top, const GridD& base,
                 if (!(next > lo && next < hi)) next = (lo+hi)/2;
                 h = next;
             }
-            out.head.v[k] = h;
+            // Relax the integrated thickness potential, not the water source.
+            // SOR accelerates long low-gradient flow paths; acceptance still
+            // requires the original unmodified finite-volume mass residual.
+            const double old = out.head.v[k]-base.v[k], next = h-base.v[k];
+            const double upper = top.v[k]-base.v[k];
+            // An isolated cell has no slow spatial mode: keep its direct root.
+            const double omega = a.count ? 1.7 : 1.0;
+            const double square = std::clamp(old*old+omega*(next*next-old*old), 0.0, upper*upper);
+            out.head.v[k] = base.v[k]+std::sqrt(square);
         }
         out.iterations = it+1;
         out.discharge_m3s = out.max_residual_m3s = 0;
