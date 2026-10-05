@@ -629,6 +629,21 @@ const Config& cfg_of(nb::handle h, Config& tmp) {
     return tmp;
 }
 
+nb::dict aquifer_dict(const AquiferBalance& result) {
+    nb::dict d;
+    d["head_m"] = grid_np(GridD(result.head));
+    d["surface_m3s"] = grid_np(GridD(result.surface_m3s));
+    d["coast_m3s"] = grid_np(GridD(result.coast_m3s));
+    d["residual_m3s"] = grid_np(GridD(result.residual_m3s));
+    d["storage_change_m3"] = grid_np(GridD(result.storage_change_m3));
+    d["converged"] = result.converged;
+    d["iterations"] = result.iterations;
+    d["recharge_m3s"] = result.recharge_m3s;
+    d["discharge_m3s"] = result.discharge_m3s;
+    d["total_storage_change_m3"] = result.total_storage_change_m3;
+    return d;
+}
+
 void bind_island(nb::module_& m) {
     m.def("solve_aquifer_balance", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
                                       ArrD2 recharge, ArrB2 land, double cell_m,
@@ -641,18 +656,26 @@ void bind_island(nb::module_& m) {
             result = solve_aquifer_balance(top, base, km, r, mask, cell_m,
                                           max_iterations, relative_tolerance);
         }
-        nb::dict d;
-        d["head_m"] = grid_np(GridD(result.head));
-        d["surface_m3s"] = grid_np(GridD(result.surface_m3s));
-        d["coast_m3s"] = grid_np(GridD(result.coast_m3s));
-        d["residual_m3s"] = grid_np(GridD(result.residual_m3s));
-        d["converged"] = result.converged;
-        d["iterations"] = result.iterations;
-        d["recharge_m3s"] = result.recharge_m3s;
-        d["discharge_m3s"] = result.discharge_m3s;
-        return d;
+        return aquifer_dict(result);
     }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "recharge_ms"_a, "land"_a,
        "cell_m"_a, "max_iterations"_a = 5000, "relative_tolerance"_a = 1e-7);
+    m.def("step_aquifer_balance", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
+                                     ArrD2 recharge, ArrB2 land, ArrD2 previous,
+                                     ArrD2 specific_yield, double cell_m, double dt_s,
+                                     int max_iterations, double relative_tolerance) {
+        const auto top = grid_from(surface), base = grid_from(bottom), km = grid_from(conductivity), r = grid_from(recharge);
+        const auto mask = mask_from(land);
+        const auto old = grid_from(previous), sy = grid_from(specific_yield);
+        AquiferBalance result;
+        {
+            nb::gil_scoped_release release;
+            result = step_aquifer_balance(top, base, km, r, mask, old, sy, cell_m,
+                                         dt_s, max_iterations, relative_tolerance);
+        }
+        return aquifer_dict(result);
+    }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "recharge_ms"_a, "land"_a,
+       "previous_head"_a, "specific_yield"_a, "cell_m"_a, "dt_s"_a,
+       "max_iterations"_a = 5000, "relative_tolerance"_a = 1e-7);
     nb::class_<PlanetView>(m, "Planet", "行星层的网格与全体群（make_planet 转好，按 run 缓存）");
     nb::class_<Config>(m, "Config", "展平的配置：[island] 段或行星层的 shared / skeleton / s01–s04（make_config 转好）");
     m.def("make_planet", [](nb::dict planet) { return planet_from(planet); });
