@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 #include "skyisle/island/terrain.hpp"
 
@@ -11,6 +12,52 @@ namespace skyisle::island {
 const char* lith_name(int li) {
     static const char* N[LI_COUNT] = {"void", "limestone", "marl", "gabbro", "serpentinite", "pumice"};
     return (li >= 0 && li < LI_COUNT) ? N[li] : "void";
+}
+
+std::vector<StratLayer> strat_column(double surface, double top, double skel,
+                                    const StratRec& s) {
+    if (!(std::isfinite(surface) && std::isfinite(top) && std::isfinite(skel) && surface >= skel))
+        throw std::invalid_argument("invalid stratigraphic column elevations");
+    if (surface == skel) return {};
+    if (!s.on) return {{skel, surface, LI_GABBRO}};
+    if (!(std::isfinite(s.scale) && s.scale > 0 && std::isfinite(s.t_cap) && s.t_cap >= 0 &&
+          std::isfinite(s.t_sed) && s.t_sed >= s.t_cap && std::isfinite(s.t_gab) && s.t_gab >= 0 &&
+          std::isfinite(s.bed_lime) && s.bed_lime > 0 && std::isfinite(s.bed_marl) && s.bed_marl > 0 &&
+          std::isfinite(s.bed_phase))) throw std::invalid_argument("invalid stratigraphic layer thicknesses");
+    std::vector<double> boundaries{skel, surface};
+    auto add_depth = [&](double depth) {
+        const double z = top-s.scale*depth;
+        if (z > skel && z < surface) boundaries.push_back(z);
+    };
+    add_depth(s.t_cap);
+    add_depth(s.t_sed);
+    add_depth(s.t_sed+s.t_gab);
+    const double low = std::max(s.t_cap, (top-surface)/s.scale);
+    const double high = std::min(s.t_sed, (top-skel)/s.scale);
+    const double period = s.bed_lime+s.bed_marl;
+    if (high > low) {
+        const double start = std::floor((low-s.t_cap+s.bed_phase)/period);
+        const double finish = std::ceil((high-s.t_cap+s.bed_phase)/period);
+        if (!(std::isfinite(start) && std::isfinite(finish) && std::abs(start) < 1e12 &&
+              std::abs(finish) < 1e12 && finish-start <= 100000))
+            throw std::invalid_argument("unresolved stratigraphic layer count");
+        for (double cycle = start; cycle <= finish; cycle += 1) {
+            for (double offset : {0.0, s.bed_lime}) {
+                const double depth = s.t_cap-s.bed_phase+cycle*period+offset;
+                if (depth > low && depth < high) add_depth(depth);
+            }
+        }
+    }
+    std::sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+    std::vector<StratLayer> out;
+    for (size_t i = 1; i < boundaries.size(); ++i) {
+        const double b = boundaries[i-1], t = boundaries[i];
+        const uint8_t li = lith_at((b+t)/2, top, skel, s);
+        if (!out.empty() && out.back().lith == li) out.back().top_m = t;
+        else out.push_back({b, t, li});
+    }
+    return out;
 }
 
 LithTable lith_table(const Config& c) {

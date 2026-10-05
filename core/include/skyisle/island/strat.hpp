@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include "skyisle/config.hpp"
 
@@ -49,5 +50,15 @@ inline uint8_t lith_at(double h, double top, double skel, const StratRec& s) {
     return LI_SERP;
 }
 inline bool lith_sediment(uint8_t li) { return li == LI_LIME || li == LI_MARL; }
+
+struct StratLayer {
+    double bottom_m = 0, top_m = 0;
+    uint8_t lith = LI_VOID;
+};
+
+// Exact surviving intervals, bottom to surface, using the same contacts as
+// lith_at. No invented weathering thickness or permeability assignment.
+std::vector<StratLayer> strat_column(double surface, double structural_top,
+                                     double skeleton_top, const StratRec& strata);
 
 }  // namespace skyisle::island

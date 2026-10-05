@@ -659,6 +659,17 @@ nb::dict aquifer_dict(const AquiferBalance& result) {
 }
 
 void bind_island(nb::module_& m) {
+    m.def("strat_column", [](double surface, double top, double skel, nb::dict v) {
+        StratRec s;
+        s.on = true;
+        s.t_cap = dget(v, "t_cap"); s.t_sed = dget(v, "t_sed"); s.t_gab = dget(v, "t_gab");
+        s.bed_lime = dget(v, "bed_lime"); s.bed_marl = dget(v, "bed_marl");
+        s.bed_phase = dget(v, "bed_phase"); s.scale = dget(v, "scale");
+        nb::list out;
+        for (const auto& layer : strat_column(surface, top, skel, s))
+            out.append(nb::make_tuple(layer.bottom_m, layer.top_m, layer.lith));
+        return out;
+    }, "surface_m"_a, "structural_top_m"_a, "skeleton_top_m"_a, "strata"_a);
     m.def("solve_aquifer_balance", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
                                       ArrD2 recharge, ArrB2 land, double cell_m,
                                       int max_iterations, double relative_tolerance) {
