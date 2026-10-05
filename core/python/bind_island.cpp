@@ -9,9 +9,6 @@
 
 #include "bind_util.hpp"
 #include "skyisle/island/build.hpp"
-#include "skyisle/island/aquifer_balance.hpp"
-#include "skyisle/island/layered_aquifer.hpp"
-#include "skyisle/island/spring_routing.hpp"
 #include "skyisle/island/climate.hpp"
 #include "skyisle/island/generate.hpp"
 #include "skyisle/island/landforms.hpp"
@@ -30,7 +27,6 @@ namespace {
 
 using ArrAny = nb::ndarray<const double, nb::c_contig, nb::device::cpu>;
 using ArrAnyI = nb::ndarray<const int32_t, nb::c_contig, nb::device::cpu>;
-using ArrByte2 = nb::ndarray<const int8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 
 double dget(const nb::dict& d, const char* k) { return nb::cast<double>(d[k]); }
 std::vector<double> vget(const nb::dict& d, const char* k) {
@@ -87,7 +83,6 @@ NodeInputs inp_from(const nb::dict& d) {
     opt("people_per_arable_km2", x.people_per_arable_km2);
     opt("precip_mm_ref", x.precip_mm_ref);
     if (d.contains("precip_share") && !d["precip_share"].is_none()) x.precip_share = nb::cast<std::vector<double>>(d["precip_share"]);
-    if (d.contains("water_column_mm") && !d["water_column_mm"].is_none()) x.water_column_mm = nb::cast<std::vector<double>>(d["water_column_mm"]);
     if (d.contains("pop") && !d["pop"].is_none()) x.pop = dget(d, "pop");
     if (d.contains("capital") && !d["capital"].is_none()) {
         nb::dict cap = nb::cast<nb::dict>(d["capital"]);
@@ -213,17 +208,8 @@ nb::ndarray<nb::numpy, float> f32_np(const Grid<T>& g) {
     return to_np(std::move(v), {static_cast<size_t>(g.H), static_cast<size_t>(g.W)});
 }
 
-void core_domain_dict(const Group& g, nb::dict& d) {
-    if (!g.core_member.v.empty()) {
-        d["core_member"] = grid_np(Grid<int8_t>(g.core_member));
-        d["core_neighbor"] = grid_np(Grid<int8_t>(g.core_neighbor));
-        d["core_member_weight"] = grid_np(GridD(g.core_member_weight));
-    }
-}
-
 nb::dict terrain_dict(Group& g) {
     nb::dict d;
-    core_domain_dict(g, d);
     d["H"] = g.H;
     d["W"] = g.W;
     d["n"] = g.n;
@@ -330,7 +316,6 @@ nb::dict terrain_dict(Group& g) {
 
 nb::dict hydro_dict(Group& g) {
     nb::dict d;
-    core_domain_dict(g, d);
     d["height"] = grid_np(GridD(g.height));
     d["filled"] = grid_np(GridD(g.filled));
     d["route_h"] = grid_np(GridD(g.route_h));
@@ -361,24 +346,6 @@ nb::dict hydro_dict(Group& g) {
     if (!g.condense.v.empty()) {
         d["condense_mm"] = f32_np(g.condense);
         d["core_s"] = to_np(std::vector<double>(g.core_s), {g.core_s.size()});
-    }
-    if (!g.core_water_sources.empty()) {
-        nb::list sources;
-        for (const auto& source : g.core_water_sources) {
-            nb::dict s;
-            s["island"] = source.island;
-            s["core_index"] = source.core_index;
-            s["x_km"] = source.x_km; s["y_km"] = source.y_km;
-            s["mountain_volume_km3"] = source.mountain_volume_km3;
-            s["radius_km"] = source.radius_km; s["strength"] = source.strength;
-            s["condense_m3s"] = source.condense_m3s;
-            s["domain_area_km2"] = source.domain_area_km2;
-            s["capacity_m3s"] = source.capacity_m3s;
-            s["activity_per_km_day"] = source.activity_per_km_day;
-            s["domain"] = source.domain_area_km2 > 0 ? "supported_mountain" : "finite_footprint";
-            sources.append(s);
-        }
-        d["core_water_sources"] = sources;
     }
     if (!g.cloud_forest.v.empty()) d["cloud_forest"] = mask_np(Mask(g.cloud_forest));
     if (!g.recharge.v.empty()) {
@@ -529,7 +496,6 @@ nb::dict rivernet_dict(const RiverNet& R) {
     nb::dict d;
     d["cell"] = vec_np(R.cell);
     d["level"] = vec_np(R.level);
-    d["flow_regime"] = vec_np(R.flow_regime);
     d["d50c"] = vec_np(R.d50c);
     d["planform"] = vec_np(R.planform);
     d["confine"] = vec_np(R.confine);
@@ -587,8 +553,6 @@ nb::dict rivernet_dict(const RiverNet& R) {
         e["cond_frac"] = b.cond_frac;
         e["bf_ratio"] = b.bf_ratio;
         e["index"] = vec_np(b.index);
-        e["event_index"] = vec_np(b.event_index);
-        e["event_bf_ratio"] = b.event_bf_ratio;
         basins.append(e);
     }
     d["segs"] = segs;
@@ -660,196 +624,7 @@ const Config& cfg_of(nb::handle h, Config& tmp) {
     return tmp;
 }
 
-nb::dict aquifer_dict(const AquiferBalance& result) {
-    nb::dict d;
-    d["head_m"] = grid_np(GridD(result.head));
-    d["surface_m3s"] = grid_np(GridD(result.surface_m3s));
-    d["coast_m3s"] = grid_np(GridD(result.coast_m3s));
-    d["residual_m3s"] = grid_np(GridD(result.residual_m3s));
-    d["storage_change_m3"] = grid_np(GridD(result.storage_change_m3));
-    d["converged"] = result.converged;
-    d["iterations"] = result.iterations;
-    d["recharge_m3s"] = result.recharge_m3s;
-    d["discharge_m3s"] = result.discharge_m3s;
-    d["total_storage_change_m3"] = result.total_storage_change_m3;
-    return d;
-}
-
-namespace {
-nb::dict layered_aquifer_dict(const LayeredAquiferResult& r) {
-    nb::dict out;
-    out["head_m"] = to_np(std::vector<double>(r.head_m), {r.head_m.size()});
-    out["residual_m3s"] = to_np(std::vector<double>(r.residual_m3s), {r.residual_m3s.size()});
-    out["surface_m3s"] = grid_np(GridD(r.surface_m3s));
-    out["coast_m3s"] = grid_np(GridD(r.coast_m3s));
-    out["storage_change_m3"] = grid_np(GridD(r.storage_change_m3));
-    out["converged"] = r.converged; out["iterations"] = r.iterations;
-    out["input_m3s"] = r.input_m3s; out["output_m3s"] = r.output_m3s;
-    out["total_storage_change_m3"] = r.total_storage_change_m3;
-    out["absolute_residual_m3s"] = r.absolute_residual_m3s;
-    return out;
-}
-}
-
 void bind_island(nb::module_& m) {
-    m.def("route_surface_water", [](ArrD2 local, ArrB2 land, nb::ndarray<const int64_t, nb::c_contig, nb::device::cpu> receiver) {
-        const auto supply = grid_from(local); const auto mask = mask_from(land);
-        const std::vector<int64_t> recv(receiver.data(), receiver.data()+receiver.size());
-        SurfaceRoutingResult r;
-        { nb::gil_scoped_release release; r = route_surface_water(supply, mask, recv); }
-        nb::dict out; out["river_m3s"] = grid_np(std::move(r.river_m3s));
-        out["input_m3s"] = r.input_m3s; out["outlet_m3s"] = r.outlet_m3s; return out;
-    }, "local_m3s"_a, "land"_a, "receiver"_a);
-    nb::class_<LayeredAquifer>(m, "LayeredAquifer")
-        .def_prop_ro("node_cells", &LayeredAquifer::node_cells)
-        .def_prop_ro("node_bottoms", &LayeredAquifer::node_bottoms)
-        .def_prop_ro("node_tops", &LayeredAquifer::node_tops)
-        .def_prop_ro("node_lithologies", &LayeredAquifer::node_lithologies)
-        .def("solve", [](const LayeredAquifer& model, ArrD2 recharge, int count, double tolerance, nb::object initial) {
-            const auto r = grid_from(recharge);
-            std::vector<double> head;
-            if (!initial.is_none()) {
-                const auto a = nb::cast<ArrAny>(initial);
-                if (a.ndim() != 1) throw std::invalid_argument("layer head must be a node vector");
-                head.assign(a.data(), a.data()+a.size());
-            }
-            LayeredAquiferResult result;
-            { nb::gil_scoped_release release; result = model.solve(r, count, tolerance, initial.is_none() ? nullptr : &head); }
-            return layered_aquifer_dict(result);
-        }, "recharge_ms"_a, "max_iterations"_a = 10000, "relative_tolerance"_a = 1e-7, "initial_head"_a = nb::none())
-        .def("step", [](const LayeredAquifer& model, ArrD2 recharge, ArrAny previous, double dt, int count, double tolerance) {
-            if (previous.ndim() != 1) throw std::invalid_argument("layer head must be a node vector");
-            const auto r = grid_from(recharge);
-            const std::vector<double> head(previous.data(), previous.data()+previous.size());
-            LayeredAquiferResult result;
-            { nb::gil_scoped_release release; result = model.step(r, head, dt, count, tolerance); }
-            return layered_aquifer_dict(result);
-        }, "recharge_ms"_a, "previous_head"_a, "dt_s"_a, "max_iterations"_a = 10000, "relative_tolerance"_a = 1e-7);
-    m.def("make_layered_aquifer", [](ArrD2 surface, ArrD2 structural, ArrD2 skeleton, ArrB2 land,
-        nb::object strata, const std::vector<double>& kh, const std::vector<double>& kv,
-        const std::vector<double>& sy, const std::vector<double>& ss, double dx,
-        double shallow_depth, const std::vector<double>& shallow_kh, const std::vector<double>& shallow_kv) {
-        if (kh.size() != LI_COUNT-1 || kv.size() != LI_COUNT-1 || sy.size() != LI_COUNT-1 || ss.size() != LI_COUNT-1)
-            throw std::invalid_argument("five explicit hydraulic material entries required");
-        std::array<HydraulicMaterial, LI_COUNT> materials{};
-        for (int li = 1; li < LI_COUNT; ++li) materials[li] = {kh[li-1], kv[li-1], sy[li-1], ss[li-1]};
-        auto shallow_materials = materials;
-        if (shallow_depth > 0 || !shallow_kh.empty() || !shallow_kv.empty()) {
-            if (!(shallow_depth > 0) || shallow_kh.size() != LI_COUNT-1 || shallow_kv.size() != LI_COUNT-1)
-                throw std::invalid_argument("positive depth and both shallow conductivity tables required");
-            for (int li = 1; li < LI_COUNT; ++li) {
-                shallow_materials[li].horizontal_ms = shallow_kh[li-1];
-                shallow_materials[li].vertical_ms = shallow_kv[li-1];
-            }
-        }
-        StratRec s;
-        if (!strata.is_none()) {
-            const auto v = nb::cast<nb::dict>(strata);
-            s.on = true;
-            s.t_cap = dget(v, "t_cap"); s.t_sed = dget(v, "t_sed"); s.t_gab = dget(v, "t_gab");
-            s.bed_lime = dget(v, "bed_lime"); s.bed_marl = dget(v, "bed_marl");
-            s.bed_phase = dget(v, "bed_phase"); s.scale = dget(v, "scale");
-        }
-        return LayeredAquifer(grid_from(surface), grid_from(structural), grid_from(skeleton), mask_from(land),
-            s, materials, dx, shallow_depth, shallow_materials);
-    }, "surface_m"_a, "structural_top_m"_a, "skeleton_top_m"_a, "land"_a, "strata"_a.none(),
-       "horizontal_ms"_a, "vertical_ms"_a, "specific_yield"_a, "specific_storage_per_m"_a, "cell_m"_a,
-       "shallow_depth_m"_a = 0., "shallow_horizontal_ms"_a = std::vector<double>{},
-       "shallow_vertical_ms"_a = std::vector<double>{});
-    m.def("strat_column", [](double surface, double top, double skel, nb::dict v) {
-        StratRec s;
-        s.on = true;
-        s.t_cap = dget(v, "t_cap"); s.t_sed = dget(v, "t_sed"); s.t_gab = dget(v, "t_gab");
-        s.bed_lime = dget(v, "bed_lime"); s.bed_marl = dget(v, "bed_marl");
-        s.bed_phase = dget(v, "bed_phase"); s.scale = dget(v, "scale");
-        nb::list out;
-        for (const auto& layer : strat_column(surface, top, skel, s))
-            out.append(nb::make_tuple(layer.bottom_m, layer.top_m, layer.lith));
-        return out;
-    }, "surface_m"_a, "structural_top_m"_a, "skeleton_top_m"_a, "strata"_a);
-    m.def("solve_aquifer_balance", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
-                                      ArrD2 recharge, ArrB2 land, double cell_m,
-                                      int max_iterations, double relative_tolerance) {
-        const auto top = grid_from(surface), base = grid_from(bottom), km = grid_from(conductivity), r = grid_from(recharge);
-        const auto mask = mask_from(land);
-        AquiferBalance result;
-        {
-            nb::gil_scoped_release release;
-            result = solve_aquifer_balance(top, base, km, r, mask, cell_m,
-                                          max_iterations, relative_tolerance);
-        }
-        return aquifer_dict(result);
-    }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "recharge_ms"_a, "land"_a,
-       "cell_m"_a, "max_iterations"_a = 5000, "relative_tolerance"_a = 1e-7);
-    m.def("step_aquifer_balance", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
-                                     ArrD2 recharge, ArrB2 land, ArrD2 previous,
-                                     ArrD2 specific_yield, double cell_m, double dt_s,
-                                     int max_iterations, double relative_tolerance) {
-        const auto top = grid_from(surface), base = grid_from(bottom), km = grid_from(conductivity), r = grid_from(recharge);
-        const auto mask = mask_from(land);
-        const auto old = grid_from(previous), sy = grid_from(specific_yield);
-        AquiferBalance result;
-        {
-            nb::gil_scoped_release release;
-            result = step_aquifer_balance(top, base, km, r, mask, old, sy, cell_m,
-                                         dt_s, max_iterations, relative_tolerance);
-        }
-        return aquifer_dict(result);
-    }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "recharge_ms"_a, "land"_a,
-       "previous_head"_a, "specific_yield"_a, "cell_m"_a, "dt_s"_a,
-       "max_iterations"_a = 5000, "relative_tolerance"_a = 1e-7);
-    m.def("spring_rain_step", [](ArrD2 pscale, ArrD2 fraction, ArrD2 toffset,
-                                 ArrD2 snow, ArrB2 land, double precipitation_mm,
-                                 double temperature_c, double cell_m, double dt_s,
-                                 double snow_t_c, double melt_t_c, double degree_day_mm) {
-        const auto p = grid_from(pscale), f = grid_from(fraction), t = grid_from(toffset), s = grid_from(snow);
-        const auto mask = mask_from(land);
-        SpringRainStep r;
-        {
-            nb::gil_scoped_release release;
-            r = spring_rain_step(p, f, t, s, mask, precipitation_mm, temperature_c,
-                                 cell_m, dt_s, snow_t_c, melt_t_c, degree_day_mm);
-        }
-        nb::dict d;
-        d["snowpack_mm"] = grid_np(std::move(r.snowpack_mm));
-        d["liquid_runoff_ms"] = grid_np(std::move(r.liquid_runoff_ms));
-        d["precipitation_m3"] = r.precipitation_m3;
-        d["snow_storage_change_m3"] = r.snow_storage_change_m3;
-        d["runoff_m3"] = r.runoff_m3;
-        d["nonrunoff_m3"] = r.nonrunoff_m3;
-        return d;
-    }, "precipitation_scale"_a, "runoff_fraction"_a, "temperature_offset_c"_a,
-       "previous_snow_mm"_a, "land"_a, "precipitation_mm"_a, "temperature_c"_a,
-       "cell_m"_a, "dt_s"_a, "snow_t_c"_a, "melt_t_c"_a, "degree_day_mm"_a);
-    m.def("step_spring_routing", [](ArrD2 surface, ArrD2 bottom, ArrD2 conductivity,
-                                    ArrD2 rain, ArrD2 core, ArrD2 fraction, ArrB2 land,
-                                    nb::ndarray<const int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> receiver,
-                                    ArrD2 previous, ArrD2 specific_yield,
-                                    double cell_m, double dt_s, int max_iterations,
-                                    double relative_tolerance) {
-        const auto top = grid_from(surface), base = grid_from(bottom), km = grid_from(conductivity);
-        const auto rain_grid = grid_from(rain), core_grid = grid_from(core), bf = grid_from(fraction);
-        const auto mask = mask_from(land);
-        const std::vector<int64_t> recv(receiver.data(), receiver.data()+receiver.size());
-        const auto old = grid_from(previous), sy = grid_from(specific_yield);
-        SpringRoutingStep result;
-        {
-            nb::gil_scoped_release release;
-            result = step_spring_routing(top, base, km, rain_grid, core_grid, bf, mask,
-                                        recv, old, sy, cell_m, dt_s, max_iterations, relative_tolerance);
-        }
-        nb::dict d;
-        d["aquifer"] = aquifer_dict(result.aquifer);
-        d["local_surface_m3s"] = grid_np(std::move(result.local_surface_m3s));
-        d["river_m3s"] = grid_np(std::move(result.river_m3s));
-        d["rain_input_m3s"] = result.rain_input_m3s;
-        d["core_input_m3s"] = result.core_input_m3s;
-        d["surface_outlet_m3s"] = result.surface_outlet_m3s;
-        return d;
-    }, "surface"_a, "bottom"_a, "conductivity_ms"_a, "rain_runoff_ms"_a,
-       "core_ms"_a, "recharge_fraction"_a, "land"_a, "receiver"_a, "previous_head"_a,
-       "specific_yield"_a, "cell_m"_a, "dt_s"_a, "max_iterations"_a = 5000,
-       "relative_tolerance"_a = 1e-7);
     nb::class_<PlanetView>(m, "Planet", "行星层的网格与全体群（make_planet 转好，按 run 缓存）");
     nb::class_<Config>(m, "Config", "展平的配置：[island] 段或行星层的 shared / skeleton / s01–s04（make_config 转好）");
     m.def("make_planet", [](nb::dict planet) { return planet_from(planet); });
@@ -999,19 +774,6 @@ void bind_island(nb::module_& m) {
         g.island_id = Grid<int16_t>(g.H, g.W);
         std::memcpy(g.island_id.v.data(), ii.data(), g.island_id.v.size() * sizeof(int16_t));
         g.cliff = mask_from(nb::cast<ArrB2>(state["cliff"]));
-        if (state.contains("core_member")) {
-            auto read_owner = [&](const char* name) {
-                const auto a = nb::cast<ArrByte2>(state[name]);
-                if (a.shape(0) != g.H || a.shape(1) != g.W)
-                    throw std::invalid_argument("core ownership shape mismatch");
-                Grid<int8_t> out(g.H, g.W);
-                std::copy(a.data(), a.data()+a.size(), out.v.begin());
-                return out;
-            };
-            g.core_member = read_owner("core_member");
-            g.core_neighbor = read_owner("core_neighbor");
-            g.core_member_weight = grid_from(nb::cast<ArrD2>(state["core_member_weight"]));
-        }
         g.res_km = dget(state, "res_km");
         g.origin_x = dget(state, "origin_x");
         g.origin_y = dget(state, "origin_y");
@@ -1026,19 +788,7 @@ void bind_island(nb::module_& m) {
             r.age_j = dget(e, "age");
             // 谷收拢（P4）看岛龄档与是不是多核岛：新岛 × capture_young、多核岛不收（多核的核在这里只要「有没有」）
             if (e.contains("young") && nb::cast<bool>(e["young"])) r.kind = YOUNG;
-            if (e.contains("cores")) {
-                const auto gc = nb::cast<std::vector<double>>(e["gc"]);
-                if (gc.size() != 2) throw std::invalid_argument("invalid core coordinate frame");
-                r.gcx = gc[0]; r.gcy = gc[1];
-                for (nb::handle item : nb::cast<nb::list>(e["cores"])) {
-                    const auto core = nb::cast<nb::dict>(item);
-                    const auto xy = nb::cast<std::vector<double>>(core["load_xy"]);
-                    if (xy.size() != 2) throw std::invalid_argument("invalid core load center");
-                    CoreRec cr;
-                    cr.load = dget(core, "load"); cr.load_x = xy[0]; cr.load_y = xy[1];
-                    r.cores.push_back(cr);
-                }
-            } else if (e.contains("multicore") && nb::cast<bool>(e["multicore"])) r.cores.resize(1);
+            if (e.contains("multicore") && nb::cast<bool>(e["multicore"])) r.cores.resize(1);
             if (e.contains("strat") && !e["strat"].is_none()) {   // B2 岩层（build_terrain 交出来的原数）
                 nb::dict st = nb::cast<nb::dict>(e["strat"]);
                 r.strat.on = true;

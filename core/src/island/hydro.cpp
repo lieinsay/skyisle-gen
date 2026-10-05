@@ -289,7 +289,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         g.runoff_ratio = ps > 0 ? rs / ps : 0.0;
     }
     // 集水核（C4，spec 13 第八节）：凝结水只进水账——渗进岩层，从泉与溪流出来，河的流量变大、雨量不变；runoff 含它，rain 与 runoff_ratio 不含
-    g.condense = condensation(g, Gw, c, g.core_s, &g.core_water_sources);
+    g.condense = condensation(g, Gw, c, g.core_s);
     for (size_t k = 0; k < N; ++k) g.runoff.v[k] += g.condense.v[k];
     const double runoff = g.runoff_ratio;
     const double rq = 16.0;   // 径流加权汇流的量子（1/16 mm）：权重取整后求和与次序无关
@@ -396,23 +396,17 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         R.max_acc = amax;
         // 年均流量按上游各格的径流深（Budyko，A5；取整到 1/rq mm 的权重求和，次序无关）；关掉局地雨时按全群的径流系数
         R.Racc = GridD(h, w, 0.0);
-        GridD rain_q(h, w, 0.0); // 常驻河候选只由原有降雨汇流决定；增强集水核不扩张河网。
         if (local_rain) {
             GridD wt(h, w, 0.0);
             for (int i = 0; i < h; ++i)
                 for (int j = 0; j < w; ++j)
                     if (mk(i, j)) wt(i, j) = std::nearbyint(g.runoff(i + R.r0, j + R.c0) * rq);
             const GridD Aw = accumulate(mk, fd, &wt);
-            for (int i = 0; i < h; ++i)
-                for (int j = 0; j < w; ++j)
-                    if (mk(i, j)) wt(i, j) = std::nearbyint(std::max(0.0, g.runoff(i + R.r0, j + R.c0) - g.condense(i + R.r0, j + R.c0)) * rq);
-            const GridD Ar = accumulate(mk, fd, &wt);
             R.Q = GridD(h, w, 0.0);
             for (size_t q = 0; q < n; ++q)
                 if (mk.v[q]) {
                     R.Racc.v[q] = Aw.v[q] * (cell_km2 / rq);
                     R.Q.v[q] = R.Racc.v[q] * 1000.0 / year_s;
-                    rain_q.v[q] = Ar.v[q] * (cell_km2 / rq) * 1000.0 / year_s;
                 }
         } else {
             for (size_t q = 0; q < n; ++q)
@@ -439,13 +433,13 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                 if (local_rain) {
                     double qmx = -INF;
                     for (size_t q = 0; q < n; ++q)
-                        if (mk.v[q]) qmx = std::max(qmx, rain_q.v[q]);
+                        if (mk.v[q]) qmx = std::max(qmx, R.Q.v[q]);
                     qthr = std::min(c.get("hydro.river_min_q_m3s"), c.get("hydro.river_reach_frac") * qmx);
                 }
                 const double rs = inp.river_size;
                 const int top = rs >= c.get("hydro.river_big_size") ? 3 : (rs >= c.get("hydro.river_mid_size") ? 2 : 1);
                 for (size_t q = 0; q < n; ++q) {
-                    const bool per = local_rain ? (mk.v[q] && rain_q.v[q] >= qthr) : R.Akm.v[q] >= thr;
+                    const bool per = local_rain ? (mk.v[q] && R.Q.v[q] >= qthr) : R.Akm.v[q] >= thr;
                     uint8_t lvl = per ? 1 : 0;
                     if (top >= 2 && per && R.Akm.v[q] >= 0.3 * amx) lvl = 2;
                     if (top >= 3 && per && R.Akm.v[q] >= 0.6 * amx) lvl = 3;
@@ -487,12 +481,8 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                         if (li >= 1 && li - 1 < static_cast<int>(vl.size())) flith(i, j) = vl[li - 1];
                     }
         }
-        // 切槽与河网输出采用相同供水口径：临时流路不使用尚未出露的凝结补给。
-        GridD channel_q = R.Q;
-        if (local_rain) for (size_t q = 0; q < n; ++q)
-            if (R.stream.v[q] && !R.river.v[q]) channel_q.v[q] = rain_q.v[q];
         R.ch = carve_channels(hh, R.hr, mk, R.lake, R.recv, R.Akm, R.river, R.stream, P_mm, runoff, J.rim_j, J.keel_j, res_m, year_s, c, k == 0,
-                              local_rain ? &channel_q : nullptr, wall.v.empty() ? nullptr : &wall, flith.v.empty() ? nullptr : &flith, J.age_j);
+                              local_rain ? &R.Q : nullptr, wall.v.empty() ? nullptr : &wall, flith.v.empty() ? nullptr : &flith, J.age_j);
         R.cut = GridD(h, w, 0.0);
         R.h_final = GridD(h, w, NaN);
         for (size_t q = 0; q < n; ++q) {

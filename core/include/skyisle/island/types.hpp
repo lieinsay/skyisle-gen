@@ -39,9 +39,6 @@ struct NodeInputs {
     double precip = 0, temp_sea = 0, lapse_c_per_km = 6.0, arable_frac = 0, river_size = 0;
     double precip_mm_ref = 4000.0;   // 相对降水 1 的毫米数（④ 的 precip_mm_ref，A3 起线性换算）；arable_frac 是降水线之后的（④ 的 arable_frac_eff）
     std::vector<double> precip_share;   // ④ 各季降水占全年的份额（A2 起；空 = 旧产物，四季降水按带界摆动取样）
-    // Model transported column, mm, equal-duration seasons. Empty in old
-    // caches; never reconstruct from normalized display humidity or rainfall.
-    std::vector<double> water_column_mm;
     bool has_river = false;
     // 气候用（④ 的岛上年均值）
     double temp = 0, storm = 0, window = 0, season_range = 0, season_range_sea = 0, temp_winter = 0, temp_summer = 0;
@@ -102,15 +99,6 @@ struct CoreRec {
     double seed_x = 0, seed_y = 0, strength = 0;
     int64_t cells = 0;
     double peak = 0, load = 0, load_x = 0, load_y = 0, mean_above = 0;
-};
-
-// Explicit candidate supply footprint. Mountain load is a proxy for core size,
-// not a measured volume of magical material. Coordinates are group km.
-struct CoreWaterSource {
-    int island = 0, core_index = 0;
-    double x_km = 0, y_km = 0, mountain_volume_km3 = 0;
-    double radius_km = 0, strength = 0, condense_m3s = 0;
-    double domain_area_km2 = 0, capacity_m3s = 0, activity_per_km_day = 0;
 };
 
 struct IslandRec {
@@ -182,7 +170,6 @@ struct RiverNet {
     // w / d = **平岸**宽与深（= 年均口径 × (q_bf/q_mean)^站内指数 0.26 / 0.40）；w_mean / d_mean = 年均流量下的水面宽深
     // （栅格 terrain.npz 的 w_ch_m / d_ch_m 是**河道** = 平岸宽深，用假设的 bf_ratio_channel 切出来的）
     std::vector<float> w_mean, d_mean;
-    std::vector<uint8_t> flow_regime; // 0 临时雨雪径流路径，1 常驻河（与大小级别独立输出）
     struct Seg {
         int island = 0, down = -1, join = -1, start = 0, n = 0, basin = -1, level = 0;
         uint8_t exit = 0;                                        // 0 汇入别的段 / 1 崖边 / 2 湖 / 3 没入地里
@@ -198,11 +185,9 @@ struct RiverNet {
     struct Basin {
         int seg = -1, island = 0, ci = 0, cj = 0;
         double area_km2 = 0, q_mean = 0, bfi = 0, recession_days = 0, quick_days = 0, snow_frac = 0, bf_ratio = 0, cond_frac = 0;
-        std::vector<double> index;                               // 持续补给逐日径流指数（年均 = 1）
-        std::vector<double> event_index;                         // 雨雪事件径流；无补给且汇流结束时严格为 0
-        double event_bf_ratio = 0;
+        std::vector<double> index;                               // 逐日径流指数（年均 = 1）
     };
-    std::vector<Basin> basins; // 每个河网出口独立流域；最后是无河网坡面，不再供小流路共用
+    std::vector<Basin> basins;                                   // 每条出崖边的常年河一个；最后一个是「其余」（小流域共用）
 };
 
 // 地貌（B3，landforms.cpp）：一处特殊的山 / 地貌。kind 是 ASCII 代码（前端映射中文）；r、c 是群栅格的行列（格心 = 整数 + 0.5，同 LinePt），
@@ -371,9 +356,6 @@ struct Group {
     Grid<uint8_t> river_water;      // 河宽过一格、在栅格上记成水的河道格（C1；其余河道格的地表是岸上的）
     GridD condense;                 // 集水核的凝结水（mm/年，C4；只进水账：runoff 已含它，rain 不含）
     std::vector<double> core_s;     // 各岛集水核的强度（C4，跟山走）
-    std::vector<CoreWaterSource> core_water_sources;
-    Grid<int8_t> core_member, core_neighbor; // island-local indices, inherited from terrain formation
-    GridD core_member_weight;
     Grid<uint8_t> cloud_forest;     // 云雾林（C4：林地里凝结水多的格）
     GridD bfi, recharge, recharge_acc;   // 地下水（C5）：基流比例（按岩性）、补给（mm）、顺流向累计的补给（mm·km²；河道格 = 河的基流）
     GridD wt;                            // 水位面（潜水面，m，零点口径；B，四点四十九）：虚空 NaN，陆地格 = 水位（≤ 地表、≥ 骨架顶面 + 最小含水厚）

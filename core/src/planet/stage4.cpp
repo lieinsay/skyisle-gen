@@ -593,14 +593,6 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
     const LatLonGrid Gc = llg(axc);
     C.n_seasons = n_s;
     C.season_shift.assign(n_s, 0.0);
-    auto& budget = C.moisture;
-    budget.ax = axc;
-    budget.seasons = n_s;
-    budget.year_days = ydays;
-    const size_t coarse_size = static_cast<size_t>(axc.nlat) * axc.nlon;
-    for (auto* values : {&budget.column_mm, &budget.rain_mm_day, &budget.source_mm_day,
-                        &budget.u_ms, &budget.v_ms, &budget.rain_rate_day})
-        values->resize(static_cast<size_t>(n_s) * coarse_size);
     std::vector<std::vector<double>> Pf(n_s), qf(n_s);
     std::vector<double> eps_sum(M, 0.0), lift_sum(M, 0.0);
     C.dt_s = INF;
@@ -638,16 +630,6 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
         double dt = 0;
         int64_t ns = 0;
         moisture_solve(uc, vc, Ec, epc, axc, cfg, qc, Pc, dt, ns);
-        for (size_t k = 0; k < coarse_size; ++k) {
-            const size_t j = static_cast<size_t>(s) * coarse_size + k;
-            // Preserve raw q, P and E until their common calibration is known.
-            budget.column_mm[j] = qc[k];
-            budget.rain_mm_day[j] = Pc[k];
-            budget.source_mm_day[j] = Ec[k];
-            budget.u_ms[j] = uc[k];
-            budget.v_ms[j] = vc[k];
-            budget.rain_rate_day[j] = epc[k] / cfg.get("s04.climate.moisture_tau_days");
-        }
         C.dt_s = std::min(C.dt_s, dt);
         C.n_steps += ns;
         Pf[s].resize(M);
@@ -678,16 +660,6 @@ Climate stage4(const Config& cfg, uint64_t seed, const Planet& p, const Winds& w
             C.lift[c] = lift_sum[c] / n_s;
         }
         const double P_ref = np_quantile(Pa, cfg.get("s04.climate.precip_norm_pct") / 100.0);
-        // dq/dt = E - P - div(uq), with solver t in seconds. The existing
-        // annual-rain calibration fixes P_ref -> precip_mm_ref / year_seconds;
-        // the SAME factor must convert q, P and E. q's own P98 is display only.
-        budget.model_to_column_mm = cfg.get("s04.climate.precip_mm_ref", 4000.0)
-                                    / (std::max(P_ref, 1e-12) * ydays * 86400.0);
-        for (size_t k = 0; k < budget.column_mm.size(); ++k) {
-            budget.column_mm[k] *= budget.model_to_column_mm;
-            budget.rain_mm_day[k] *= budget.model_to_column_mm * 86400.0;
-            budget.source_mm_day[k] *= budget.model_to_column_mm * 86400.0;
-        }
         C.precip.resize(M);
         for (size_t c = 0; c < M; ++c) C.precip[c] = Pa[c] / std::max(P_ref, 1e-12);
         const double amp = cfg.get("s04.climate.precip_noise_amp", 0.0);

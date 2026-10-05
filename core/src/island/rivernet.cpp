@@ -1,6 +1,5 @@
 // 河的数据（C3）：见 rivernet.hpp。
 #include "skyisle/island/rivernet.hpp"
-#include "skyisle/island/channel_geometry.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -25,22 +24,6 @@ double lith_at(const std::vector<double>& tab, uint8_t li, double dflt) {
 int sgn(int x) { return (x > 0) - (x < 0); }
 
 }  // namespace
-
-std::vector<double> event_runoff_index(const std::vector<double>& liquid, double quick_days) {
-    const int n = static_cast<int>(liquid.size());
-    std::vector<double> out(n, 0.0);
-    if (!n) return out;
-    // 有限传播时间，不用无限指数尾巴把雨水沟变成泉水。窗宽为三倍快流时间常数。
-    const int window = std::min(n, std::max(1, static_cast<int>(std::ceil(3.0 * quick_days))));
-    double total = 0.0;
-    for (int d = 0; d < n; ++d) {
-        for (int lag = 0; lag < window; ++lag)
-            out[d] += std::max(0.0, liquid[(d - lag + n) % n]) * (window - lag);
-        total += out[d];
-    }
-    if (total > 0.0) for (double& x : out) x *= n / total;
-    return out;
-}
 
 void build_rivernet(Group& g, const Config& c) {
     RiverNet& R = g.rnet;
@@ -138,11 +121,9 @@ void build_rivernet(Group& g, const Config& c) {
     const bool has_farm = !g.cultivated.v.empty();
     const std::vector<int32_t> order = downstream_first(recv, land);
     std::vector<float> a_n(N, 0.f), a_z(N, 0.f), a_L(N, 0.f), a_c(N, 0.f), a_farm(N, 0.f), a_for(N, 0.f), a_zmax(N, 0.f);
-    std::vector<double> rain_acc(N, 0.0);
     for (int32_t k : order) {
         const uint8_t li = has_lith ? g.lith.v[k] : 0;
         a_n[k] = 1.f;
-        rain_acc[k] = std::max(0.0, g.runoff.v[k] - (g.condense.v.empty() ? 0.0 : g.condense.v[k])) * cell_km2;
         a_z[k] = static_cast<float>(g.height.v[k]);
         a_zmax[k] = static_cast<float>(g.height.v[k]);
         a_L[k] = static_cast<float>(lith_at(Lt, li, 1.0));
@@ -155,7 +136,6 @@ void build_rivernet(Group& g, const Config& c) {
         if (r < 0) continue;
         const int32_t k = *it;
         a_n[r] += a_n[k];
-        rain_acc[r] += rain_acc[k];
         a_z[r] += a_z[k];
         a_L[r] += a_L[k];
         a_c[r] += a_c[k];
@@ -164,11 +144,11 @@ void build_rivernet(Group& g, const Config& c) {
         a_zmax[r] = std::max(a_zmax[r], a_zmax[k]);
     }
 
-    // ---- 每个河网出口（含临时流路、入湖）单独汇水，不能把无关的小流域混成一个供水源。
+    // ---- 流域：每条出崖边的常年河一个；陆地格按拓扑序（下游先）继承下游的流域
     std::vector<int> basin_of(N, -1);
     for (size_t s = 0; s < R.segs.size(); ++s) {
         RiverNet::Seg& sg = R.segs[s];
-        if (sg.down < 0) {
+        if (sg.down < 0 && sg.exit == 1 && sg.level >= 1) {
             RiverNet::Basin B;
             B.seg = static_cast<int>(s);
             B.island = sg.island;
@@ -181,10 +161,10 @@ void build_rivernet(Group& g, const Config& c) {
     }
     for (int32_t k : order) {
         const int64_t r = recv[k];
-        if (r >= 0 && basin_of[k] < 0) basin_of[k] = basin_of[r];
+        if (r >= 0) basin_of[k] = basin_of[r];
     }
     const int nb = static_cast<int>(R.basins.size());
-    R.basins.push_back(RiverNet::Basin());   // 其余无河网坡面，仅用于水账
+    R.basins.push_back(RiverNet::Basin());   // 其余：小流域与直接出崖边的坡面共用
     for (RiverNet::Seg& sg : R.segs) {
         const int b = basin_of[R.cell[sg.start + sg.n - 1]];
         sg.basin = b;
@@ -249,7 +229,6 @@ void build_rivernet(Group& g, const Config& c) {
         std::vector<double> swe(nbands, 0.0);
         double Sq = 0.0, Ss = 0.0, tot = 0.0, from_snow = 0.0, gen = 0.0;
         B.index.assign(nd, 0.0);
-        std::vector<double> event_liquid(nd, 0.0);
         for (int pass = 0; pass < 2; ++pass)
             for (int d = 0; d < nd; ++d) {
                 double quick = 0.0, slow = Csum / nd;
@@ -268,7 +247,6 @@ void build_rivernet(Group& g, const Config& c) {
                     slow += B.bfi * r;
                     if (pass == 1) {
                         gen += r;
-                        event_liquid[d] += r;
                         from_snow += bw[t] * m / bp[t];
                     }
                 }
@@ -290,19 +268,19 @@ void build_rivernet(Group& g, const Config& c) {
         }
         B.bf_ratio = mx;
         B.snow_frac = gen > 0.0 ? from_snow / gen : 0.0;
-        B.event_index = event_runoff_index(event_liquid, B.quick_days);
-        for (double x : B.event_index) B.event_bf_ratio = std::max(B.event_bf_ratio, x);
     }
 
     // ---- 沿程每点
     const double tg = rc(c, "shields_gravel"), ts = rc(c, "shields_sand"), low_w = rc(c, "low_energy_w_m2");
-    const double ratio = c.get("hydro.bf_ratio_channel", 5.0);
+    // 平岸宽深 = 年均宽深 × (平岸 / 年均)^站内指数（L&M 1964：w ∝ Q^0.26、d ∝ Q^0.40）——别用下游的 0.5（四点五十一）
     const double wbexp = c.get("hydro.at_station_width_b", 0.26), dfexp = c.get("hydro.at_station_depth_f", 0.40);
+    // 年均流量下的水面宽深（下游关系，L&M 1953）：w = width_a·Q^width_b、d = depth_c·Q^depth_f
+    const double wa = c.get("hydro.width_a", 5.0), wb = c.get("hydro.width_b", 0.5);
+    const double dc0 = c.get("hydro.depth_c", 0.35), df0 = c.get("hydro.depth_f", 0.4);
     const double bf_farm = rc(c, "bqart_farm"), bf_for = rc(c, "bqart_forest"), tol = rc(c, "floor_tol_m");
     const double a_temp = g.clim.a_temp, a_ref = g.clim.a_ref_h;
     const size_t M = R.cell.size();
     R.level.resize(M);
-    R.flow_regime.resize(M);
     R.d50c.resize(M);
     R.planform.resize(M);
     R.confine.resize(M);
@@ -322,24 +300,22 @@ void build_rivernet(Group& g, const Config& c) {
         return clip(std::min((n + 0.5) * step - w / 2.0, nominal), 0.0, nominal);
     };
     for (const RiverNet::Seg& sg : R.segs) {
+        const double ratio = R.basins[sg.basin >= 0 ? sg.basin : nb].bf_ratio;
+        const double rq = ratio > 0.0 ? ratio : 1.0;   // 平岸 / 年均（逐日径流指数的年最大）
         for (int t = 0; t < sg.n; ++t) {
             const size_t m = static_cast<size_t>(sg.start + t);
             const int32_t k = R.cell[m];
             const int i = k / W, j = k % W;
-            const bool perennial = g.river.v[k] > 0;
-            R.flow_regime[m] = perennial ? 1 : 0;
-            // 临时流路无已建模的稳定出露水源。凝结补给留在地下，遇常驻河后才计入河水。
-            const double q = (perennial ? g.runoff_acc.v[k] : rain_acc[k]) * 1000.0 / year_s;
+            const double q = g.runoff_acc.v[k] * 1000.0 / year_s;
             const double qbf = q * (ratio > 0.0 ? ratio : 1.0);
             const double w = g.width_m.v[k], d = g.depth_m.v[k], surf = g.height.v[k];
             const double bed = std::isnan(g.bed_m.v[k]) ? surf - d : g.bed_m.v[k];
             const double S = (g.chan_slope.v.empty() || std::isnan(g.chan_slope.v[k])) ? 0.0 : g.chan_slope.v[k];
             const double n_up = std::max(1.0f, a_n[k]);
-            // Shields 近似用断面平均深度，不能把中心最大深度当作水力半径。
+            // 河床质：平岸 Shields 数，砾床算出来 < 2 mm 的落到砂床（砾—砂的突变）；乘上游岩性的粗细
             const double coarse = a_c[k] / n_up;
-            const double hydraulic_depth = d * channel_area_factor(c);
-            double D = hydraulic_depth * S / (1.65 * tg) * coarse;
-            if (D < 0.002) D = hydraulic_depth * S / (1.65 * ts) * coarse;
+            double D = d * S / (1.65 * tg) * coarse;
+            if (D < 0.002) D = d * S / (1.65 * ts) * coarse;
             const uint8_t dc = D < 6.25e-5 ? 0 : (D < 0.002 ? 1 : (D < 0.064 ? 2 : (D < 0.256 ? 3 : (D < 1.0 ? 4 : 5))));
             // 平面型
             const uint8_t cf = g.confine.v[k];
@@ -373,12 +349,14 @@ void build_rivernet(Group& g, const Config& c) {
             R.acc[m] = static_cast<float>(g.acc_km2.v[k]);
             R.q_mean[m] = static_cast<float>(q);
             R.q_bf[m] = static_cast<float>(qbf);
-            // 静态断面直接读切槽结果；换天气年份不得换一条河槽。
-            // *_mean 指年均流量工况，深度列始终是中心最大水深。
-            R.w_mean[m] = static_cast<float>(w / np_pow(ratio, wbexp));
-            R.d_mean[m] = static_cast<float>(d / np_pow(ratio, dfexp));
-            R.w[m] = static_cast<float>(w);
-            R.d[m] = static_cast<float>(d);
+            // 三个口径各算各的（别叠乘）：年均流量下的水面 = 直接按式子（不依赖栅格，栅格里的已经是河道）；
+            // 真平岸 = 年均 × (q_bf/q_mean)^站内指数；栅格 w_ch_m / d_ch_m = 河道 = 年均 × (假设比值)^站内指数（river.cpp 切的）
+            const double w_mean = wa * np_pow(q, wb), d_mean = dc0 * np_pow(q, df0);
+            R.w_mean[m] = static_cast<float>(w_mean);
+            R.d_mean[m] = static_cast<float>(d_mean);
+            // 平岸宽与深：年均口径 × (平岸 / 年均)^站内指数（L&M 1964：宽 0.26、深 0.40）——q_bf = 年均 × 所在流域的 bf_ratio
+            R.w[m] = static_cast<float>(w_mean * np_pow(rq, wbexp));
+            R.d[m] = static_cast<float>(d_mean * np_pow(rq, dfexp));
             R.surf[m] = static_cast<float>(surf);
             R.bed[m] = static_cast<float>(bed);
             R.slope[m] = static_cast<float>(S);

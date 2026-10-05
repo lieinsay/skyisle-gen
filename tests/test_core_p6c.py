@@ -176,41 +176,6 @@ def test_planet_run_equals_stagewise(world):
             assert np.array_equal(ca[k].astype(np.float32), z[k]), k
 
 
-def test_moisture_budget_units_and_output(world):
-    """One unit calibration applies to storage and fluxes; native data persist.
-
-    Display q is not a recoverable physical quantity: old cached Climate objects
-    must report missing diagnostics instead of manufacturing an absolute column.
-    """
-    cfg, out = world
-    pc = core.make_config(E.planet_config(cfg))
-    P, W, I, C = core.planet_run(pc, 7)
-    budget = core.climate_moisture_arrays(C)
-    with np.load(out / 's04_climate/moisture_budget.npz') as saved:
-        assert set(saved.files) == set(budget)
-        for key, value in budget.items():
-            np.testing.assert_array_equal(saved[key], value)
-    q = budget['water_column_mm']
-    assert q.shape == (cfg['s01']['calendar']['seasons'], len(budget['lats']), len(budget['lons']))
-    assert np.isfinite(q).all() and (q >= 0).all()
-    np.testing.assert_allclose(budget['rain_flux_mm_day'], q * budget['rain_rate_per_day'], rtol=1e-13)
-    ctx = Context(cfg, 7, out)
-    E.clear_cache()
-    assert not core.climate_moisture_arrays(E.part(ctx, 4))
-
-    # Change the external unit calibration, not moisture dynamics. All water
-    # volumes/fluxes scale equally; relative humidity proxy and wind do not.
-    scaled_cfg = copy.deepcopy(cfg)
-    scaled_cfg['s04']['climate']['precip_mm_ref'] *= 2
-    scaled = core.planet_stage4(core.make_config(E.planet_config(scaled_cfg)), 7, P, W, I)
-    b2 = core.climate_moisture_arrays(scaled)
-    for key in ['water_column_mm', 'rain_flux_mm_day', 'source_flux_mm_day']:
-        np.testing.assert_array_equal(b2[key], 2 * budget[key])
-    for key in ['wind_u_ms', 'wind_v_ms', 'rain_rate_per_day']:
-        np.testing.assert_array_equal(b2[key], budget[key])
-    np.testing.assert_array_equal(core.climate_arrays(scaled)['q'], core.climate_arrays(C)['q'])
-
-
 @pytest.mark.parametrize("sets,first", [
     (["s01.planet.held_hou_scaling=true", "s01.planet.rotation_period_hr=30.0"], "s01_planet"),
     (["s01.calendar.mode=orbit_to_calendar", "s01.calendar.moon=false"], "s01_planet"),

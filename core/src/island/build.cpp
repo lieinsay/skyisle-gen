@@ -270,12 +270,6 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         });
     }
     GridD top_g(H, W, NaN), skel_g(H, W, NaN), phi_g(H, W, NaN);
-    const bool core_domain = c.get("water.core_mountain_domain", 0) != 0;
-    if (core_domain) {
-        g.core_member = Grid<int8_t>(H, W, -1);
-        g.core_neighbor = Grid<int8_t>(H, W, -1);
-        g.core_member_weight = GridD(H, W, 0.0);
-    }
     for (int k = 0; k < n; ++k) {
         const Shape& s = ss.shapes[k];
         const int m = s.mask.H;
@@ -297,11 +291,6 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
                 if (!std::isnan(height(gi, gj))) continue;
                 height(gi, gj) = sc[k].h(i, j);
                 island_id(gi, gj) = static_cast<int16_t>(k);
-                if (core_domain) {
-                    g.core_member(gi, gj) = sc[k].core_member(i, j);
-                    g.core_neighbor(gi, gj) = sc[k].core_neighbor(i, j);
-                    g.core_member_weight(gi, gj) = sc[k].core_member_weight(i, j);
-                }
                 phi_g(gi, gj) = s.phi(i, j);
                 if (!sc[k].top.v.empty()) {
                     top_g(gi, gj) = sc[k].top(i, j);
@@ -400,19 +389,6 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
     const int c_lo = std::max(0, clo_l - mg), c_hi = std::min(W, chi_l + mg + 1);
     g.H = r_hi - r_lo;
     g.W = c_hi - c_lo;
-    if (core_domain) {
-        auto member = std::move(g.core_member);
-        auto neighbor = std::move(g.core_neighbor);
-        auto weight = std::move(g.core_member_weight);
-        g.core_member = Grid<int8_t>(g.H, g.W, -1);
-        g.core_neighbor = Grid<int8_t>(g.H, g.W, -1);
-        g.core_member_weight = GridD(g.H, g.W, 0.0);
-        for (int i = 0; i < g.H; ++i) for (int j = 0; j < g.W; ++j) {
-            g.core_member(i, j) = member(i+r_lo, j+c_lo);
-            g.core_neighbor(i, j) = neighbor(i+r_lo, j+c_lo);
-            g.core_member_weight(i, j) = weight(i+r_lo, j+c_lo);
-        }
-    }
     g.height = GridD(g.H, g.W);
     g.island_id = Grid<int16_t>(g.H, g.W);
     g.strat_top = GridD(g.H, g.W, NaN);

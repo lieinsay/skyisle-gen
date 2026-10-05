@@ -29,9 +29,6 @@ add_library(skyisle_core STATIC
   src/island/landforms.cpp
   src/island/coast.cpp
   src/island/groundwater.cpp
-  src/island/aquifer_balance.cpp
-  src/island/layered_aquifer.cpp
-  src/island/spring_routing.cpp
   src/island/river.cpp
   src/island/rivernet.cpp
   src/island/hydro.cpp

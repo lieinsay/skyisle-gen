@@ -100,15 +100,6 @@ island::NodeInputs node_inputs(const Islands& isl, const Climate& c, int64_t nod
     x.precip_mm_ref = cfg.get("s04.climate.precip_mm_ref", 4000.0);
     if (!c.i_precip_share.empty())
         for (int k = 0; k < c.n_seasons; ++k) x.precip_share.push_back(f32(c.i_precip_share[static_cast<size_t>(k) * isl.n() + q]));
-    if (c.moisture.seasons) {
-        const auto& b = c.moisture;
-        const LatLonGrid grid = llg(b.ax);
-        for (int k = 0; k < b.seasons; ++k) {
-            const auto begin = b.column_mm.begin() + static_cast<size_t>(k) * b.ax.size();
-            const std::vector<double> field(begin, begin + b.ax.size());
-            x.water_column_mm.push_back(grid_interp(field, grid, x.lat, x.lon));
-        }
-    }
     x.river_size = f32(c.i_river_size[q]);
     x.has_river = c.i_has_river[q] != 0;
     x.temp = f32(c.i_temp[q]);

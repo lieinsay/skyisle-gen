@@ -34,7 +34,7 @@ GridD coast_distance(const GridD& phi, double res_m) {
     std::vector<Seg> segs;
     std::vector<int32_t> head(static_cast<size_t>(H) * W, -1), next;
     auto add = [&](int bi, int bj, double ay, double ax, double by, double bx) {
-        segs.push_back({ax, ay, bx, by});
+        segs.push_back({ay, ax, by, bx});
         next.push_back(head[static_cast<size_t>(bi) * W + bj]);
         head[static_cast<size_t>(bi) * W + bj] = static_cast<int32_t>(segs.size() - 1);
     };
