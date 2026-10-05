@@ -689,12 +689,18 @@ void bind_island(nb::module_& m) {
         .def_prop_ro("node_bottoms", &LayeredAquifer::node_bottoms)
         .def_prop_ro("node_tops", &LayeredAquifer::node_tops)
         .def_prop_ro("node_lithologies", &LayeredAquifer::node_lithologies)
-        .def("solve", [](const LayeredAquifer& model, ArrD2 recharge, int count, double tolerance) {
+        .def("solve", [](const LayeredAquifer& model, ArrD2 recharge, int count, double tolerance, nb::object initial) {
             const auto r = grid_from(recharge);
+            std::vector<double> head;
+            if (!initial.is_none()) {
+                const auto a = nb::cast<ArrAny>(initial);
+                if (a.ndim() != 1) throw std::invalid_argument("layer head must be a node vector");
+                head.assign(a.data(), a.data()+a.size());
+            }
             LayeredAquiferResult result;
-            { nb::gil_scoped_release release; result = model.solve(r, count, tolerance); }
+            { nb::gil_scoped_release release; result = model.solve(r, count, tolerance, initial.is_none() ? nullptr : &head); }
             return layered_aquifer_dict(result);
-        }, "recharge_ms"_a, "max_iterations"_a = 10000, "relative_tolerance"_a = 1e-7)
+        }, "recharge_ms"_a, "max_iterations"_a = 10000, "relative_tolerance"_a = 1e-7, "initial_head"_a = nb::none())
         .def("step", [](const LayeredAquifer& model, ArrD2 recharge, ArrAny previous, double dt, int count, double tolerance) {
             if (previous.ndim() != 1) throw std::invalid_argument("layer head must be a node vector");
             const auto r = grid_from(recharge);

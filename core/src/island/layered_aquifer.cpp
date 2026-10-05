@@ -126,9 +126,10 @@ LayeredAquifer::LayeredAquifer(const GridD& surface, const GridD& structural, co
 }
 
 LayeredAquiferResult LayeredAquifer::advance(const GridD& recharge, const std::vector<double>* previous,
-    double dt, int max_iterations, double rtol) const {
+    double dt, int max_iterations, double rtol, const std::vector<double>* initial) const {
     if (recharge.H != height_ || recharge.W != width_ || max_iterations < 1 ||
         !(std::isfinite(rtol) && rtol > 0 && rtol < 1) ||
+        (initial && initial->size() != nodes_.size()) ||
         (previous && (previous->size() != nodes_.size() || !(std::isfinite(dt) && dt > 0))))
         throw std::invalid_argument("invalid layered aquifer solve inputs");
     LayeredAquiferResult out;
@@ -145,9 +146,13 @@ LayeredAquiferResult LayeredAquifer::advance(const GridD& recharge, const std::v
         else source[offsets_[k+1]-1] = q;
     }
     const GridD direct_surface = out.surface_m3s;
+    // Local root error may use at most one percent of the final global water
+    // tolerance in aggregate. The final sum of absolute residuals is unchanged.
+    const double root_tolerance = std::max(1e-15,
+        out.input_m3s*rtol/(100*std::max<size_t>(1, nodes_.size())));
     for (size_t i = 0; i < nodes_.size(); ++i) {
         const auto& n = nodes_[i];
-        const double h = previous ? (*previous)[i] : n.bottom;
+        const double h = initial ? (*initial)[i] : n.bottom;
         if (!(std::isfinite(h) && h >= n.bottom && h <= n.maximum_head))
             throw std::invalid_argument("invalid layered aquifer initial head");
         out.head_m[i] = h;
@@ -184,6 +189,76 @@ LayeredAquiferResult LayeredAquifer::advance(const GridD& recharge, const std::v
         }
         return value;
     };
+    // Resolve the strongly coupled vertical column together. Horizontal
+    // neighbors stay fixed during this block Newton correction. This avoids
+    // thousands of scalar sweeps exchanging almost equal inter-layer fluxes.
+    size_t maximum_column = 0;
+    for (size_t k = 0; k < land_.size(); ++k)
+        maximum_column = std::max(maximum_column, offsets_[k+1]-offsets_[k]);
+    std::vector<double> lower(maximum_column), diagonal(maximum_column), upper(maximum_column),
+        rhs(maximum_column), delta(maximum_column), saved(maximum_column);
+    auto column_error = [&](size_t begin, size_t end) {
+        double error = 0;
+        for (size_t i = begin; i < end; ++i) {
+            double derivative = 0;
+            const auto& n = nodes_[i]; const double h = out.head_m[i];
+            double r = source[i]-evaluate(i, h, derivative);
+            if (n.surface && h == n.top) r = std::min(0.0, r);
+            error += std::abs(r);
+        }
+        return error;
+    };
+    auto correct_column = [&](size_t begin, size_t end) {
+        const size_t count = end-begin;
+        if (count < 2) return;
+        for (int step = 0; step < 8; ++step) {
+            const double before = column_error(begin, end);
+            if (before <= root_tolerance*count) break;
+            bool usable = true;
+            for (size_t j = 0; j < count; ++j) {
+                const size_t i = begin+j; const auto& n = nodes_[i];
+                const double h = saved[j] = out.head_m[i];
+                rhs[j] = source[i]-evaluate(i, h, diagonal[j]);
+                lower[j] = upper[j] = 0;
+                if ((n.surface && h == n.top && rhs[j] >= 0) || (h == n.bottom && rhs[j] <= 0)) {
+                    diagonal[j] = 1; rhs[j] = 0; continue;
+                }
+                for (size_t e : n.edges) {
+                    const auto& edge = edges_[e];
+                    if (!edge.vertical) continue;
+                    if (i == edge.a)
+                        lower[j] = out.head_m[edge.b] > edge.bottom ? -edge.conductance : 0;
+                    else upper[j] = -edge.conductance;
+                }
+                if (!(diagonal[j] > 0)) usable = false;
+            }
+            // A dry quadratic face may have zero derivative. The preceding
+            // bracketed scalar sweep handles its wetting without regularizing K.
+            if (!usable) break;
+            for (size_t j = 1; j < count; ++j) {
+                const double factor = lower[j]/diagonal[j-1];
+                diagonal[j] -= factor*upper[j-1];
+                rhs[j] -= factor*rhs[j-1];
+                if (!(diagonal[j] > 0 && std::isfinite(diagonal[j]))) { usable = false; break; }
+            }
+            if (!usable) break;
+            for (size_t j = count; j-- > 0;)
+                delta[j] = (rhs[j]-(j+1 < count ? upper[j]*delta[j+1] : 0))/diagonal[j];
+            bool accepted = false;
+            double damping = 1;
+            for (int trial = 0; trial < 14; ++trial, damping *= .5) {
+                for (size_t j = 0; j < count; ++j) {
+                    const auto& n = nodes_[begin+j];
+                    out.head_m[begin+j] = std::clamp(saved[j]+damping*delta[j], n.bottom, n.maximum_head);
+                }
+                if (column_error(begin, end) < before) { accepted = true; break; }
+            }
+            if (!accepted) {
+                for (size_t j = 0; j < count; ++j) out.head_m[begin+j] = saved[j];
+                break;
+            }
+        }
+    };
     for (int iteration = 0; iteration < max_iterations; ++iteration) {
         for (size_t i = 0; i < nodes_.size(); ++i) {
             const auto& n = nodes_[i];
@@ -193,15 +268,22 @@ LayeredAquiferResult LayeredAquifer::advance(const GridD& recharge, const std::v
             double head = std::clamp(out.head_m[i], low, high);
             for (int j = 0; j < 40; ++j) {
                 const double error = evaluate(i, head, derivative)-source[i];
-                if (std::abs(error) <= std::max(1e-15, source[i]*1e-12)) break;
+                if (std::abs(error) <= root_tolerance) break;
                 if (error > 0) high = head; else low = head;
                 double next = derivative > 0 ? head-error/derivative : (low+high)/2;
+                // A Newton correction below one representable head increment
+                // cannot improve this coordinate; do not bounce to the bracket
+                // midpoint and spend another forty evaluations on roundoff.
+                if (next == head || std::nextafter(low, high) >= high) break;
                 if (!(next > low && next < high)) next = (low+high)/2;
                 head = next;
             }
-            const double omega = previous ? 1.0 : 1.35;
-            out.head_m[i] = std::clamp(out.head_m[i]+omega*(head-out.head_m[i]), n.bottom, n.maximum_head);
+            // Monotone coordinate update. Over-relaxing head across perched
+            // and exposed-face active sets can oscillate on real stratigraphy.
+            out.head_m[i] = std::clamp(head, n.bottom, n.maximum_head);
         }
+        for (size_t cell = 0; cell < land_.size(); ++cell)
+            correct_column(offsets_[cell], offsets_[cell+1]);
         out.iterations = iteration+1; out.absolute_residual_m3s = 0;
         out.output_m3s = 0; out.total_storage_change_m3 = 0;
         out.surface_m3s = direct_surface;
@@ -229,12 +311,13 @@ LayeredAquiferResult LayeredAquifer::advance(const GridD& recharge, const std::v
     return out;
 }
 
-LayeredAquiferResult LayeredAquifer::solve(const GridD& r, int max_iterations, double rtol) const {
-    return advance(r, nullptr, 0, max_iterations, rtol);
+LayeredAquiferResult LayeredAquifer::solve(const GridD& r, int max_iterations, double rtol,
+    const std::vector<double>* initial) const {
+    return advance(r, nullptr, 0, max_iterations, rtol, initial);
 }
 LayeredAquiferResult LayeredAquifer::step(const GridD& r, const std::vector<double>& previous,
     double dt, int max_iterations, double rtol) const {
-    return advance(r, &previous, dt, max_iterations, rtol);
+    return advance(r, &previous, dt, max_iterations, rtol, &previous);
 }
 std::vector<int64_t> LayeredAquifer::node_cells() const {
     std::vector<int64_t> v; for (const auto& n : nodes_) v.push_back(static_cast<int64_t>(n.cell)); return v;

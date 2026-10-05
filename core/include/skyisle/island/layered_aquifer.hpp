@@ -29,7 +29,8 @@ public:
                    const std::array<HydraulicMaterial, LI_COUNT>& materials, double cell_m,
                    double shallow_depth_m = 0,
                    const std::array<HydraulicMaterial, LI_COUNT>& shallow_materials = {});
-    LayeredAquiferResult solve(const GridD& recharge_ms, int max_iterations = 10000, double rtol = 1e-7) const;
+    LayeredAquiferResult solve(const GridD& recharge_ms, int max_iterations = 10000, double rtol = 1e-7,
+                              const std::vector<double>* initial_head = nullptr) const;
     LayeredAquiferResult step(const GridD& recharge_ms, const std::vector<double>& previous_head,
                              double dt_s, int max_iterations = 10000, double rtol = 1e-7) const;
     std::vector<int64_t> node_cells() const;
@@ -60,6 +61,7 @@ private:
     std::vector<size_t> offsets_;
     void connect(Edge edge);
     LayeredAquiferResult advance(const GridD& recharge, const std::vector<double>* previous,
-                                 double dt, int max_iterations, double rtol) const;
+                                 double dt, int max_iterations, double rtol,
+                                 const std::vector<double>* initial_head) const;
 };
 } // namespace skyisle::island

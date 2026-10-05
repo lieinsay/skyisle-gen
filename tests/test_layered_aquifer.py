@@ -106,6 +106,19 @@ def test_unconverged_result_is_explicit_and_invalid_state_is_rejected():
         a.solve(np.array([[-1e-7]]))
 
 
+def test_resumed_equilibrium_does_not_add_transient_storage_or_change_answer():
+    a = model()
+    rain = np.array([[1e-7]])
+    expected = a.solve(rain)
+    partial = a.solve(rain, max_iterations=1)
+    resumed = a.solve(rain, initial_head=partial['head_m'])
+    closed(resumed)
+    np.testing.assert_allclose(resumed['head_m'], expected['head_m'], atol=2e-8)
+    assert resumed['total_storage_change_m3'] == 0
+    with pytest.raises(ValueError):
+        a.solve(rain, initial_head=np.array([-1.]))
+
+
 def test_exposed_slope_drains_to_lower_land_without_predefined_channel():
     # Non-overlapping rock columns: one of the high cell's four open faces
     # discharges onto the lower cell. The other three discharge off-island.
