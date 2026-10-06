@@ -446,7 +446,9 @@ function drawRivers(ctx){
           let lw = trueScale ? Math.max(0.12, wm * pxPerM) : Math.max(riverMinPx(wm, lv), wm * pxPerM);
           lw *= 0.6 + 0.4 * w;
           if (!trueScale) lw = Math.max(w < 1 ? 1.2 - 0.7 * w : 0.5, lw);   // 示意线宽：给个下限，细的河也看得见
-          lw = Math.round(lw * 4) / 4; const col = colOf(lv, w), kk = col + lw;
+          // 真实比例保留亚像素宽度；0.12 px 取整到 0.25 px 会变成 0，连接段因而消失。
+          if (!trueScale) lw = Math.round(lw * 4) / 4;
+          const col = colOf(lv, w), kk = col + lw;
           if (kk !== key) { if (open) ctx.stroke(); ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(xa, ya); key = kk; open = true; }
           ctx.lineTo(xb, yb);
         }
