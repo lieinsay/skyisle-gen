@@ -42,6 +42,19 @@ def _hash_dir(d: Path) -> dict:
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(d.iterdir()) if p.suffix in (".npz", ".png", ".csv")}
 
 
+def test_stream_width_legacy_multiplier_is_ignored(small_ctx):
+    """旧 run 快照的溪涧缩放不能重新引入分类交界处的宽深跳变。"""
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    a = isl.generate(small_ctx, node, res_m=300, steps=2, write=False,
+                     sets=["island.hydro.stream_width_mult=0.5"], log=lambda *a: None)
+    b = isl.generate(small_ctx, node, res_m=300, steps=2, write=False,
+                     sets=["island.hydro.stream_width_mult=1.0"], log=lambda *a: None)
+    assert a["stream"].any()
+    np.testing.assert_array_equal(a["w_ch_m"], b["w_ch_m"])
+    np.testing.assert_array_equal(a["d_ch_m"], b["d_ch_m"])
+
+
 def test_island_deterministic_and_consistent(small_ctx):
     from skyisle_gen import island as isl
     node = _pick_node(small_ctx)
@@ -59,14 +72,14 @@ def test_island_deterministic_and_consistent(small_ctx):
     assert c["peak_m"]["actual"] > c["height_m"]["actual"]
     if STEPS >= 2:
         assert abs(c["arable_frac"]["actual"] - c["arable_frac"]["target"]) < 0.005      # IS-arable
-        assert c["has_river"]["actual"] == c["has_river"]["target"]                       # IS-river
-        assert all(not i["has_perennial_river"] for i in J1["islands"][1:])               # 小岛只有溪涧
         z = np.load(out / "terrain.npz")
         land = z["island_id"] >= 0
         assert np.isnan(z["height"][~land]).all() and not np.isnan(z["height"][land]).any()
         assert (z["landcover"][land] > 0).all() and (z["landcover"][~land] == 0).all()
         # 河道成形：常年河 / 溪涧每格有河宽水深；河道下切（主岛有河时至少一条入虚空、带瀑布落差）
         rv = z["river"] > 0
+        for island in J1["islands"]:
+            assert island["has_perennial_river"] == bool((rv & (z["island_id"] == island["id"])).any())
         assert (z["w_ch_m"][rv] > 0).all() and (z["d_ch_m"][rv] > 0).all()
         assert (z["w_ch_m"][~land] == 0).all() and not (z["floodplain"] & (rv | z["lake"])).any()
         if c["has_river"]["actual"]:

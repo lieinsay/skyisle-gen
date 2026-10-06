@@ -421,35 +421,20 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         }
         R.river = Grid<uint8_t>(h, w, 0);
         R.stream = Grid<uint8_t>(h, w, 0);
+        // 行星层 has_river 是粗略潜力提示；各岛的河流按本地径流独立判定。
+        // 年均流量门槛是规模代理，并不能证明枯水期常流；日水情另行计算。
+        const double qmin = c.get("hydro.river_min_q_m3s");
+        R.river_thr = qmin * year_s / std::max(1e-9, P_mm / 1000.0 * runoff) / 1e6;
+        for (size_t q = 0; q < n; ++q) {
+            if (!mk.v[q] || R.lake.v[q]) continue;
+            const double flow = local_rain ? R.Q.v[q] : R.Racc.v[q] * 1000.0 / year_s;
+            const bool per = flow >= qmin && R.Akm.v[q] >= stream_min;
+            // 级别只用于描述与着色，宽深始终直接读取连续流量。
+            R.river.v[q] = per ? (flow >= c.get("hydro.river_large_q_m3s", 4.8) ? 3 :
+                (flow >= c.get("hydro.river_medium_q_m3s", 1.2) ? 2 : 1)) : 0;
+            R.stream.v[q] = R.Akm.v[q] >= stream_min && !per;
+        }
         if (k == 0) {
-            if (inp.has_river) {
-                const double q_area = c.get("hydro.river_min_q_m3s") * year_s / std::max(1e-9, P_mm / 1000.0 * runoff) / 1e6;
-                double amx = -INF;
-                for (size_t q = 0; q < n; ++q) amx = std::max(amx, R.Akm.v[q]);
-                const double thr = std::min(q_area, c.get("hydro.river_reach_frac") * amx);
-                R.river_thr = thr;
-                // 局地雨：常年河直接按流量判（≥ river_min_q_m3s，或主岛最大流量的 river_reach_frac）
-                double qthr = 0.0;
-                if (local_rain) {
-                    double qmx = -INF;
-                    for (size_t q = 0; q < n; ++q)
-                        if (mk.v[q]) qmx = std::max(qmx, R.Q.v[q]);
-                    qthr = std::min(c.get("hydro.river_min_q_m3s"), c.get("hydro.river_reach_frac") * qmx);
-                }
-                const double rs = inp.river_size;
-                const int top = rs >= c.get("hydro.river_big_size") ? 3 : (rs >= c.get("hydro.river_mid_size") ? 2 : 1);
-                for (size_t q = 0; q < n; ++q) {
-                    const bool per = local_rain ? (mk.v[q] && R.Q.v[q] >= qthr) : R.Akm.v[q] >= thr;
-                    uint8_t lvl = per ? 1 : 0;
-                    if (top >= 2 && per && R.Akm.v[q] >= 0.3 * amx) lvl = 2;
-                    if (top >= 3 && per && R.Akm.v[q] >= 0.6 * amx) lvl = 3;
-                    if (mk.v[q]) R.river.v[q] = lvl;
-                    if (mk.v[q] && R.Akm.v[q] >= stream_min && !per) R.stream.v[q] = 1;
-                }
-            } else {
-                for (size_t q = 0; q < n; ++q)
-                    if (mk.v[q] && R.Akm.v[q] >= stream_min) R.stream.v[q] = 1;
-            }
             // 集水盆地（原始数；排序与取前几个在前端）
             double total = 0;
             int64_t cells = 0;
@@ -462,9 +447,6 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             for (size_t q = 0; q < n; ++q)
                 if (mk.v[q] && R.Akm.v[q] >= thr && R.recv[q] < 0)
                     R.basins.mouths.push_back({static_cast<double>(q / w + R.r0), static_cast<double>(q % w + R.c0), R.Akm.v[q]});
-        } else {
-            for (size_t q = 0; q < n; ++q)
-                if (mk.v[q] && R.Akm.v[q] >= stream_min) R.stream.v[q] = 1;
         }
         // 河道成形（B2：谷壁坡按河床那格露出的岩性的坍塌角；C2：谷底宽的岩性系数也按它，岛龄系数按本岛）
         const IslandRec& J = g.islands[k];

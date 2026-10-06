@@ -64,9 +64,10 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
     e_ar = abs(ar.get("actual", -1) - ar["target"])
     add("IS-arable", "已垦（在种）/ 陆地 = arable_frac（P5：行星层的可耕率是已垦的额度）", round(e_ar, 5), "< 0.005", e_ar < 0.005)
     rv = cons["has_river"]
-    small_ok = all(not i.get("has_perennial_river", False) for i in J["islands"][1:])
-    add("IS-river", "主岛有常年河 ⇔ has_river；小岛只有溪涧", {"main": rv.get("actual"), "target": rv["target"], "small_islands_ok": small_ok},
-        "相等", rv.get("actual") == rv["target"] and small_ok)
+    flags_ok = all(bool(((g["island_id"] == i["id"]) & (g["river"] > 0)).any()) ==
+                   bool(i.get("has_perennial_river", False)) for i in J["islands"])
+    add("IS-river", "各岛河流标记与实际河网一致；行星层 has_river 仅作潜力提示",
+        {"main": rv.get("actual"), "planet_hint": rv["target"], "flags_ok": flags_ok}, "标记一致", flags_ok)
     if "w_ch_m" in g:
         rvm = g["river"] > 0
         ok_wd = bool(((g["w_ch_m"][rvm] > 0) & (g["d_ch_m"][rvm] > 0)).all()) if rvm.any() else True
