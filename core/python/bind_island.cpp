@@ -330,6 +330,12 @@ nb::dict hydro_dict(Group& g) {
     d["w_ch_m"] = f32_np(g.width_m);        // 河道（**平岸**）宽 / 深：年均口径 × (bf_ratio_channel)^站内指数（river.cpp；四点五十一）
     d["d_ch_m"] = f32_np(g.depth_m);        // 逐点、按真实平岸流量的宽深在 rivers.json 的 segments（w_bf_m / d_bf_m），年均水面宽是 w_mean_m
     d["cut_m"] = f32_np(g.cut_m);
+    if (!g.sed_source.v.empty()) {
+        d["sed_source_kg_y"] = grid_np(GridD(g.sed_source));
+        d["sed_flux_kg_y"] = grid_np(GridD(g.sed_flux));
+        d["sed_deposit_kg_y"] = grid_np(GridD(g.sed_deposit));
+        d["sed_grain_m"] = f32_np(g.sed_grain);
+    }
     d["slope_deg"] = f32_np(g.slope);
     d["rain_mm"] = f32_np(g.rain);
     d["runoff_mm"] = f32_np(g.runoff);

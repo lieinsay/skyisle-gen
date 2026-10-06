@@ -14,10 +14,10 @@ COLS = ["row", "col", "level", "acc_km2", "q_mean", "q_bf", "w_bf_m", "d_bf_m", 
         "ssc_mgl", "fp_left_m", "fp_right_m", "confine", "w_channel_m"]
 NOTE = ("河网（C3）：segments 每段从上游到下游，干流按汇水最大的一支往上追，down = 汇入的段号（−1 = 出口）、join = 汇入处在下游段里的点号；"
         "exit：汇入 / 崖边 / 湖 / 没入地里；basin = 所在流域（basins 的下标，−1 = 其余）。pts 的列见 cols：行列是群栅格的格（格心 = 整数 + 0.5），"
-        "level 0 = 季节性溪涧、1–3 小中大河；q_mean 年均流量（m³/s，按格的 Budyko 径流累计）、q_bf 平岸流量（= 年均 × 所在流域逐日径流指数的年最大）；"
-        "**w_bf_m / d_bf_m 平岸宽与深**（= 年均口径 × (q_bf/q_mean)^站内指数，L&M 1964：宽 0.26、深 0.40；比 w_mean_m 宽 (平岸/年均)^0.26 ≈ 1.5–2 倍）、"
-        "**w_mean_m / d_mean_m 年均流量下的水面宽深**（w = 5·Q^0.5 直接算；屏幕上那条河画的是栅格 terrain.npz 的 w_ch_m / d_ch_m = **河道**，两者差一个假设的 bf_ratio_channel）；surf_m 平岸水面（= 该格 height）、bed_m 河床；slope 河床比降（顺流 500 m）；"
-        "d50_mm 河床质中值粒径（平岸 Shields 数：砾床 0.05、砂床 1；乘上游岩性的粗细）与档 d50（d50_classes）；"
+        "level 0 = 季节性溪涧、1–3 年均流量门槛分类；q_mean 年均流量（m³/s，按格的 Budyko 径流累计）、q_bf 是逐日指数年最大流量的历史字段名，不能视作已标定平岸流量；"
+        "**w_bf_m / d_bf_m 年最大流量对应的估算水面宽深**（历史字段名；年均口径 × (q_bf/q_mean)^站内指数，宽 0.26、深 0.40）、"
+        "**w_mean_m / d_mean_m 年均流量下的估算水面宽深**（原有模型以流量幂律算；水沙试验从河槽按假设倍数反算。屏幕上的固定河槽是 terrain.npz 的 w_ch_m / d_ch_m）；surf_m 平岸水面（= 该格 height）、bed_m 河床；slope 河床比降（顺流 500 m）；"
+        "d50_mm 粒径估计与档 d50（d50_classes）：原有模型用 Shields 数反推；水沙试验用来源混合和磨细后的粗粒质量几何均值代理，不是实测中值粒径；"
         "planform 平面型（Kleinhans & van den Berg 2011，planform_classes）；ssc_mgl 年均悬沙浓度（BQART，Syvitski & Milliman 2007，按上游的林与已垦）；"
         "fp_left_m / fp_right_m 顺流向左右的谷底宽（到谷坡脚）；confine 限制度（confine_classes）")
 INDEX_NOTE = ("逐日径流指数（第 year 年）：每条出崖边的常年河一个流域，最后一个（rest）是其余的小流域与直接出崖边的坡面共用；某点某天的流量 = 年均 × 所在流域当天的指数。"

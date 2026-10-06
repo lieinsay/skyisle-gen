@@ -349,6 +349,7 @@ struct Group {
     Grid<uint8_t> cultivable, cover_natural;
     std::vector<double> suit;
     GridD width_m, depth_m, cut_m, slope;   // width_m / depth_m = **河道（平岸）**宽深（四点五十一；逐点的真值在 g.rnet.w / d）
+    GridD sed_source, sed_flux, sed_deposit, sed_grain; // 试验：kg/年来源、输送、沉积；独立代表粒径 m。
     GridD bed_m;                    // 河床高程（C1：河道格的 height 是平岸水面，河床 = height − depth_m；其余 NaN）
     GridD floor_w;                  // 谷底全宽（m，C2：河道格的目标 W）
     Grid<uint8_t> confine;          // 限制度（C2，河道格）：1 峡谷 / 2 半限制 / 3 开阔

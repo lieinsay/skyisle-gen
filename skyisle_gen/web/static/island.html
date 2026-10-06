@@ -156,6 +156,8 @@ a{color:var(--acc2)}
     <textarea id="sets" placeholder="island.terrain.carve_k=0.08&#10;island.layout.gap_max_km=8"></textarea>
     <div class="btnrow"><button id="btnRegen" class="primary">重新生成</button><button id="btnDefaults" class="mini">看当前参数</button></div>
     <div class="btnrow"><button id="btnCaptureTrial">地形竞争试验</button><button id="btnCaptureLegacy">原有水系</button></div>
+    <div class="btnrow"><button id="btnReachTrial">连续河段水沙试验</button><button id="btnReachLegacy">原有河槽</button></div>
+    <div class="small">水沙试验保留当前地形竞争设置；来源率、粒径与输沙天数尚待标定。</div>
     <div class="small">试验让相邻更低、汇水更大的流域竞争，重算三轮；不增加水源或直接放大河宽。按钮会重新生成当前岛群，其他覆盖参数保留。状态栏标明实际模型。</div>
     <pre id="cfgBox" class="small" style="display:none;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
   </details>
@@ -236,7 +238,8 @@ async function load(force = false, sets = null){
       const warm = D.climate.seasons.reduce((a, b) => (b.temp_c > a.temp_c ? b : a)); day = Math.round((warm.days[0] + warm.days[1]) / 2); $('daySl').value = day; renderDay(); draw(); }
     dayChosen = true;
     const captureName = D.island.meta.capture_model === 'topographic-v1' ? `地形竞争试验 ${D.island.meta.capture_passes} 轮` : '原有水系';
-    setStatus(`就绪：${run} #${node} · ${R.rows}×${R.cols} @ ${R.res_m} m${R.step > 1 ? '（抽稀 ' + R.step + '×）' : ''} · ${captureName} · 生成 ${D.island.meta.seconds} s`);
+    const channelName = D.island.meta.channel_model === 'reach-gravel-v1' ? '连续河段水沙试验' : '原有河槽';
+    setStatus(`就绪：${run} #${node} · ${R.rows}×${R.cols} @ ${R.res_m} m${R.step > 1 ? '（抽稀 ' + R.step + '×）' : ''} · ${captureName} · ${channelName} · 生成 ${D.island.meta.seconds} s`);
   } catch (e) { setStatus('出错：' + e); console.error(e); }
   $('loading').style.display = 'none';
 }
@@ -246,6 +249,12 @@ function renderSide(){
   const J = D.island, m = J.meta, c = J.constraints;
   $('hdr').textContent = `#${node}（${fmt(m.lat, 1)}°, ${fmt(m.lon, 1)}°）${m.cls_zh} · ${m.age_zh} · 板块${m.boundary_type}带 · ${J.islands.length} 岛`;
   $('runIn').value = run; $('nodeIn').value = node; $('yearIn').value = year;
+  // 重新打开已有试验产物时保留实际水系选项，切换河槽模型不意外重置流域整合。
+  if (!$('sets').value.trim()) $('sets').value = [
+    `island.hydro.capture_topographic_v1=${m.capture_model === 'topographic-v1'}`,
+    `island.hydro.capture_topographic_passes=${m.capture_passes || 1}`,
+    `island.hydro.reach_geometry_v1=${m.channel_model === 'reach-gravel-v1'}`
+  ].join('\n');
   const back = q.get('back') || ''; const lensPart = (back.match(/lens=(\w+)/) || [])[1];
   $('backLink').href = `/#${lensPart ? 'lens=' + lensPart + '&' : ''}run=${run}&node=${node}`;
   const row = (k, t, a, rel) => `<tr><td>${k}</td><td>${fmt(t, 3)}</td><td>${fmt(a, 3)}</td><td class="small">${rel}</td></tr>`;
@@ -279,9 +288,13 @@ function renderSide(){
       + `<tr><td>主家候选</td><td>${(S.home_candidates||[]).map(h => `<div><b>${h.id}·${h.kind}</b>（岛 ${h.island}，${fmt(h.elev_m,0)} m，离邑治 ${h.dist_seat_km ?? '—'} km，离主泊场 ${h.dist_main_landing_km ?? h.dist_main_dock_km ?? '—'} km）：${h.note}；${h.season_type}，雪 ${h.snow_days} 日 / 风暴 ${h.storm_days} 日 / 可出航 ${h.sailable_days} 日${h.island_has_river ? '，岛上有河' : ''}${h.island_lakes ? '，湖 ' + h.island_lakes : ''}</div>`).join('')}</td></tr>`; }
   const rv = hy.rivers || [];
   const bfR = hy.river_data && hy.river_data.bf_ratio_range;
+  const geometryNote = m.channel_model === 'reach-gravel-v1'
+    ? '连续河段水沙试验：独立来源与粒径沿河网汇合，适用河段用砾床经验式估计河槽宽，并联算水深；陡峡谷与细沟渐变回原有模型。参数尚未标定。'
+    : '原有河槽：年均水面宽深（w = 5·Q^0.5、d = 0.35·Q^0.4）按假设平岸倍数和站内指数换算。';
   $('rivers').innerHTML = rv.length ? `<tr><th>#</th><th>流域</th><th>长</th><th>流量</th><th>宽 / 深（河道）</th><th>下切</th><th>瀑布</th></tr>` + rv.slice(0, 8).map((r, k) =>
       `<tr><td><button class="mini" data-rc="${r.mouth_cell.join(',')}">${k + 1}${['','小','中','大'][r.level]}</button></td><td>${fmt(r.basin_km2, 0)} km²</td><td>${fmt(r.length_km, 0)} km</td><td>${fmt(r.discharge_m3s, 1)} m³/s</td><td>${fmt(r.w_ch_m, 0)} m / ${fmt(r.d_ch_m, 1)} m</td><td>${fmt(r.incision_m, 0)} m</td><td>${fmt(r.waterfall_m, 0)} m</td></tr>`).join('')
-      + `<tr><td colspan="7" class="small">宽 / 深是**河道（平岸）**口径 = 年均流量下的水面宽深（w = 5·Q^0.5、d = 0.35·Q^0.4）× (bf_ratio_channel)^站内指数（0.26 / 0.40）${bfR ? `；**平岸**宽 = 年均 × (平岸/年均)^0.26（站内关系，L&M 1964），本群流域的平岸 / 年均在 ${fmt(bfR[0], 1)}–${fmt(bfR[1], 1)}（即 ×${fmt(Math.pow(bfR[0], 0.26), 2)}–${fmt(Math.pow(bfR[1], 0.26), 2)}），逐点的平岸宽见 rivers.json 的 w_bf_m` : ''}。常年河 ${hy.n_rivers} 条入虚空 · 河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
+      + `<tr><td colspan="7" class="small">宽 / 深是固定河槽口径。${geometryNote}${bfR ? ` 逐日指数的年最大 / 年均为 ${fmt(bfR[0], 1)}–${fmt(bfR[1], 1)}，并非已经验证的平岸频率；rivers.json 的 w_bf_m 是据此估算的年最大水面宽。` : ''}河道 ${fmt(hy.river_km2, 1)} km² · 漫滩 ${fmt(hy.floodplain_km2, 1)} km² · 最深下切 ${fmt(hy.max_incision_m, 0)} m · 瀑布（含溪涧）${hy.n_waterfalls} 处。按钮 = 飞到河口</td></tr>`
+      + (hy.sediment ? `<tr><td colspan="7" class="small">试验泥沙账（吨/年）：来源 ${fmt(hy.sediment.source_kg_y / 1000, 0)} · 储存沉积 ${fmt(hy.sediment.deposit_kg_y / 1000, 0)} · 出口 ${fmt(hy.sediment.export_kg_y / 1000, 0)}。沉积暂记质量，尚未抬高地形。</td></tr>` : '')
     : `<tr><td class="small">无常年河${hy.n_waterfalls ? '（溪涧跌落 ' + hy.n_waterfalls + ' 处）' : ''}</td></tr>`;
   $('rivers').querySelectorAll('button[data-rc]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.rc.split(',').map(Number); flyToCell(i, j, 8); });
   const RS = D.resources;
@@ -705,6 +718,13 @@ function draw(){
   };
   $('btnCaptureTrial').onclick = () => captureTrial(true);
   $('btnCaptureLegacy').onclick = () => captureTrial(false);
+  const reachTrial = enabled => {
+    const sets = $('sets').value.split('\n').map(s => s.trim()).filter(s => s && !/^island\.hydro\.reach_geometry_v1\s*=/.test(s));
+    sets.push(`island.hydro.reach_geometry_v1=${enabled}`);
+    $('sets').value = sets.join('\n'); year = +$('yearIn').value; load(false, sets);
+  };
+  $('btnReachTrial').onclick = () => reachTrial(true);
+  $('btnReachLegacy').onclick = () => reachTrial(false);
   $('btnDefaults').onclick = () => { const b = $('cfgBox'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; b.textContent = JSON.stringify(D.island_cfg, null, 1); };
   const onDay = () => { renderDay(); if ($('baseSel').value === 'temp') base = null; if (liveOn() || $('baseSel').value === 'temp') draw(); };
   $('daySl').addEventListener('input', () => { day = +$('daySl').value; onDay(); });

@@ -311,9 +311,11 @@ void build_rivernet(Group& g, const Config& c) {
             const double S = (g.chan_slope.v.empty() || std::isnan(g.chan_slope.v[k])) ? 0.0 : g.chan_slope.v[k];
             const double n_up = std::max(1.0f, a_n[k]);
             // 河床质：平岸 Shields 数，砾床算出来 < 2 mm 的落到砂床（砾—砂的突变）；乘上游岩性的粗细
+            const bool reach_model = c.get("hydro.reach_geometry_v1",0)>0;
             const double coarse = a_c[k] / n_up;
             double D = d * S / (1.65 * tg) * coarse;
             if (D < 0.002) D = d * S / (1.65 * ts) * coarse;
+            if (reach_model) D=g.sed_grain.v[k];
             const uint8_t dc = D < 6.25e-5 ? 0 : (D < 0.002 ? 1 : (D < 0.064 ? 2 : (D < 0.256 ? 3 : (D < 1.0 ? 4 : 5))));
             // 平面型
             const uint8_t cf = g.confine.v[k];
@@ -349,7 +351,9 @@ void build_rivernet(Group& g, const Config& c) {
             R.q_bf[m] = static_cast<float>(qbf);
             // 三个口径各算各的（别叠乘）：年均流量下的水面 = 直接按式子（不依赖栅格，栅格里的已经是河道）；
             // 真平岸 = 年均 × (q_bf/q_mean)^站内指数；栅格 w_ch_m / d_ch_m = 河道 = 年均 × (假设比值)^站内指数（river.cpp 切的）
-            const double w_mean = wa * np_pow(q, wb), d_mean = dc0 * np_pow(q, df0);
+            const double channel_ratio=c.get("hydro.bf_ratio_channel",5);
+            const double w_mean = reach_model ? w/np_pow(channel_ratio,wbexp) : wa * np_pow(q, wb);
+            const double d_mean = reach_model ? d/np_pow(channel_ratio,dfexp) : dc0 * np_pow(q, df0);
             R.w_mean[m] = static_cast<float>(w_mean);
             R.d_mean[m] = static_cast<float>(d_mean);
             // 平岸宽与深：年均口径 × (平岸 / 年均)^站内指数（L&M 1964：宽 0.26、深 0.40）——q_bf = 年均 × 所在流域的 bf_ratio

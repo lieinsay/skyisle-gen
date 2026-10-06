@@ -35,6 +35,7 @@ struct IslandHydro {
     int64_t lake_cells = 0;
     double max_acc = 0, river_thr = NaN;
     Channels ch;
+    ReachGeometry reach;
     Basins basins;
     bool cap_ran = false;
     int captures = 0;
@@ -460,6 +461,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         // 河道成形（B2：谷壁坡按河床那格露出的岩性的坍塌角；C2：谷底宽的岩性系数也按它，岛龄系数按本岛）
         const IslandRec& J = g.islands[k];
         GridD wall, flith;
+        Grid<uint8_t> source_lith(h,w,3);
         if (!g.strat_top.v.empty()) {
             wall = GridD(h, w, 0.0);
             flith = GridD(h, w, 1.0);
@@ -468,12 +470,20 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                 for (int j = 0; j < w; ++j)
                     if (mk(i, j)) {
                         const uint8_t li = lith_at(hh(i, j), g.strat_top(i + R.r0, j + R.c0), g.skel_top(i + R.r0, j + R.c0), J.strat);
+                        source_lith(i,j)=li;
                         wall(i, j) = lt.talus_deg[li];
                         if (li >= 1 && li - 1 < static_cast<int>(vl.size())) flith(i, j) = vl[li - 1];
                     }
         }
         R.ch = carve_channels(hh, R.hr, mk, R.lake, R.recv, R.Akm, R.river, R.stream, P_mm, runoff, J.rim_j, J.keel_j, res_m, year_s, c, k == 0,
                               local_rain ? &R.Q : nullptr, wall.v.empty() ? nullptr : &wall, flith.v.empty() ? nullptr : &flith, J.age_j);
+        if (c.get("hydro.reach_geometry_v1",0)>0) {
+            GridD flow(h,w,0);
+            for (size_t q=0;q<n;++q) flow.v[q]=R.Racc.v[q]*1000/year_s;
+            R.reach=reach_geometry(hh,mk,R.lake,R.recv,flow,source_lith,R.ch,res_m,year_s,c);
+            R.ch=carve_channels(hh,R.hr,mk,R.lake,R.recv,R.Akm,R.river,R.stream,P_mm,runoff,J.rim_j,J.keel_j,res_m,year_s,c,k==0,
+                &flow,wall.v.empty()?nullptr:&wall,flith.v.empty()?nullptr:&flith,J.age_j,&R.reach);
+        }
         R.cut = GridD(h, w, 0.0);
         R.h_final = GridD(h, w, NaN);
         for (size_t q = 0; q < n; ++q) {
@@ -499,6 +509,10 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     g.floor_w = GridD(H, W, 0.0);
     g.confine = Grid<uint8_t>(H, W, 0);
     g.chan_slope = GridD(H, W, NaN);
+    if (c.get("hydro.reach_geometry_v1",0)>0) {
+        g.sed_source=GridD(H,W,0);g.sed_flux=GridD(H,W,0);
+        g.sed_deposit=GridD(H,W,0);g.sed_grain=GridD(H,W,0);
+    }
     g.floodplain = Grid<uint8_t>(H, W, 0);
     g.cut_m = GridD(H, W, 0.0);
     g.recv_i = GridI(H, W, -1);
@@ -535,6 +549,10 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                 g.stream(gi, gj) = R.stream.v[q];
                 g.width_m(gi, gj) = R.ch.width.v[q];
                 g.depth_m(gi, gj) = R.ch.depth.v[q];
+                if (!R.reach.source.v.empty()) {
+                    g.sed_source(gi,gj)=R.reach.source.v[q];g.sed_flux(gi,gj)=R.reach.flux.v[q];
+                    g.sed_deposit(gi,gj)=R.reach.deposit.v[q];g.sed_grain(gi,gj)=R.reach.grain.v[q];
+                }
                 if (!R.ch.bed.v.empty()) {
                     g.bed_m(gi, gj) = R.ch.bed.v[q];
                     g.floor_w(gi, gj) = R.ch.floor_w.v[q];

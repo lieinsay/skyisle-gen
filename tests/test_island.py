@@ -74,6 +74,29 @@ def test_removed_water_core_cannot_be_restored_by_old_snapshot(small_ctx):
     assert all(basin["cond_frac"] == 0 for basin in a["rivernet"]["basins"])
 
 
+def test_reach_sediment_budget_and_water_width(small_ctx):
+    """跨支流的水沙账、确定性与新河槽的日水面口径都必须对得上。"""
+    import copy
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    def generate(enabled):
+        ctx = Context(copy.deepcopy(small_ctx.cfg), small_ctx.seed, small_ctx.out_dir)
+        return isl.generate(ctx, node, res_m=300, steps=4, write=False,
+                            sets=[f"island.hydro.reach_geometry_v1={'true' if enabled else 'false'}"], log=lambda *a:None)
+    a, b, old = generate(True), generate(True), generate(False)
+    for key in ("sed_source_kg_y", "sed_flux_kg_y", "sed_deposit_kg_y", "w_ch_m", "d_ch_m"):
+        np.testing.assert_array_equal(a[key], b[key])
+        assert np.isfinite(a[key]).all() and (a[key] >= 0).all()
+    np.testing.assert_array_equal(a["rain_mm"], old["rain_mm"])
+    np.testing.assert_array_equal(a["runoff_mm"], old["runoff_mm"])
+    assert "sed_source_kg_y" not in old
+    assert a["json"]["hydro"]["sediment"]["relative_error"] < 1e-10
+    cells = a["rivernet"]["cell"]
+    ratio = small_ctx.cfg["island"]["hydro"]["bf_ratio_channel"]
+    aw = small_ctx.cfg["island"]["hydro"]["at_station_width_b"]
+    np.testing.assert_allclose(a["rivernet"]["w_mean"], a["w_ch_m"].ravel()[cells]/ratio**aw, rtol=1e-5)
+
+
 def test_island_deterministic_and_consistent(small_ctx):
     from skyisle_gen import island as isl
     node = _pick_node(small_ctx)

@@ -110,6 +110,9 @@ def write_terrain(out: Path, g: dict) -> None:
         # B（四点四十九）：水位面（潜水面，m，零点口径；虚空 NaN）与埋深（地表 − 水位，m）。井打多深、挖到哪层见水、泉在哪，都读它
         arrays["wt_m"] = g["wt"].astype(np.float32)
         arrays["wt_depth_m"] = (g["height"] - g["wt"]).astype(np.float32)
+    for k in ("sed_source_kg_y", "sed_flux_kg_y", "sed_deposit_kg_y", "sed_grain_m"):
+        if k in g:
+            arrays[k] = g[k]
     np.savez_compressed(out / "terrain.npz", **arrays)
     if "lith" in g:
         from .landforms import LITH_PALETTE

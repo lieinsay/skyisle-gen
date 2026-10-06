@@ -806,6 +806,14 @@ windward_smooth_km = 3.0
 windward_ref_m_per_km = 50.0
 width_a = 5.0                 # 本模型采用的年均水面关系：w = 5·Q^0.5（m，Q 为年均 m³/s）。幂律形式参考水力几何，系数尚未按小型岛河独立标定。
 width_b = 0.5                 # 不把个别大河示例当作跨地貌通用校准；平岸砾床经验式的条件对照见 docs/probes/river_geometry.py。
+reach_geometry_v1 = false     # 连续河段水沙试验：独立材料、守恒输送、砾床经验几何和宽深联算；未全局标定。
+reach_source_mm_y = 0.05      # 来源厚度代理（mm/年，500 mm 径流、10% 坡度）；不声称等于地形侵蚀移除的质量。
+reach_lith_grain_mm = [40, 30, 80, 65, 30] # 五岩类粗粒来源代表粒径；Parker 样本 27–167.5 mm 内，尚未实测标定。
+reach_lith_coarse = [0.5, 0.3, 0.7, 0.6, 0.3] # 来源中可作砾床材料的质量比例。
+reach_abrasion_km = 20.0      # 简化磨细尺度：粗沙转为细沙，质量保留；代表粒径沿程混合。
+reach_transport_days = 30.0   # 代表输沙流量持续天数（天/年）；独立待标定，不把单年最大当平岸。
+reach_manning_n = 0.035       # 曼宁粗糙系数；用指定成槽流量、宽度和比降求水深。
+reach_lake_trap = 0.8         # 简化湖泊截留比例，截留记入沉积账。
                               # 旧键 width_scale / depth_scale（夸张）C1 删了
 at_station_width_b = 0.26     # **站内关系**（同一条河从年均涨到平岸，L&M 1964 的经典值 w ∝ Q^0.26、d ∝ Q^0.40、v ∝ Q^0.34）：
 at_station_depth_f = 0.40     # 平岸宽 = 年均宽 × (平岸/年均)^0.26、平岸深 = 年均深 × (平岸/年均)^0.40（rivers.json 的 w_bf_m / d_bf_m）

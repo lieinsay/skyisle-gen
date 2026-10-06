@@ -305,7 +305,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
         J["lith"] = lith_summary(R["lith"], island_id)
     # C1 / C2：河床、谷底宽、限制度、记成水的河道格；C4 / C5：凝结水、云雾林、地下水、崖壁泉线
     for k in ("bed_m", "floor_w_m", "confine", "river_water", "bfi", "recharge_mm", "recharge_acc", "runoff_acc",
-              "wt", "wt_outlet"):
+              "wt", "wt_outlet", "sed_source_kg_y", "sed_flux_kg_y", "sed_deposit_kg_y", "sed_grain_m"):
         if k in R:
             g[k] = R[k]
     if "springline" in R:
@@ -336,12 +336,20 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
                   "floodplain_km2": round(float(g["floodplain"].sum()) * cell_km2, 3),
                   "max_incision_m": round(float(R["max_cut"]), 1),
                   "channel_height": "surface",
-                  "channel_note": "河宽 / 水深见 terrain.npz 的 w_ch_m / d_ch_m（**河道 = 平岸**口径：年均流量下的水面宽深 × (bf_ratio_channel)^站内指数；溪涧按 stream_width_mult 缩）；逐点按真实平岸流量的宽深在 rivers.json 的 segments 里（w_bf_m / d_bf_m），年均流量下的水面宽是 w_mean_m；height 在河道格是平岸水面（= 滩面），"
+                  "channel_note": "河宽 / 水深见 terrain.npz 的 w_ch_m / d_ch_m；原有模型用年均流量与假设平岸倍数，水沙试验按独立材料与砾床经验式联算宽深。rivers.json 的日水面与年最大水面沿用站内指数估算；height 在河道格是平岸水面（= 滩面），"
                                   "河床 = height − 水深（C1；channel_height = surface，旧产物没有这个键时 height 是河床）；河宽 ≥ 一格的河道格地表记成河，"
                                   "更窄的在岸上（河槽由 rivers.json 的中心线 + 宽 + 深表达）；rivers[].waterfall_m = 河口跌下崖缘的落差",
                   "wind_ms": [round(u, 2), round(v, 2)],
                   "river_levels": {"1": "小河", "2": "中河", "3": "大河", "stream": "季节性溪涧（water.png 值 1）"}}
     from .hydro import local_precip_summary
+    if "sed_source_kg_y" in g:
+        outlets = land & (g["recv_i"] < 0)
+        source = float(g["sed_source_kg_y"].sum())
+        deposit = float(g["sed_deposit_kg_y"].sum())
+        export = float(g["sed_flux_kg_y"][outlets].sum())
+        J["hydro"]["sediment"] = {"source_kg_y": source, "deposit_kg_y": deposit,
+                                   "export_kg_y": export, "relative_error": abs(source-deposit-export)/max(source,1),
+                                   "note": "来源率、岩性代表粒径、粗粒比例、磨细及输沙天数均为待标定假设；不是完整磨蚀模型，粒径不从水深反推。"}
     J["hydro"]["local_precip"] = local_precip_summary(g["rain_mm"], island_id, hc)
     from .groundwater import valley_summary, water_summary
     J["hydro"]["valley"] = valley_summary(g, cell_km2)

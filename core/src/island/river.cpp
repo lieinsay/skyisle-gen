@@ -3,13 +3,119 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include "skyisle/flow.hpp"
 
 namespace skyisle::island {
+
+namespace {
+double hydraulic_depth(double q, double w, double s, double n) {
+    if (!(q > 0 && w > 0)) return 0;
+    auto capacity = [&](double d) {
+        const double a = w * d, r = a / (w + 2 * d);
+        return a * std::pow(r, 2.0 / 3.0) * std::sqrt(s) / n;
+    };
+    double lo = 0, hi = 1;
+    while (capacity(hi) < q) hi *= 2;
+    for (int k = 0; k < 48; ++k) {
+        const double mid = (lo + hi) / 2;
+        if (capacity(mid) < q) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+}
+double ramp(double x, double lo, double hi) {
+    const double t = clip((x - lo) / (hi - lo), 0.0, 1.0);
+    return t * t * (3 - 2 * t);
+}
+}
+
+ReachGeometry reach_geometry(const GridD& h, const Mask& land, const Mask& lake,
+                             const std::vector<int64_t>& recv, const GridD& q,
+                             const Grid<uint8_t>& lith, const Channels& ref,
+                             double res_m, double year_s, const Config& c) {
+    const int H = h.H, W = h.W;
+    const size_t N = h.size();
+    ReachGeometry out{ref.width, ref.depth, GridD(H,W,0), GridD(H,W,0), GridD(H,W,0), GridD(H,W,0)};
+    const double yield = c.get("hydro.reach_source_mm_y", .05);
+    const double abrasion = c.get("hydro.reach_abrasion_km", 20);
+    const double days = c.get("hydro.reach_transport_days", 30);
+    const double roughness = c.get("hydro.reach_manning_n", .035);
+    const double trap = c.get("hydro.reach_lake_trap", .8);
+    const double ratio = c.get("hydro.bf_ratio_channel", 5);
+    if (!(std::isfinite(yield) && std::isfinite(abrasion) && std::isfinite(days) && std::isfinite(roughness) && std::isfinite(ratio) &&
+          yield >= 0 && abrasion > 0 && days > 0 && days <= year_s/86400 && roughness > 0 && trap >= 0 && trap <= 1 && ratio > 0))
+        throw std::invalid_argument("河段水沙参数超出有效范围");
+    const auto grains = c.list("hydro.reach_lith_grain_mm", {40,30,80,65,30});
+    const auto coarse = c.list("hydro.reach_lith_coarse", {.5,.3,.7,.6,.3});
+    if (grains.size()!=5 || coarse.size()!=5) throw std::invalid_argument("河段岩性表须为五项");
+    for (size_t k=0;k<5;++k)
+        if (!(grains[k]>=27 && grains[k]<=167.5 && coarse[k]>=0 && coarse[k]<=1))
+            throw std::invalid_argument("河段粒径或粗粒比例无效");
+    std::vector<double> fine(N,0), gravel(N,0), moment(N,0);
+    std::vector<double> local_q=q.v;
+    for (size_t k=0;k<N;++k) if (land.v[k] && recv[k]>=0) local_q[recv[k]]-=q.v[k];
+    auto order = downstream_first(recv, land);
+    for (auto it=order.rbegin(); it!=order.rend(); ++it) {
+        const int32_t k=*it;
+        const int64_t r=recv[k];
+        const double step = r>=0 ? res_m*((r/W!=k/W && r%W!=k%W)?SQRT2:1) : res_m;
+        // 独立的坡面来源代理（kg/年），不是凭空增加水，也不声称等于地形演化移除的质量。
+        const int li = lith.v.empty()?2:std::max(0,std::min(4,static_cast<int>(lith.v[k])-1));
+        const double slope = r>=0 ? std::max(0.0,(h.v[k]-h.v[r])/step):0;
+        const double runoff_mm=std::max(0.0,local_q[k])*year_s/(res_m*res_m)*1000;
+        const double mass = lake.v[k]?0:yield/1000 * res_m*res_m * 2650 *
+            std::sqrt(clip(slope/.1,0.0,10.0))*clip(runoff_mm/500,0.0,5.0);
+        out.source.v[k]=mass;
+        fine[k]+=mass*(1-coarse[li]); gravel[k]+=mass*coarse[li];
+        moment[k]+=mass*coarse[li]*std::log(grains[li]/1000);
+        double d = gravel[k]>0 ? std::exp(moment[k]/gravel[k]):grains[li]/1000;
+        if (ref.width.v[k]>0 && !lake.v[k]) {
+            const double S = std::max(c.get("hydro.min_grade",.001),ref.slope.v[k]);
+            const double qb = q.v[k]*ratio;
+            // 不将低流量、陡峡谷或非砾床条件直接套进经验样本范围；过渡权重避免硬门槛生成截头。
+            const double grain_fit = ramp(d,.02,.027);
+            const double confinement = ref.floor_w.v[k]/std::max(ref.width.v[k],.1);
+            const double alpha = gravel[k]>0 ? ramp(qb,2.7,5.4)*(1-ramp(S,.015,.031))*ramp(confinement,3,15)*grain_fit : 0;
+            const double D = clip(d,.027,.1675);
+            const double target = 4.63/std::pow(9.81,.2)*std::pow(qb,.4)*
+                                  std::pow(qb/(std::sqrt(9.81)*std::pow(D,2.5)),.0667);
+            const double width = (1-alpha)*ref.width.v[k]+alpha*target;
+            // 过渡区连续混合阻力，而不是直接混合两种水深（后者不满足输水方程）。
+            const double a0=ref.width.v[k]*ref.depth.v[k];
+            const double radius0=a0/(ref.width.v[k]+2*ref.depth.v[k]);
+            const double n0=qb>0 ? a0*std::pow(radius0,2.0/3.0)*std::sqrt(S)/qb : roughness;
+            const double depth = hydraulic_depth(qb,width,S,(1-alpha)*n0+alpha*roughness);
+            out.width.v[k]=width;
+            out.depth.v[k]=alpha>0?depth:ref.depth.v[k];
+            // MPM 简化容量，流动天数是独立待校准假设；超额粗沙存为沉积，不丢失。
+            const double radius=width*depth/(width+2*depth);
+            const double theta=radius*S/(1.65*std::max(d,1e-5));
+            const double capacity=8*std::sqrt(1.65*9.81*std::pow(d,3))*std::pow(std::max(theta-.047,0.0),1.5)*width*2650*days*86400;
+            const double retained = std::max(0.0,gravel[k]-capacity);
+            const double frac=gravel[k]>0 ? (gravel[k]-retained)/gravel[k]:0;
+            out.deposit.v[k]+=retained; gravel[k]*=frac; moment[k]*=frac;
+        }
+        if (lake.v[k]) {
+            out.deposit.v[k]+=trap*(fine[k]+gravel[k]);
+            fine[k]*=1-trap;gravel[k]*=1-trap;moment[k]*=1-trap;
+        }
+        out.grain.v[k]=d;
+        out.flux.v[k]=fine[k]+gravel[k];
+        if (r>=0) {
+            // 磨细转成细沙，质量守恒；幸存粗粒逐步变细，汇合按质量混合。
+            const double survive=std::exp(-step/(abrasion*1000));
+            fine[r]+=fine[k]+gravel[k]*(1-survive);
+            gravel[r]+=gravel[k]*survive;
+            moment[r]+=gravel[k]*survive*(gravel[k]>0?moment[k]/gravel[k]+std::log(survive):0);
+        }
+    }
+    return out;
+}
 
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
                         const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double runoff, double rim,
                         double keel, double res_m, double year_s, const Config& c, bool /*is_main*/, const GridD* Qin,
-                        const GridD* wall_deg, const GridD* floor_lith, double age) {
+                        const GridD* wall_deg, const GridD* floor_lith, double age, const ReachGeometry* geometry) {
     const int H = h.H, W = h.W;
     const size_t N = h.size();
     Channels out;
@@ -55,8 +161,8 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     for (size_t k = 0; k < N; ++k) {
         Q[k] = Qin ? Qin->v[k] : Akm.v[k] * 1e6 * (P_mm / 1000.0) * runoff / year_s;
         const double q = std::max(Q[k], 0.0);
-        const double w = wa * np_pow(q, wb) * ch_w;      // 河道（平岸）宽
-        const double d = dc * np_pow(q, df) * ch_d;      // 河道（平岸）深
+        const double w = geometry ? geometry->width.v[k] : wa * np_pow(q, wb) * ch_w;
+        const double d = geometry ? geometry->depth.v[k] : dc * np_pow(q, df) * ch_d;
         width[k] = seed.v[k] ? w : 0.0; // 同一流量的河槽不因河 / 溪涧标签而突变。
         depth[k] = seed.v[k] ? d : 0.0;
         incise[k] = center_r.v[k] ? inc_m * std::sqrt(clip(Akm.v[k] / amax, 0.0, 1.0)) : (center_s.v[k] ? s_inc : 0.0);

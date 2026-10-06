@@ -93,6 +93,8 @@ def measure(g, node):
               "river": connected_widths(cells, down, area, width, columns, g["res_km"], g["river"].ravel() > 0),
               "runoff_budget_m3s": round(float(g["runoff_mm"].ravel()[land].sum() * g["res_km"] ** 2 * 1000 / g["year_s"]), 5),
               "outlet_budget_m3s": round(float(q[land & (down < 0)].sum()), 5)}
+    if "sediment" in g["json"]["hydro"]:
+        result["sediment_budget"] = g["json"]["hydro"]["sediment"]
     return result
 
 
