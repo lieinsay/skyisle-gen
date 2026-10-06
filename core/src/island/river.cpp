@@ -35,14 +35,14 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
         out.floodplain = Grid<uint8_t>(H, W, 0);
         return out;
     }
-    // 水力几何（Leopold & Maddock 1953 的下游关系，**按年均流量**：w = 5·Q^0.5、d = 0.35·Q^0.4 m——这是一年平均的水面宽深。
-    // 5.0 落在实测带 3–5.3 里：泰晤士 Q 66 → 水面宽约 43 m（平岸约 60）、莱茵巴塞尔 Q 1060 → 约 146（平岸约 200）。
+    // 本模型的年均水面幂律：w = 5·Q^0.5、d = 0.35·Q^0.4 m。
+    // 幂律形式参考水力几何，系数尚未按小型岛河独立标定；不把少数大河示例当作通用校准。
     // **平岸**宽深在 rivernet 里按站内指数换算（w ∝ Q^0.26、d ∝ Q^0.40，四点五十一）。
     // C1 起没有夸张（旧 width_scale / depth_scale 删了）
     const double wa = c.get("hydro.width_a"), wb = c.get("hydro.width_b");
     const double dc = c.get("hydro.depth_c"), df = c.get("hydro.depth_f");
     // 切出来的河道 = **平岸河道**：年均流量下的水面宽深 × (平岸 / 年均)^站内指数（地形阶段只有假设的比值 bf_ratio_channel，
-    // 逐日的真实比值在 rivers.json；站内指数小，误差异常小——四点五十一）
+    // rivers.json 另记逐日年最大比值，但它不是已验证的平岸比；两者都不能取代独立标定）
     const double bfr = c.get("hydro.bf_ratio_channel", 5.0);
     const double aw = c.get("hydro.at_station_width_b", 0.26), ad = c.get("hydro.at_station_depth_f", 0.40);
     const double ch_w = np_pow(bfr, aw), ch_d = np_pow(bfr, ad);
