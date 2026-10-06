@@ -11,7 +11,7 @@ CONFINE_ZH = ["", "峡谷", "半限制", "开阔"]
 EXIT_ZH = ["汇入", "崖边", "湖", "没入地里"]
 FALL_ZH = ["崖边瀑布", "瀑布", "跌水"]
 COLS = ["row", "col", "level", "acc_km2", "q_mean", "q_bf", "w_bf_m", "d_bf_m", "w_mean_m", "d_mean_m", "surf_m", "bed_m", "slope", "d50_mm", "d50", "planform",
-        "ssc_mgl", "fp_left_m", "fp_right_m", "confine"]
+        "ssc_mgl", "fp_left_m", "fp_right_m", "confine", "w_channel_m"]
 NOTE = ("河网（C3）：segments 每段从上游到下游，干流按汇水最大的一支往上追，down = 汇入的段号（−1 = 出口）、join = 汇入处在下游段里的点号；"
         "exit：汇入 / 崖边 / 湖 / 没入地里；basin = 所在流域（basins 的下标，−1 = 其余）。pts 的列见 cols：行列是群栅格的格（格心 = 整数 + 0.5），"
         "level 0 = 季节性溪涧、1–3 小中大河；q_mean 年均流量（m³/s，按格的 Budyko 径流累计，含集水核的凝结水）、q_bf 平岸流量（= 年均 × 所在流域逐日径流指数的年最大）；"
@@ -33,14 +33,15 @@ def rivers_doc(g: dict) -> dict:
     W = g["height"].shape[1]
     cell = N["cell"].astype(np.int64)
     num = {"row": cell // W, "col": cell % W, "level": N["level"].astype(np.int64),
-           "acc_km2": np.round(N["acc"].astype(np.float64), 2), "q_mean": np.round(N["q_mean"].astype(np.float64), 4),
+           "acc_km2": np.round(N["acc"].astype(np.float64), 2), "q_mean": np.round(N["q_mean"].astype(np.float64), 6),
            "q_bf": np.round(N["q_bf"].astype(np.float64), 4), "w_bf_m": np.round(N["w"].astype(np.float64), 2),
            "d_bf_m": np.round(N["d"].astype(np.float64), 2),
-           "w_mean_m": np.round(N["w_mean"].astype(np.float64), 2), "d_mean_m": np.round(N["d_mean"].astype(np.float64), 2), "surf_m": np.round(N["surf"].astype(np.float64), 1),
+           "w_mean_m": np.round(N["w_mean"].astype(np.float64), 3), "d_mean_m": np.round(N["d_mean"].astype(np.float64), 2), "surf_m": np.round(N["surf"].astype(np.float64), 1),
            "bed_m": np.round(N["bed"].astype(np.float64), 1), "slope": np.round(N["slope"].astype(np.float64), 5),
            "d50_mm": np.round(N["d50_mm"].astype(np.float64), 3), "d50": N["d50c"].astype(np.int64), "planform": N["planform"].astype(np.int64),
            "ssc_mgl": np.round(N["ssc"].astype(np.float64), 0), "fp_left_m": np.round(N["fp_l"].astype(np.float64), 0),
-           "fp_right_m": np.round(N["fp_r"].astype(np.float64), 0), "confine": N["confine"].astype(np.int64)}
+           "fp_right_m": np.round(N["fp_r"].astype(np.float64), 0), "confine": N["confine"].astype(np.int64),
+           "w_channel_m": np.round(g["w_ch_m"].ravel()[cell].astype(np.float64), 3)}
     cols = [num[k].tolist() for k in COLS]
     rows = [list(r) for r in zip(*cols)]
     segs = []

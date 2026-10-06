@@ -123,6 +123,7 @@ a{color:var(--acc2)}
     <div class="small">地图上双击村子、散户也行。营建器参考用，暂不接入游戏。</div>
   </div>
   <div class="sec"><h3>约束对照</h3><table class="kv" id="cons"></table></div>
+  <div class="sec"><h3>河道点击探针 <button class="mini" id="clearRiverProbe">清除</button></h3><div id="riverProbe" class="small">点击地图上的河道，查看该点随日期变化的估算水面宽度。</div></div>
   <div class="sec"><h3>水系 / 地表</h3><table class="kv" id="hydro"></table></div>
   <div class="sec"><h3>河流（主岛，按流域）</h3><table class="kv" id="rivers"></table></div>
   <div class="sec"><h3>地形区 / 资源</h3><div id="resSum" class="small"></div></div>
@@ -167,6 +168,7 @@ const $ = id => document.getElementById(id);
 const fmt = (x, n = 1) => (x === undefined || x === null || isNaN(x)) ? '—' : Number(x).toFixed(n);
 const q = new URLSearchParams(location.search);
 let run = q.get('run') || 'seed42', node = +(q.get('node') || 0), year = +(q.get('year') || 0);
+let riverProbe = null;
 let D = null, R = null;            // 数据包 / 栅格
 let base = null;                   // 底图 ImageData 缓存（按图层）
 let layerVersion = 0;              // 底图 / 季相层每重建一次 +1（细化渲染的缓存键）
@@ -199,7 +201,7 @@ async function load(force = false, sets = null){
       d = await (await fetch(`/api/island/data?run=${run}&node=${node}&year=${year}${force ? '&force=1' : ''}`)).json();
     }
     if (d.error) { setStatus('出错：' + d.error); $('loading').textContent = '出错：' + d.error + (d.trace ? '\n' + d.trace : ''); return; }
-    D = d;
+    D = d; riverProbe = null; renderRiverProbe();
     const rr = await (await fetch(`/api/island/raster?run=${run}&node=${node}&t=${Date.now()}`)).json();
     R = { rows: rr.rows, cols: rr.cols, step: rr.step,
       h: b64(rr.height_u16, Uint16Array), id: b64(rr.island_id_i16, Int16Array),
@@ -221,7 +223,7 @@ async function load(force = false, sets = null){
     const junc = new Set(D.rivers ? D.rivers.lines.map(L => { const e = L.pts[L.pts.length - 1]; return e[0] + ',' + e[1]; }) : []);
     R.lines = D.rivers ? D.rivers.lines.map(L => { const pts = smoothPinned(L.pts, junc);
         let i0 = 1e9, i1 = -1e9, j0 = 1e9, j1 = -1e9, ws = 0; for (const q of pts) { i0 = Math.min(i0, q[0]); i1 = Math.max(i1, q[0]); j0 = Math.min(j0, q[1]); j1 = Math.max(j1, q[1]); ws += q[2]; }
-        return { island: L.island, lvl: Math.max(...L.pts.map(q => q[3])), amax: Math.max(...L.pts.map(q => (q[4] === undefined ? 1e9 : q[4]))), pts, bb: [i0, i1, j0, j1], wMean: ws / pts.length }; })
+        return { island: L.island, basin: L.basin, lvl: Math.max(...L.pts.map(q => q[3])), amax: Math.max(...L.pts.map(q => (q[4] === undefined ? 1e9 : q[4]))), pts, bb: [i0, i1, j0, j1], wMean: ws / pts.length }; })
       .sort((a, b) => a.lvl - b.lvl) : null;
     history.replaceState(null, '', `?run=${run}&node=${node}&year=${year}`);
     base = null; dayLayer = null; dayTab = null; day = Math.min(day, 335);
@@ -250,7 +252,7 @@ function renderSide(){
     + row('台面 m（陆地中位）', c.height_m.target, c.height_m.actual, fmt(Math.abs(c.height_m.actual - c.height_m.target), 1) + ' m')
     + (c.peak_m ? `<tr><td>峰 m</td><td class="small">起伏 ${fmt(c.peak_m.relief_target_m, 0)}</td><td>${fmt(c.peak_m.actual, 0)}</td><td class="small">起伏 ${fmt(c.peak_m.relief_m, 0)} m</td></tr>` : '')
     + row('可耕率', c.arable_frac.target, c.arable_frac.actual, fmt(Math.abs(c.arable_frac.actual - c.arable_frac.target), 4))
-    + `<tr><td>常年河</td><td>${c.has_river.target ? '有' : '无'}</td><td>${c.has_river.actual ? '有' : '无'}</td><td class="small">${c.has_river.target === c.has_river.actual ? '一致' : '不一致'}</td></tr>`;
+    + `<tr><td>主岛河流</td><td>${c.has_river.target ? '有潜力' : '低潜力'}</td><td>${c.has_river.actual ? '有' : '无'}</td><td class="small">按本地径流独立判定</td></tr>`;
   const hy = J.hydro || {}, lc = (J.landcover || {}).share || {};
   const lcs = Object.entries(lc).filter(([k, v]) => v > 0.002).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="pill"><span class="sw" style="background:rgb(${LC_PAL[LC_NAMES.indexOf(k)].join(',')})"></span>${k} ${fmt(v * 100, 1)}%</span>`).join('');
   $('hydro').innerHTML = `<tr><td>降水</td><td>${fmt(hy.precip_mm, 0)} mm/年</td></tr><tr><td>河阈值</td><td>${hy.river_threshold_km2 ?? '—'} km²（主岛最大汇流 ${fmt(hy.main_max_flowacc_km2, 0)}）</td></tr>
@@ -391,8 +393,8 @@ function chaikin(P){
   if (P.length < 3) return P; const out = [P[0]];
   const A = q => (q[4] === undefined ? 1e9 : q[4]);
   for (let k = 0; k < P.length - 1; k++) { const a = P[k], b = P[k + 1];
-    out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1], 0.75 * a[2] + 0.25 * b[2], Math.max(a[3], b[3]), 0.75 * A(a) + 0.25 * A(b)]);
-    out.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1], 0.25 * a[2] + 0.75 * b[2], Math.max(a[3], b[3]), 0.25 * A(a) + 0.75 * A(b)]); }
+    out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1], 0.75 * a[2] + 0.25 * b[2], Math.max(a[3], b[3]), 0.75 * A(a) + 0.25 * A(b), ...a.slice(5).map((v, i) => 0.75 * v + 0.25 * b[i + 5])]);
+    out.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1], 0.25 * a[2] + 0.75 * b[2], Math.max(a[3], b[3]), 0.25 * A(a) + 0.75 * A(b), ...a.slice(5).map((v, i) => 0.25 * v + 0.75 * b[i + 5])]); }
   out.push(P[P.length - 1]); return out;
 }
 function lcFill(p, L = R.lc){   // 河道格的替身：八邻里最多的非河非虚空地表类（没有就草坡）；L = 现状 / 原始的地表
@@ -407,7 +409,7 @@ function drawRivers(ctx){
   const X = q => (q[1] / R.step) * view.s + view.tx, Y = q => (q[0] / R.step) * view.s + view.ty;
   const live = liveDraw() && dayTab, T = dayTab;
   const frozen = live && T.frozen[day], frozenS = live && T.frozenS[day], high = live && T.high[day];
-  const wf = live ? T.wf[day] : 1, aMin = live ? T.aMin[day] : 0;
+  const aMin = live ? T.aMin[day] : 0;
   const W = ctx.canvas.width, H = ctx.canvas.height, pxPerM = view.s / R.res_m;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   // 每段按自己的级别着色、按自己的河宽定线宽（一条干流线从源头的溪涧段起算）；相同样式的相邻段并成一笔。
@@ -435,7 +437,8 @@ function drawRivers(ctx){
         if (lv === 0 && A < aLod) { if (open) { ctx.stroke(); open = false; key = ''; } }
         else {
           const w = lv > 0 ? 1 : Math.round(4 * smooth((A / Math.max(aMin, 1e-6) - 0.75) / 0.5)) / 4;
-          const wm = 0.5 * (a[2] + b[2]) * (1 + (wf - 1) * w);
+          const sa = live ? riverWaterAt(L, a) : null, sb = live ? riverWaterAt(L, b) : null;
+          const wm = sa?.width !== null && sa?.width !== undefined && sb?.width !== null ? 0.5 * (sa.width + sb.width) : 0.5 * (a[2] + b[2]);
           const trueScale = $('ovRiverScale') && $('ovRiverScale').checked;
           let lw = trueScale ? Math.max(0.12, wm * pxPerM) : Math.max(riverMinPx(wm, lv), wm * pxPerM);
           lw *= 0.6 + 0.4 * w;
@@ -451,6 +454,61 @@ function drawRivers(ctx){
     if (open) ctx.stroke();
   }
 }
+
+// 日水面与点击探针共用同一套估算；冰封改变显示状态，不把河槽宽度归零。
+function riverWaterAt(L, p){
+  const basin = L.basin >= 0 ? D.rivers?.basins?.[L.basin] : D.rivers?.basins?.find(b => b.rest);
+  const index = basin?.index?.[day];
+  const wet = p[3] > 0 || !dayTab ? 1 : Math.round(4 * smooth((p[4] / Math.max(dayTab.aMin[day], 1e-6) - 0.75) / 0.5)) / 4;
+  if (p[5] === undefined || !Number.isFinite(index)) return { width: null, q: null, wet };
+  const ratio = Math.max(0, index) * wet;
+  return { width: p[5] * Math.pow(ratio, D.island_cfg.hydro.at_station_width_b ?? 0.26), q: p[6] * ratio, wet };
+}
+function renderRiverProbe(){
+  const el = $('riverProbe'); if (!el) return;
+  if (!riverProbe) { el.textContent = '点击地图上的河道，查看该点随日期变化的估算水面宽度。'; return; }
+  const { L, p } = riverProbe, s = riverWaterAt(L, p);
+  const ice = dayTab && (p[3] > 0 ? dayTab.frozen[day] : dayTab.frozenS[day]);
+  const state = s.width === null ? '缺少逐日数据，请重生成' : (s.wet === 0 ? '干河床' : (ice ? '冰封（宽度为冰下水面估算）' : '有水'));
+  el.innerHTML = `<b>岛 ${L.island} · ${['溪涧','小河','中河','大河'][p[3]]} · 第 ${day} 日</b>
+    <table class="kv"><tr><th>当日水面宽</th><td>${s.width === null ? '—' : fmt(s.width, 2) + ' m'}</td></tr>
+    <tr><th>固定河槽宽</th><td>${fmt(p[2], 2)} m</td></tr>
+    <tr><th>当日流量</th><td>${s.q === null ? '—' : fmt(s.q, 4) + ' m³/s'}</td></tr>
+    <tr><th>汇水面积</th><td>${fmt(p[4], 2)} km²</td></tr>
+    <tr><th>位置（行 / 列）</th><td>${fmt(p[0] - 0.5, 1)} / ${fmt(p[1] - 0.5, 1)}</td></tr></table>
+    <div>${state}。拖动日期或播放时自动更新。</div>
+    <div class="small">按流域逐日径流指数与溪涧断流模型估算；点击处在中心线相邻采样点间插值。屏幕示意线宽可能有最小像素下限。</div>`;
+}
+function pickRiver(x, y){
+  if (!vecOn()) return;
+  let best = null, bestDist = Infinity;
+  const cs = view.s / R.step, aLod = 0.35 / (cs * cs);
+  for (const L of R.lines) {
+    if (L.lvl === 0 && L.amax < aLod) continue;
+    const [i0,i1,j0,j1] = L.bb, margin = 24;
+    if (x < j0 * cs + view.tx - margin || x > j1 * cs + view.tx + margin ||
+        y < i0 * cs + view.ty - margin || y > i1 * cs + view.ty + margin) continue;
+    for (let k = 1; k < L.pts.length; k++) {
+      const a = L.pts[k-1], b = L.pts[k]; if (a[3] === 0 && a[4] < aLod) continue;
+      const ax=a[1]*cs+view.tx, ay=a[0]*cs+view.ty, dx=(b[1]-a[1])*cs, dy=(b[0]-a[0])*cs;
+      const t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/(dx*dx+dy*dy || 1)));
+      const dist=Math.hypot(x-ax-t*dx,y-ay-t*dy);
+      const hit=Math.max(8, Math.min(24, (a[2]+b[2])*view.s/R.res_m/4+4));
+      if (dist > hit || dist >= bestDist) continue;
+      const p=a.map((v,i)=>i===3 ? (t<0.5?a[3]:b[3]) : v*(1-t)+b[i]*t);
+      best={ L,p }; bestDist=dist;
+    }
+  }
+  if (!best) return;
+  riverProbe=best; renderRiverProbe(); draw(); $('riverProbe').scrollIntoView({block:'nearest'});
+}
+function drawRiverProbe(ctx){
+  if (!riverProbe) return;
+  const p=riverProbe.p, x=p[1]/R.step*view.s+view.tx, y=p[0]/R.step*view.s+view.ty;
+  ctx.save(); ctx.beginPath(); ctx.arc(x,y,7,0,Math.PI*2); ctx.strokeStyle='#ffe28a'; ctx.lineWidth=2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x,y,2,0,Math.PI*2); ctx.fillStyle='#ffe28a'; ctx.fill(); ctx.restore();
+}
+
 function flyToCell(i, j, s){
   const cv = $('map'); const x = (j + 0.5) / R.step, y = (i + 0.5) / R.step; s = s || Math.max(view.s, 4);
   view = { s, tx: cv.clientWidth / 2 - x * s, ty: cv.clientHeight / 2 - y * s }; draw();
@@ -580,6 +638,7 @@ function draw(){
   if ($('ovWorks').checked && D.settlements && D.settlements.waterworks) drawWorks(ctx);
   if ($('ovSettle').checked && D.settlements) drawSettlements(ctx);
   if ($('ovLabels').checked) { ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const i of J.islands) { const p = pos(i); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(p[0] - 9, p[1] - 7, 18, 14); ctx.fillStyle = '#fff'; ctx.fillText(i.id, p[0], p[1]); } }
+  drawRiverProbe(ctx);
   // 比例尺
   const km = 10 * 1000 / R.res_m * view.s; ctx.fillStyle = '#fff'; ctx.fillRect(12, cv.height - 18, km, 3); ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.fillText('10 km', 12, cv.height - 26);
 }
@@ -588,7 +647,13 @@ function draw(){
   const cv = $('map'); let drag = null;
   cv.addEventListener('wheel', e => { e.preventDefault(); const f = e.deltaY < 0 ? 1.2 : 1 / 1.2; const mx = e.offsetX, my = e.offsetY; view.tx = mx - (mx - view.tx) * f; view.ty = my - (my - view.ty) * f; view.s *= f; draw(); }, { passive: false });
   cv.addEventListener('mousedown', e => { drag = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }; });
-  window.addEventListener('mouseup', () => drag = null);
+  window.addEventListener('mouseup', e => {
+    if (drag && e.target === cv && e.button === 0 && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) {
+      const rect = cv.getBoundingClientRect(); pickRiver(e.clientX - rect.left, e.clientY - rect.top);
+    }
+    drag = null;
+  });
+  $('clearRiverProbe').onclick = () => { riverProbe = null; renderRiverProbe(); draw(); };
   cv.addEventListener('mousemove', e => {
     if (drag) { view.tx = drag.tx + e.clientX - drag.x; view.ty = drag.ty + e.clientY - drag.y; draw(); return; }
     if (!R) return; const j = Math.floor((e.offsetX - view.tx) / view.s), i = Math.floor((e.offsetY - view.ty) / view.s); const tip = $('tip');
@@ -1003,9 +1068,10 @@ function drawDayChart(){
   ctx.fillStyle = '#e6e9ef'; ctx.textAlign = 'left'; ctx.fillText(`${fmt(tmax, 0)}°`, 4, 12); ctx.fillText(`${fmt(tmin, 0)}°`, 4, H - 44);
   // 当前日游标
   ctx.fillStyle = '#f0b35a'; ctx.fillRect(x(day), 0, 2, H - 8);
-  cv.onclick = e => { day = Math.max(0, Math.min(n - 1, Math.floor((e.offsetX - 4) / (W - 8) * n))); $('daySl').value = day; renderDay(); if ($('baseSel').value === 'temp') { base = null; draw(); } };
+  cv.onclick = e => { day = Math.max(0, Math.min(n - 1, Math.floor((e.offsetX - 4) / (W - 8) * n))); $('daySl').value = day; renderDay(); if ($('baseSel').value === 'temp') base = null; if (liveOn() || $('baseSel').value === 'temp') draw(); };
 }
 function renderDay(){
+  renderRiverProbe();
   const days = D.climate.weather.days; const d = days[day]; if (!d) return; drawDayChart();
   if (dayTab && liveOn()) { if (!dayLayer || dayLayerDay !== day) buildDayLayer(day, lodK()); const st = dayStats; const T = dayTab;
     const riverState = T.frozen[day] ? '结冰' : (T.flood[day] ? '<span style="color:#8fb8de">漫滩</span>' : (T.high[day] ? '涨水' : '平水'));

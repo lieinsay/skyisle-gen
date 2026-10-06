@@ -270,8 +270,16 @@ class Handler(BaseHTTPRequestHandler):
         S = json.loads((out / "settlements.json").read_text(encoding="utf-8")) if (out / "settlements.json").exists() else None
         RS = json.loads((out / "resources.json").read_text(encoding="utf-8")) if (out / "resources.json").exists() else None
         RV = json.loads((out / "rivers.json").read_text(encoding="utf-8")) if (out / "rivers.json").exists() else None
-        if RV and "segments" in RV:      # C3 的逐点数据几 MB，调试台只画中心线、瀑布、泉线：段只留个数
-            RV["n_segments"] = len(RV.pop("segments"))
+        if RV and "segments" in RV:
+            segments = RV.pop("segments")
+            RV["n_segments"] = len(segments)
+            # 保留点击探针所需的精确沿程宽度 / 流量；其余河网列不传给调试台。
+            cols = {name: i for i, name in enumerate(RV["cols"])}
+            if "w_channel_m" in cols:
+                RV["lines"] = [{"island": s["island"], "basin": s["basin"], "pts": [
+                    [p[cols["row"]] + 0.5, p[cols["col"]] + 0.5, p[cols["w_channel_m"]],
+                     p[cols["level"]], p[cols["acc_km2"]], p[cols["w_mean_m"]], p[cols["q_mean"]]]
+                    for p in s["pts"]]} for s in segments if len(s["pts"]) >= 2]
         return {"node": node, "run": rid, "year": year, "island": J, "climate": C, "settlements": S, "resources": RS, "rivers": RV, "island_cfg": ctx.cfg.get("island", {}),
                 "preview_res": f"/api/island/preview?run={rid}&node={node}&res=1&t={int(time.time())}",
                 "preview": f"/api/island/preview?run={rid}&node={node}&t={int(time.time())}",
