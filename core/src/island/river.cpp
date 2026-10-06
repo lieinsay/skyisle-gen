@@ -41,7 +41,6 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     // C1 起没有夸张（旧 width_scale / depth_scale 删了）
     const double wa = c.get("hydro.width_a"), wb = c.get("hydro.width_b");
     const double dc = c.get("hydro.depth_c"), df = c.get("hydro.depth_f");
-    const double sm = c.get("hydro.stream_width_mult");
     // 切出来的河道 = **平岸河道**：年均流量下的水面宽深 × (平岸 / 年均)^站内指数（地形阶段只有假设的比值 bf_ratio_channel，
     // 逐日的真实比值在 rivers.json；站内指数小，误差异常小——四点五十一）
     const double bfr = c.get("hydro.bf_ratio_channel", 5.0);
@@ -58,8 +57,8 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
         const double q = std::max(Q[k], 0.0);
         const double w = wa * np_pow(q, wb) * ch_w;      // 河道（平岸）宽
         const double d = dc * np_pow(q, df) * ch_d;      // 河道（平岸）深
-        width[k] = center_r.v[k] ? w : (center_s.v[k] ? sm * w : 0.0);
-        depth[k] = center_r.v[k] ? d : (center_s.v[k] ? sm * d : 0.0);
+        width[k] = seed.v[k] ? w : 0.0; // 同一流量的河槽不因河 / 溪涧标签而突变。
+        depth[k] = seed.v[k] ? d : 0.0;
         incise[k] = center_r.v[k] ? inc_m * std::sqrt(clip(Akm.v[k] / amax, 0.0, 1.0)) : (center_s.v[k] ? s_inc : 0.0);
         base[k] = std::min(mk.v[k] ? h.v[k] : INF, mk.v[k] ? hf.v[k] : INF);
         if (seed.v[k]) bed[k] = base[k] - depth[k] - incise[k];
