@@ -155,6 +155,8 @@ a{color:var(--acc2)}
     <div class="small">每行一条 <code>island.a.b=value</code>，只影响本次生成（不写配置）；留空即按默认重生成。</div>
     <textarea id="sets" placeholder="island.terrain.carve_k=0.08&#10;island.layout.gap_max_km=8"></textarea>
     <div class="btnrow"><button id="btnRegen" class="primary">重新生成</button><button id="btnDefaults" class="mini">看当前参数</button></div>
+    <div class="btnrow"><button id="btnCaptureTrial">地形竞争试验</button><button id="btnCaptureLegacy">原有水系</button></div>
+    <div class="small">试验让相邻更低、汇水更大的流域竞争，重算三轮；不增加水源或直接放大河宽。按钮会重新生成当前岛群，其他覆盖参数保留。状态栏标明实际模型。</div>
     <pre id="cfgBox" class="small" style="display:none;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
   </details>
   <details class="fold"><summary>产物</summary><div id="files" class="small"></div></details>
@@ -233,7 +235,8 @@ async function load(force = false, sets = null){
     else if (!dayChosen && D.climate && D.climate.seasons && D.climate.seasons.length) {   // 头一回打开：停在最暖那一季的当中（庄稼长着、田看得见），不停在第 0 日的隆冬积雪里
       const warm = D.climate.seasons.reduce((a, b) => (b.temp_c > a.temp_c ? b : a)); day = Math.round((warm.days[0] + warm.days[1]) / 2); $('daySl').value = day; renderDay(); draw(); }
     dayChosen = true;
-    setStatus(`就绪：${run} #${node} · ${R.rows}×${R.cols} @ ${R.res_m} m${R.step > 1 ? '（抽稀 ' + R.step + '×）' : ''} · 生成 ${D.island.meta.seconds} s`);
+    const captureName = D.island.meta.capture_model === 'topographic-v1' ? `地形竞争试验 ${D.island.meta.capture_passes} 轮` : '原有水系';
+    setStatus(`就绪：${run} #${node} · ${R.rows}×${R.cols} @ ${R.res_m} m${R.step > 1 ? '（抽稀 ' + R.step + '×）' : ''} · ${captureName} · 生成 ${D.island.meta.seconds} s`);
   } catch (e) { setStatus('出错：' + e); console.error(e); }
   $('loading').style.display = 'none';
 }
@@ -693,6 +696,13 @@ function draw(){
   $('btnGo').onclick = () => { run = $('runIn').value.trim(); node = +$('nodeIn').value; load(); };
   $('btnYear').onclick = () => { year = +$('yearIn').value; load(); };
   $('btnRegen').onclick = () => { year = +$('yearIn').value; load(false, $('sets').value.split('\n').map(s => s.trim()).filter(Boolean)); };
+  const captureTrial = enabled => {
+    const sets = $('sets').value.split('\n').map(s => s.trim()).filter(s => s && !/^island\.hydro\.capture_topographic_(v1|passes)\s*=/.test(s));
+    sets.push(`island.hydro.capture_topographic_v1=${enabled}`, 'island.hydro.capture_topographic_passes=3');
+    $('sets').value = sets.join('\n'); year = +$('yearIn').value; load(false, sets);
+  };
+  $('btnCaptureTrial').onclick = () => captureTrial(true);
+  $('btnCaptureLegacy').onclick = () => captureTrial(false);
   $('btnDefaults').onclick = () => { const b = $('cfgBox'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; b.textContent = JSON.stringify(D.island_cfg, null, 1); };
   const onDay = () => { renderDay(); if ($('baseSel').value === 'temp') base = null; if (liveOn() || $('baseSel').value === 'temp') draw(); };
   $('daySl').addEventListener('input', () => { day = +$('daySl').value; onDay(); });

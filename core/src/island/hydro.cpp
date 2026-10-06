@@ -66,6 +66,8 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
             if (recv[k] < 0) outs.push_back(static_cast<int32_t>(k));
         }
     const double total = static_cast<double>(cnt) * cell_km2;
+    // 独立试算：由地形与相邻流域大小决定袭夺，不预先指定大谷名额或面积配额。
+    const bool topographic = c.get("hydro.capture_topographic_v1", 0.0) > 0.0;
     std::stable_sort(outs.begin(), outs.end(), [&](int32_t a, int32_t b) { return A.v[a] > A.v[b]; });
     const int n_v = static_cast<int>(clip(std::nearbyint(total / c.get("hydro.capture_km2_per_valley")), c.get("hydro.capture_min_n"), c.get("hydro.capture_max_n")));
     std::vector<uint8_t> is_win(N, 0);
@@ -80,10 +82,10 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
             any = true;
         }
     }
-    if (!any) return 0;
+    if (!any && !topographic) return 0;
     const double chan = c.get("hydro.capture_chan_km2");
     std::vector<uint8_t> okw(N, 0);
-    for (size_t k = 0; k < N; ++k) okw[k] = (mk.v[k] && lab[k] >= 0 && is_win[lab[k]] && A.v[k] >= chan) ? 1 : 0;
+    for (size_t k = 0; k < N; ++k) okw[k] = (mk.v[k] && lab[k] >= 0 && (topographic || is_win[lab[k]]) && A.v[k] >= chan) ? 1 : 0;
     std::vector<std::vector<int32_t>> donors(N);
     for (size_t k = 0; k < N; ++k)
         if (mk.v[k] && recv[k] >= 0) donors[recv[k]].push_back(static_cast<int32_t>(k));
@@ -99,7 +101,7 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
     };
     std::vector<Cand> cand;
     for (int32_t o : outs) {
-        if (is_win[o] || A.v[o] < loser_min) continue;
+        if ((!topographic && is_win[o]) || A.v[o] < loser_min) continue;
         std::vector<int32_t> path{o};
         int32_t k = o;
         while (!donors[k].empty()) {
@@ -123,7 +125,8 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
                 for (int j = std::max(0, bj - Rc); j < std::min(Ww, bj + Rc + 1); ++j) {
                     const int32_t q = i * Ww + j;
                     const int64_t d2 = static_cast<int64_t>(i - bi) * (i - bi) + static_cast<int64_t>(j - bj) * (j - bj);
-                    if (okw[q] && d2 <= R2 && hr.v[q] <= z1 - margin) cand.push_back({d2, hr.v[q], q});
+                    if (okw[q] && d2 <= R2 && hr.v[q] <= z1 - margin &&
+                        (!topographic || (lab[q] != o && A.v[lab[q]] > A.v[o]))) cand.push_back({d2, hr.v[q], q});
                 }
             if (cand.empty()) continue;
             std::sort(cand.begin(), cand.end(), [](const Cand& x, const Cand& y) {
@@ -134,7 +137,7 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
             for (const Cand& cd : cand) {
                 const int32_t w = cd.q;
                 const int64_t ow = lab[w];
-                if (budget[ow] < A.v[b]) continue;
+                if (!topographic && budget[ow] < A.v[b]) continue;
                 const int wi = w / Ww, wj = w % Ww;
                 const int n = std::max(std::abs(wi - bi), std::abs(wj - bj));
                 std::vector<int32_t> cells;
@@ -157,7 +160,7 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
                     const double zz = z - noise.v[cc];
                     if (zz < h.v[cc]) h.v[cc] = zz;
                 }
-                budget[ow] -= A.v[b];
+                if (!topographic) budget[ow] -= A.v[b];
                 ++n_cap;
                 done = true;
                 break;
@@ -338,6 +341,14 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                     for (int j = 0; j < w; ++j)
                         if (mk(i, j)) nz(i, j) = meander(i + R.r0, j + R.c0) + tilt(i + R.r0, j + R.c0);
                 R.captures = capture_rivers(hh, mk, nz, res_m, cell_km2, reach, c);
+                if (c.get("hydro.capture_topographic_v1", 0.0) > 0.0) {
+                    const int passes = std::max(1, std::min(4, static_cast<int>(c.get("hydro.capture_topographic_passes", 1.0))));
+                    for (int pass = 1; pass < passes; ++pass) {
+                        const int changed = capture_rivers(hh, mk, nz, res_m, cell_km2, reach, c);
+                        R.captures += changed;
+                        if (!changed) break;
+                    }
+                }
                 R.cap_ran = true;
             }
         }

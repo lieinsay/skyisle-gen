@@ -141,6 +141,8 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
         f"河 {'有' if inp['has_river'] else '无'} 岛龄 {inp['age']:.2f} 降水 {inp['precip']:.2f} 温差 {inp['season_range']:.1f} °C")
     from .engine import generate_cpp            # 行星计划 P6b：整群在 C++ 里算，g 拼回同形；写产物在下面
     g = generate_cpp(ctx, node, c, inp, year=year, res_m=res_m, steps=steps, log=log)
+    g["json"]["meta"]["capture_model"] = ("topographic-v1" if c["hydro"].get("capture_topographic_v1", False) else "legacy")
+    g["json"]["meta"]["capture_passes"] = max(1, min(4, int(c["hydro"].get("capture_topographic_passes", 1)))) if c["hydro"].get("capture_topographic_v1", False) else 1
     g["timing"]["generate"] = time.perf_counter() - t0      # 不含写产物（png / 预览图）
     if not write:
         return g

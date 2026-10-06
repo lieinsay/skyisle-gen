@@ -852,6 +852,8 @@ stream_valley_cells = 3       # 溪涧沟只影响几格
 # 从它到那格切一道直沟（只压低地面），小沟的上半截改流进大谷。大谷收了之后不超过岛面积的 capture_max_frac（别太过）。
 # 强度就是 capture_reach_km（能从多远抢过来）；新岛 × capture_young（几乎不收），中年与老岛同一个（用户定只做到中年岛的程度）；多核岛不收（有自己的干流）；0 = 旧式
 capture_reach_km = 3.0
+capture_topographic_v1 = false # 可切换试验：相邻更低、出口汇水更大的流域可袭夺，不指定大谷名额或面积配额；默认仍用原规则。
+capture_topographic_passes = 3  # 试验模式每轮重新路由，最多 4 轮；没有新切沟即停止。只重分汇水，不增加水源或直接放大河宽。
 capture_young = 0.1
 capture_min_island_km2 = 30.0
 capture_km2_per_valley = 150.0
