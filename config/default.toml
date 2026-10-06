@@ -865,27 +865,8 @@ capture_s_min = 0.3
 capture_margin_m = 5.0
 capture_max_frac = 0.2
 
-[island.water]                # 集水核（C4，spec 13 第八节）与地下水（C5，spec 13 第一节第 7 条、第二节第 6 条）：PLAN-NATURE C，DESIGN-NOTES 四点四十七
-# 集水核：长在山根的浮石骨架里，大小跟山走，让流过山的空气里的水汽凝在林子、岩面上（云雾截留的放大）——凝结水只进水账（渗进岩层 → 基流与泉，
-# 河的流量变大），不进局地雨 rain_mm、不进天气；行星层不知道它（不回灌）。
-# 凝结 = 局地雨 × min(1, core_gain × 核强度 × 高出岸缘的比例^core_elev_exp × 迎风 × 湿度)：
-#   核强度 = (高出岸缘的山体体积 km³)^(1/3) / core_len_km，夹 core_s_max（大山根深核大，碎的小岛核弱）；
-#   迎风 = 1 + core_windward_gain × clip(山脉尺度的迎风坡 / [island.hydro] windward_ref_m_per_km, −1, 1)；
-#   湿度 = min(1, 局地雨 / core_hum_full_mm)^core_hum_exp（像除湿器：干的群照样干，湿的山更湿，干湿格局不乱）；最多到局地雨的 1 倍
-core_gain = 1.0
-core_len_km = 10.0
-core_s_max = 1.5
-core_elev_exp = 1.5
-core_windward_gain = 0.5
-core_hum_full_mm = 1500.0
-core_hum_exp = 1.5
-cloud_forest_min_mm = 150.0   # 云雾林：林地里凝结 ≥ 此值且 ≥ cloud_forest_min_frac × 局地雨（terrain.npz 的 cloud_forest；地表仍记林地）
-cloud_forest_min_frac = 0.25
-heat_share = 0.001            # 凝结的潜热进岩体的份额（千分之一：大核山下的热流与地球平均相当，深循环的水出得了温泉；百分之一满山沸泉，太过）
-hotspring_mw = 5.0            # 一座岛进岩体的热每这么多 MW 给一处核山温泉（泊松；沿谷底、离核山近）
-hotspring_core_min = 0.25     # 大核山：集水核强度 ≥ 此值（高出岸缘的山体约 16 km³ 以上）的岛才有核山温泉（RES-geo 按它查）
-# 地下水：岛的上层岩层是含水层，闭孔的浮石骨架是底。各格的补给 = 雨的径流 × 基流比例 + 凝结水；基流比例与退水常数按出露岩性
-# （石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石：石灰岩岩溶、大泉，辉长岩裂隙，泥灰岩与蛇纹岩差，浮石不透水）。没有岩层的旧配置按 bfi_default。
+[island.water]                # 普通地下水：补给 = 降雨产出的径流 × 基流比例；无集水核额外供水。
+# 岩性（石灰岩 / 泥灰岩 / 辉长岩 / 蛇纹岩 / 浮石：石灰岩岩溶、大泉，辉长岩裂隙，泥灰岩与蛇纹岩差，浮石不透水）。没有岩层的旧配置按 bfi_default。
 # **水位面（B，四点四十九）**：稳态潜水面 ∇·(T∇h) = −R——排水口（河道 / 溪涧 / 湖 / 岸缘）固定水头 = 地表，水位高过地表就钉回地表（渗出面），
 # 不低于骨架顶面 + 最小含水厚。在 1/gw_coarse 的粗格上做 SOR，再双线性插值回原分辨率；**流向按水位面的梯度**（不再按地表）。
 # 水进了河道是河的基流；走到岸边的从崖壁上岩层与浮石的交界渗出来——崖壁泉线（按 springline_seg_km 一段）：

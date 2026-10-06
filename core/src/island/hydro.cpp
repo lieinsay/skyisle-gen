@@ -207,7 +207,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     const double oro = c.get("hydro.oro_rise_per_km", 0.0), wwgain = c.get("hydro.windward_gain", 0.0);
     const bool local_rain = oro != 0.0 || wwgain != 0.0;
     g.rain = GridD(H, W, 0.0);
-    GridD Gw;   // 山脉尺度的迎风坡（m/km），集水核（C4）也按它分迎背风
+    GridD Gw;   // 山脉尺度的迎风坡（m/km），用于局地降雨
     {
         for (size_t k = 0; k < N; ++k)
             if (land.v[k]) g.rain.v[k] = P_mm;
@@ -288,9 +288,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         }
         g.runoff_ratio = ps > 0 ? rs / ps : 0.0;
     }
-    // 集水核（C4，spec 13 第八节）：凝结水只进水账——渗进岩层，从泉与溪流出来，河的流量变大、雨量不变；runoff 含它，rain 与 runoff_ratio 不含
-    g.condense = condensation(g, Gw, c, g.core_s);
-    for (size_t k = 0; k < N; ++k) g.runoff.v[k] += g.condense.v[k];
+
     const double runoff = g.runoff_ratio;
     const double rq = 16.0;   // 径流加权汇流的量子（1/16 mm）：权重取整后求和与次序无关
     const int n_isl = static_cast<int>(g.islands.size());
@@ -643,7 +641,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             soil[k] = clip(0.35 + 0.5 * age_arr[k], 0, 1) * clip(1.0 - slope.v[k] / szero, 0.0, 1.0) *
                       (0.7 + 0.3 * clip(std::log1p(g.acc_km2.v[k]) / 4.0, 0, 1));
             if (has_lith && g.lith.v[k] == LI_SERP) soil[k] *= serp_soil;   // 蛇纹岩土贫有毒（B3 秃山）
-            wet[k] = clip((g.rain.v[k] + g.condense.v[k]) / 1500.0, 0.2, 2.0) * (1.0 + wgain * expo[k]);   // 局地雨（关掉时 = P_mm）+ 集水核的凝结水（C4：湿的核山更湿）
+            wet[k] = clip(g.rain.v[k] / 1500.0, 0.2, 2.0) * (1.0 + wgain * expo[k]);   // 湿度只由局地雨决定（关掉局地雨时 = P_mm）
             near_water[k] = std::sqrt(clip(1.0 - dw.v[k] / (near_cells + 1.0), 0.0, 1.0));
         }
     const double alpine = c.get("landcover.alpine_temp_c"), rock_t = c.get("landcover.rock_temp_c"), rock_s = c.get("landcover.rock_slope_deg");
@@ -694,13 +692,6 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         if (wetland[k]) cv = LC_WET;
         if (g.cliff.v[k]) cv = LC_CLIFF;
         g.landcover.v[k] = cv;
-    }
-    // 云雾林（C4）：林地里凝结水多的格——核山常年顶着云雾、苔藓挂满（地表仍记林地，另一层标）
-    g.cloud_forest = Grid<uint8_t>(H, W, 0);
-    {
-        const double cmin = c.get("water.cloud_forest_min_mm"), fmin = c.get("water.cloud_forest_min_frac");
-        for (size_t k = 0; k < N; ++k)
-            g.cloud_forest.v[k] = (g.landcover.v[k] == LC_FOREST && g.condense.v[k] >= cmin && g.condense.v[k] >= fmin * g.rain.v[k]) ? 1 : 0;
     }
     // ---------- 可耕地：适宜度分位 ----------
     std::vector<double> suit(N, -1.0);

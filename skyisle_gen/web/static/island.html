@@ -215,8 +215,8 @@ async function load(force = false, sets = null){
       nat: rr.landcover_natural_u8 ? b64(rr.landcover_natural_u8, Uint8Array) : null, lu: rr.landuse_u8 ? b64(rr.landuse_u8, Uint8Array) : null,   // P6b：原始地表、人工改造
       lith: rr.lith_u8 ? b64(rr.lith_u8, Uint8Array) : null,   // B2：出露岩性
       wtd: rr.wtdepth_u8 ? b64(rr.wtdepth_u8, Uint8Array) : null,   // B：水位埋深（m，255 = 虚空）
-      conf: rr.confine_u8 ? b64(rr.confine_u8, Uint8Array) : null, fw: rr.floor_w_u8 ? b64(rr.floor_w_u8, Uint8Array) : null,   // C2 限制度、谷底宽
-      cond: rr.condense_u8 ? b64(rr.condense_u8, Uint8Array) : null, cfor: rr.cloud_forest_u8 ? b64(rr.cloud_forest_u8, Uint8Array) : null };   // C4 凝结水、云雾林
+      conf: rr.confine_u8 ? b64(rr.confine_u8, Uint8Array) : null, fw: rr.floor_w_u8 ? b64(rr.floor_w_u8, Uint8Array) : null };   // C2 限制度、谷底宽
+
     R.res_m = D.island.raster.res_m * R.step;
     buildWarp(); refined = null;
     // 汇流点（别的线的终点，落在这条线的中段）平滑时不动：各线各自平滑时干流上的汇流点被挪开、支流的终点还在原处，放大后汇流处断开一截（用户 09-30 看出来的）
@@ -676,7 +676,7 @@ function draw(){
       if (u) { const now = LU_NOW[u] || LC_NAMES[ck]; nt = `<br>原始：${LC_NAMES[nk]} → 现状：${now}（人工：${LU_HOW[u]}）`; }
       else if (nk !== ck) nt = `<br>原始：${LC_NAMES[nk]} → 现状：${LC_NAMES[ck]}`;
       else nt = `<br>原始地貌（没动过）`; }
-    tip.innerHTML = (sn ? `<b>${sn.name}</b> ${sn.hh} 户${sn.polder ? '（圩村）' : ''} · ${sn.town ? '集镇（营建在第四步）' : '双击营建此聚落'}<br>` : '') + `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? FARM_TIP[R.arable[p]] : ''}${water ? ' · ' + water : ''}${nt}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${R.lith && D.island.lith && R.lith[p] ? ' · 岩性 ' + D.island.lith.classes[R.lith[p]] : ''}${wtm}${R.cond && R.cond[p] ? '<br>集水核凝结水 ' + R.cond[p] * 4 + ' mm/年' + (R.cfor && R.cfor[p] ? ' · 云雾林' : '') : ''}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
+    tip.innerHTML = (sn ? `<b>${sn.name}</b> ${sn.hh} 户${sn.polder ? '（圩村）' : ''} · ${sn.town ? '集镇（营建在第四步）' : '双击营建此聚落'}<br>` : '') + `岛 ${isl.id}（${isl.age_zh}，峰 ${isl.peak_m} m）<br>高程 ${fmt(hv, 0)} m · 坡 ${R.slope ? fmt(R.slope[p] / 4, 1) : '—'}° · 汇流 ${R.fa ? fmt(Math.pow(10, (R.fa[p] - 100) / 40), 2) : '—'} km²<br>${R.lc ? LC_NAMES[R.lc[p]] : ''}${R.arable && R.arable[p] ? FARM_TIP[R.arable[p]] : ''}${water ? ' · ' + water : ''}${nt}${R.cliff && R.cliff[p] ? ' · 崖缘' : ''}${zr ? '<br>地形区 ' + zr : ''}${R.lith && D.island.lith && R.lith[p] ? ' · 岩性 ' + D.island.lith.classes[R.lith[p]] : ''}${wtm}${rs ? ' · 主导资源 <b>' + rs + '</b>' : ''}${fs ? '<br>赋存 ' + fs : ''}<br>第 ${day} 日海拔温度 ${fmt(T, 1)} °C`;
     tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 14) + 'px';
     $('coords').textContent = `x ${fmt(kmx, 2)} km, y ${fmt(kmy, 2)} km · 格 (${i}, ${j})`;
   });

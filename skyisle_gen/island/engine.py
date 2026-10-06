@@ -304,7 +304,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
         g["lith"] = R["lith"]
         J["lith"] = lith_summary(R["lith"], island_id)
     # C1 / C2：河床、谷底宽、限制度、记成水的河道格；C4 / C5：凝结水、云雾林、地下水、崖壁泉线
-    for k in ("bed_m", "floor_w_m", "confine", "river_water", "condense_mm", "cloud_forest", "bfi", "recharge_mm", "recharge_acc", "runoff_acc",
+    for k in ("bed_m", "floor_w_m", "confine", "river_water", "bfi", "recharge_mm", "recharge_acc", "runoff_acc",
               "wt", "wt_outlet"):
         if k in R:
             g[k] = R[k]
@@ -345,7 +345,7 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
     J["hydro"]["local_precip"] = local_precip_summary(g["rain_mm"], island_id, hc)
     from .groundwater import valley_summary, water_summary
     J["hydro"]["valley"] = valley_summary(g, cell_km2)
-    if "condense_mm" in R:
+    if "recharge_mm" in R:
         J["hydro"]["water"] = water_summary(g, R, island_id, cell_km2)
     J["constraints"]["arable_frac"]["actual"] = round(float((arable > 0).sum()) / max(1, n_land), 4)
     hm = height[island_id == 0]

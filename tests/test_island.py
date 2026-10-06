@@ -55,6 +55,25 @@ def test_stream_width_legacy_multiplier_is_ignored(small_ctx):
     np.testing.assert_array_equal(a["d_ch_m"], b["d_ch_m"])
 
 
+def test_removed_water_core_cannot_be_restored_by_old_snapshot(small_ctx):
+    """旧 core_gain 键不再生效，普通降雨补给、水位与基流仍然存在。"""
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    a = isl.generate(small_ctx, node, res_m=300, steps=4, write=False,
+                     sets=["island.water.core_gain=0"], log=lambda *a: None)
+    b = isl.generate(small_ctx, node, res_m=300, steps=4, write=False,
+                     sets=["island.water.core_gain=100"], log=lambda *a: None)
+    for key in ("condense_mm", "cloud_forest", "core_s"):
+        assert key not in a and key not in b
+    for key in ("runoff_mm", "recharge_mm", "w_ch_m", "wt"):
+        np.testing.assert_array_equal(a[key], b[key])
+    land = a["island_id"] >= 0
+    assert a["recharge_mm"][land].max() > 0
+    assert np.isfinite(a["wt"][land]).all()
+    assert (a["runoff_mm"][land] <= a["rain_mm"][land] + 1e-3).all()
+    assert all(basin["cond_frac"] == 0 for basin in a["rivernet"]["basins"])
+
+
 def test_island_deterministic_and_consistent(small_ctx):
     from skyisle_gen import island as isl
     node = _pick_node(small_ctx)
@@ -353,9 +372,8 @@ def test_resources_from_the_seafloor(small_ctx, tmp_path):
     assert {"salt", "saltspring", "fossil"} <= kinds, kinds
     assert any(d.get("subtype") == "骨架空洞" for d in R["deposits"])
     ages = {i["id"]: i["age_zh"] for i in J["islands"]}
-    # C4 起：温泉在新岛（余热）或大核山上（核山温泉：集水核强度 ≥ hotspring_core_min）
-    core_s = J["hydro"]["water"]["core_strength"]
-    assert all(ages[d["island"]] == "新岛" or (d["subtype"] == "核山温泉" and core_s[d["island"]] >= 0.25 - 1e-3)
+    # 删除集水核后仅保留新岛余热温泉。
+    assert all(ages[d["island"]] == "新岛"
                for d in R["deposits"] if d["kind"] == "hotspring")
     assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "stone"} <= set(LITH_LAYERS)
     assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "ore"} <= set(ORE_ORIGIN)

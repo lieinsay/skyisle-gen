@@ -308,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
         for k, dt in (("landcover", np.uint8), ("river", np.uint8), ("stream", np.uint8), ("lake", np.uint8), ("arable", np.uint8), ("cliff", np.uint8),
                       ("floodplain", np.uint8), ("terrain_zone", np.uint8), ("resource", np.uint8), ("landcover_natural", np.uint8), ("landuse", np.uint8),
                       ("lith", np.uint8),                                                # B2：出露岩性（码见 island.json 的 lith.classes）
-                      ("confine", np.uint8), ("cloud_forest", np.uint8), ("river_water", np.uint8)):   # C2 限制度、C4 云雾林、C1 记成水面的河道格
+                      ("confine", np.uint8), ("river_water", np.uint8)):   # C2 限制度、C1 记成水面的河道格
             if k in arrs:
                 out[k + "_u8"] = base64.b64encode(pick(arrs[k]).astype(dt).tobytes()).decode("ascii")
         if "wt_depth_m" in arrs:      # B（四点四十九）：水位埋深（m，0–255 饱和；255 = 虚空 / 更深）——调试台「水位埋深」底图
@@ -326,8 +326,6 @@ class Handler(BaseHTTPRequestHandler):
             out["river_depth_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["d_ch_m"]) * 10.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "floor_w_m" in arrs:       # C2 谷底宽 / 20 m（到 5100 m）；C4 凝结水 / 4 mm（到 1020 mm）
             out["floor_w_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["floor_w_m"]) / 20.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
-        if "condense_mm" in arrs:
-            out["condense_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["condense_mm"]) / 4.0), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "slope_deg" in arrs:
             out["slope_u8"] = base64.b64encode(np.clip(np.round(pick(arrs["slope_deg"]) * 4), 0, 255).astype(np.uint8).tobytes()).decode("ascii")
         if "flowacc_km2" in arrs:

@@ -342,12 +342,6 @@ nb::dict hydro_dict(Group& g) {
         d["confine"] = grid_np(Grid<uint8_t>(g.confine));
     }
     if (!g.river_water.v.empty()) d["river_water"] = mask_np(Mask(g.river_water));
-    // C4 / C5：凝结水、云雾林、集水核强度、地下水、崖壁泉线
-    if (!g.condense.v.empty()) {
-        d["condense_mm"] = f32_np(g.condense);
-        d["core_s"] = to_np(std::vector<double>(g.core_s), {g.core_s.size()});
-    }
-    if (!g.cloud_forest.v.empty()) d["cloud_forest"] = mask_np(Mask(g.cloud_forest));
     if (!g.recharge.v.empty()) {
         d["bfi"] = f32_np(g.bfi);
         d["recharge_mm"] = f32_np(g.recharge);

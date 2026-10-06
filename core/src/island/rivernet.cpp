@@ -190,22 +190,20 @@ void build_rivernet(Group& g, const Config& c) {
         const std::vector<int32_t>& cells = members[b];
         B.area_km2 = static_cast<double>(cells.size()) * cell_km2;
         if (cells.empty() || nd == 0) continue;
-        double Wsum = 0.0, Csum = 0.0, wb = 0.0, wbr = 0.0;
+        double Wsum = 0.0, wb = 0.0, wbr = 0.0;
         std::vector<double> w(cells.size());
         for (size_t q = 0; q < cells.size(); ++q) {
             const int32_t k = cells[q];
-            const double cond = g.condense.v.empty() ? 0.0 : g.condense.v[k];
-            w[q] = std::max(0.0, g.runoff.v[k] - cond) * cell_km2;
+            w[q] = std::max(0.0, g.runoff.v[k]) * cell_km2;
             const double bf = g.bfi.v.empty() ? bfi_def : g.bfi.v[k];
             Wsum += w[q];
-            Csum += cond * cell_km2;
             wb += w[q] * bf;
             wbr += w[q] * bf * lith_at(rec_t, has_lith ? g.lith.v[k] : 0, 30.0);
         }
-        B.q_mean = b < nb ? g.runoff_acc.v[static_cast<size_t>(B.ci) * W + B.cj] * 1000.0 / year_s : (Wsum + Csum) * 1000.0 / year_s;
+        B.q_mean = b < nb ? g.runoff_acc.v[static_cast<size_t>(B.ci) * W + B.cj] * 1000.0 / year_s : Wsum * 1000.0 / year_s;
         B.bfi = Wsum > 0.0 ? wb / Wsum : bfi_def;
         B.recession_days = wb > 0.0 ? wbr / wb : 30.0;
-        B.cond_frac = (Wsum + Csum) > 0.0 ? Csum / (Wsum + Csum) : 0.0;
+        B.cond_frac = 0.0; // 旧河网契约兼容字段；集水核供水已删除。
         B.quick_days = b < nb ? clip(qk * np_pow(B.area_km2, qe), qmin, qmax) : qmin;
         // 按高程分带（等径流量），带内按径流量加权的高程与局地雨
         std::vector<size_t> ix(cells.size());
@@ -231,7 +229,7 @@ void build_rivernet(Group& g, const Config& c) {
         B.index.assign(nd, 0.0);
         for (int pass = 0; pass < 2; ++pass)
             for (int d = 0; d < nd; ++d) {
-                double quick = 0.0, slow = Csum / nd;
+                double quick = 0.0, slow = 0.0;
                 for (int t = 0; t < nbands; ++t) {
                     if (!(bw[t] > 0.0) || !(bp[t] > 0.0)) continue;
                     const double T = Td[d] + lapse * (h_ref - bz[t]) / 1000.0;
