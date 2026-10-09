@@ -55,6 +55,48 @@ def test_stream_width_legacy_multiplier_is_ignored(small_ctx):
     np.testing.assert_array_equal(a["d_ch_m"], b["d_ch_m"])
 
 
+def test_removed_water_core_cannot_be_restored_by_old_snapshot(small_ctx):
+    """旧 core_gain 键不再生效，普通降雨补给、水位与基流仍然存在。"""
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    a = isl.generate(small_ctx, node, res_m=300, steps=4, write=False,
+                     sets=["island.water.core_gain=0"], log=lambda *a: None)
+    b = isl.generate(small_ctx, node, res_m=300, steps=4, write=False,
+                     sets=["island.water.core_gain=100"], log=lambda *a: None)
+    for key in ("condense_mm", "cloud_forest", "core_s"):
+        assert key not in a and key not in b
+    for key in ("runoff_mm", "recharge_mm", "w_ch_m", "wt"):
+        np.testing.assert_array_equal(a[key], b[key])
+    land = a["island_id"] >= 0
+    assert a["recharge_mm"][land].max() > 0
+    assert np.isfinite(a["wt"][land]).all()
+    assert (a["runoff_mm"][land] <= a["rain_mm"][land] + 1e-3).all()
+    assert all(basin["cond_frac"] == 0 for basin in a["rivernet"]["basins"])
+
+
+def test_reach_sediment_budget_and_water_width(small_ctx):
+    """跨支流的水沙账、确定性与新河槽的日水面口径都必须对得上。"""
+    import copy
+    from skyisle_gen import island as isl
+    node = _pick_node(small_ctx)
+    def generate(enabled):
+        ctx = Context(copy.deepcopy(small_ctx.cfg), small_ctx.seed, small_ctx.out_dir)
+        return isl.generate(ctx, node, res_m=300, steps=4, write=False,
+                            sets=[f"island.hydro.reach_geometry_v1={'true' if enabled else 'false'}"], log=lambda *a:None)
+    a, b, old = generate(True), generate(True), generate(False)
+    for key in ("sed_source_kg_y", "sed_flux_kg_y", "sed_deposit_kg_y", "w_ch_m", "d_ch_m"):
+        np.testing.assert_array_equal(a[key], b[key])
+        assert np.isfinite(a[key]).all() and (a[key] >= 0).all()
+    np.testing.assert_array_equal(a["rain_mm"], old["rain_mm"])
+    np.testing.assert_array_equal(a["runoff_mm"], old["runoff_mm"])
+    assert "sed_source_kg_y" not in old
+    assert a["json"]["hydro"]["sediment"]["relative_error"] < 1e-10
+    cells = a["rivernet"]["cell"]
+    ratio = small_ctx.cfg["island"]["hydro"]["bf_ratio_channel"]
+    aw = small_ctx.cfg["island"]["hydro"]["at_station_width_b"]
+    np.testing.assert_allclose(a["rivernet"]["w_mean"], a["w_ch_m"].ravel()[cells]/ratio**aw, rtol=1e-5)
+
+
 def test_island_deterministic_and_consistent(small_ctx):
     from skyisle_gen import island as isl
     node = _pick_node(small_ctx)
@@ -353,9 +395,8 @@ def test_resources_from_the_seafloor(small_ctx, tmp_path):
     assert {"salt", "saltspring", "fossil"} <= kinds, kinds
     assert any(d.get("subtype") == "骨架空洞" for d in R["deposits"])
     ages = {i["id"]: i["age_zh"] for i in J["islands"]}
-    # C4 起：温泉在新岛（余热）或大核山上（核山温泉：集水核强度 ≥ hotspring_core_min）
-    core_s = J["hydro"]["water"]["core_strength"]
-    assert all(ages[d["island"]] == "新岛" or (d["subtype"] == "核山温泉" and core_s[d["island"]] >= 0.25 - 1e-3)
+    # 删除集水核后仅保留新岛余热温泉。
+    assert all(ages[d["island"]] == "新岛"
                for d in R["deposits"] if d["kind"] == "hotspring")
     assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "stone"} <= set(LITH_LAYERS)
     assert {o["subtype"] for o in R["occurrences"] if o["kind"] == "ore"} <= set(ORE_ORIGIN)

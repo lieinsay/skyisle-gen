@@ -349,14 +349,12 @@ struct Group {
     Grid<uint8_t> cultivable, cover_natural;
     std::vector<double> suit;
     GridD width_m, depth_m, cut_m, slope;   // width_m / depth_m = **河道（平岸）**宽深（四点五十一；逐点的真值在 g.rnet.w / d）
+    GridD sed_source, sed_flux, sed_deposit, sed_grain; // 试验：kg/年来源、输送、沉积；独立代表粒径 m。
     GridD bed_m;                    // 河床高程（C1：河道格的 height 是平岸水面，河床 = height − depth_m；其余 NaN）
     GridD floor_w;                  // 谷底全宽（m，C2：河道格的目标 W）
     Grid<uint8_t> confine;          // 限制度（C2，河道格）：1 峡谷 / 2 半限制 / 3 开阔
     GridD chan_slope;               // 河道比降（C3，河与溪涧的中心线格；其余 NaN）
     Grid<uint8_t> river_water;      // 河宽过一格、在栅格上记成水的河道格（C1；其余河道格的地表是岸上的）
-    GridD condense;                 // 集水核的凝结水（mm/年，C4；只进水账：runoff 已含它，rain 不含）
-    std::vector<double> core_s;     // 各岛集水核的强度（C4，跟山走）
-    Grid<uint8_t> cloud_forest;     // 云雾林（C4：林地里凝结水多的格）
     GridD bfi, recharge, recharge_acc;   // 地下水（C5）：基流比例（按岩性）、补给（mm）、顺流向累计的补给（mm·km²；河道格 = 河的基流）
     GridD wt;                            // 水位面（潜水面，m，零点口径；B，四点四十九）：虚空 NaN，陆地格 = 水位（≤ 地表、≥ 骨架顶面 + 最小含水厚）
     Grid<uint8_t> wt_outlet;             // 水位面上流向的出口（陆地 & 出岛 / 无下游）：崖壁泉线的源格、IS-water 的补水口

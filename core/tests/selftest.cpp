@@ -7,6 +7,8 @@
 
 #include "skyisle/flow.hpp"
 #include "skyisle/grid.hpp"
+#include "skyisle/island/coast.hpp"
+#include "skyisle/island/river.hpp"
 #include "skyisle/rng.hpp"
 #include "skyisle/town/contour.hpp"
 #include "skyisle/town/geom.hpp"
@@ -193,6 +195,39 @@ int main() {
         for (int j = 0; j < W; ++j) ramp(20, j) = std::nanf("");   // 横着一行 NaN：竖线断成两段
         CHECK(iso_lines(s, ramp, 20.5, 1, c0, 100.0).size() == 2);
         CHECK(iso_lines(s, cone, 10.0, 1, c0, 5.0).empty());      // 半径外不看
+    }
+    {
+        // 非正方形格网与偏离对角线的岸线，防止行列互换被对称图形掩盖。
+        GridD phi(5, 9, 0.0);
+        for (int axis = 0; axis < 2; ++axis) {
+            for (int i = 0; i < phi.H; ++i)
+                for (int j = 0; j < phi.W; ++j)
+                    phi(i, j) = (axis == 0 ? j - 5.25 : i - 1.75);
+            const auto distance = island::coast_distance(phi, 20.0);
+            for (size_t k = 0; k < phi.size(); ++k)
+                CHECK(std::fabs(distance.v[k] - phi.v[k] * 20.0) < 1e-9);
+        }
+    }
+    {
+        // 两支流汇合、磨细及湖泊截留都不能丢失泥沙；零来源不能凭空改变几何。
+        GridD h(1,5), q(1,5);h.v={40,45,30,20,10};q.v={1,2,3,4,5};
+        Mask land(1,5,1), lake(1,5,0);lake.v[3]=1;
+        Grid<uint8_t> lith(1,5,3);
+        std::vector<int64_t> recv={2,2,3,4,-1};
+        island::Channels ref;
+        ref.width=GridD(1,5,20);ref.depth=GridD(1,5,1);
+        ref.floor_w=GridD(1,5,400);ref.slope=GridD(1,5,.005);
+        Config c;
+        auto geom=island::reach_geometry(h,land,lake,recv,q,lith,ref,100,31536000,c);
+        double source=0,deposited=0;
+        for (size_t k=0;k<5;++k) {source+=geom.source.v[k];deposited+=geom.deposit.v[k];CHECK(geom.flux.v[k]>=0);}
+        CHECK(source>0 && geom.deposit.v[3]>0);
+        CHECK(std::fabs(source-deposited-geom.flux.v[4])<1e-8*source);
+        CHECK(geom.grain.v[2]>0 && geom.depth.v[2]>0 && std::isfinite(geom.width.v[2]));
+        c.num["hydro.reach_source_mm_y"]=0;
+        auto dry=island::reach_geometry(h,land,lake,recv,q,lith,ref,100,31536000,c);
+        CHECK(dry.width.v==ref.width.v && dry.depth.v==ref.depth.v);
+        CHECK(q.v[2]==3);
     }
     if (fails) {
         std::printf("%d 项失败\n", fails);

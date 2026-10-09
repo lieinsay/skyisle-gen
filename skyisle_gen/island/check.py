@@ -104,8 +104,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
         from .resources import FIELD_KINDS, LITH_LAYERS, ORE_ORIGIN, RES_INDEX, rock_site_mask
         bad_site, bad_geo = [], []
         ages = {i["id"]: i["age_zh"] for i in J["islands"]}
-        core_s = (J.get("hydro", {}).get("water") or {}).get("core_strength") or []
-        core_min = float((c or {}).get("water", {}).get("hotspring_core_min", 0.0))
+
         water = _water_surface(g)
         fs_ids = [d["id"] for d in R["deposits"] if d["kind"] == "floatstone"]
         near_fs = binary_dilate(np.isin(g["patch_id"], fs_ids), 1) if fs_ids else np.zeros(water.shape, dtype=bool)
@@ -121,7 +120,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             marked = (g["patch_id"][i, j_] == d["id"]) if d["form"] == "patch" else (g["resource"][i, j_] == RES_INDEX[d["kind"]])
             if g["island_id"][i, j_] != d["island"] or water[i, j_] or (g["cliff"][i, j_] and not on_cliff_ok) or not marked:
                 bad_site.append(d["id"])
-        # P3（没有火山）：不许有熔岩管 / 火山口；骨架空洞开在浮石露头旁；温泉、硫磺只在新岛（C4 起集水核的核山温泉除外）；溶洞只在老岛；石料岩性是三层之一；
+        # P3（没有火山）：不许有熔岩管 / 火山口；骨架空洞开在浮石露头旁；温泉、硫磺只在新岛；溶洞只在老岛；石料岩性是三层之一；
         # 金属矿是海底带上来的那几种；盐泉在岩盐赋存上；贝壳化石在海相石灰岩的石料赋存区里
         for d in R["deposits"] + R["occurrences"]:
             a = ages.get(d["island"])
@@ -131,8 +130,8 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
             if (("熔岩" in text or "火山" in text)
                     or (sub == "骨架空洞" and not near_fs[i, j_])
                     or (sub in ("溶洞", "落水洞", "地下河") and a != "老岛")
-                    or (d["kind"] in ("sulfur", "hotspring") and a != "新岛" and sub != "核山温泉")
-                    or (sub == "核山温泉" and (d["island"] >= len(core_s) or core_s[d["island"]] < core_min - 1e-3))
+                    or (d["kind"] in ("sulfur", "hotspring") and a != "新岛")
+                    or sub == "核山温泉"
                     or (d["kind"] == "stone" and sub not in LITH_LAYERS)
                     or (d["kind"] == "ore" and sub not in ORE_ORIGIN)
                     or (d["kind"] == "saltspring" and RFg[fk["salt"]][i, j_] < int(round(R["fields"]["thr"]["salt"] * 255.0)) - 1)
@@ -164,7 +163,7 @@ def evaluate(g: dict, out: Path, ctx=None, node: int | None = None, c: dict | No
                 bad_w.append(w["id"])
         add("RES-work", "采场（矿坑 / 硫磺坑 / 淘金点 / 采石场 / 土坑 / 采砂场）不在耕地、林地、水面、崖缘上，落在本类的赋存场里、挂着同类赋存区",
             {"bad": bad_w[:10], "n": len(R["workings"])}, "bad = 0", not bad_w)
-        add("RES-geo", "资源与地质背景一致（没有火山：无熔岩管 / 火山口，骨架空洞开在浮石露头旁；温泉、硫磺只在新岛（核山温泉只在大核山上），溶洞只在老岛；"
+        add("RES-geo", "资源与地质背景一致（没有火山：无熔岩管 / 火山口，骨架空洞开在浮石露头旁；温泉、硫磺只在新岛，溶洞只在老岛；"
                        "石料岩性为海相石灰岩 / 辉长岩 / 蛇纹岩，金属矿是海底带上来的那几种；盐泉在岩盐赋存上，贝壳化石在海相石灰岩里）",
             {"bad": bad_geo[:10]}, "bad = 0", not bad_geo)
         nq = sum(1 for o in R["occurrences"] if o["kind"] == "stone" and o["island"] == 0)
@@ -527,12 +526,9 @@ def _water_budget(g: dict) -> dict:
     val = {"runoff_mm_km2": round(tot, 1), "outflow_mm_km2": round(out_, 1), "err": round(e_run, 7)}
     ok = e_run < 1e-4
     rain = g["rain_mm"].astype(np.float64)
-    if "condense_mm" in g:
-        cond = g["condense_mm"].astype(np.float64)
-        over_c = int((land & (cond > rain + 1e-3)).sum())
-        over_r = int((land & (run - cond > rain + 1e-3)).sum())
-        val.update({"condense_over_rain": over_c, "rain_runoff_over_rain": over_r})
-        ok = ok and over_c == 0 and over_r == 0
+    over_r = int((land & (run > rain + 1e-3)).sum())
+    val["rain_runoff_over_rain"] = over_r
+    ok = ok and over_r == 0
     if "recharge_acc" in g:
         rtot = float(g["recharge_mm"].astype(np.float64)[land].sum()) * cell
         # B 起补给按水位面的流向累计：补水口是水位面的出口（出岛 / 无下游），不是地表的 recv_i
@@ -545,7 +541,7 @@ def _water_budget(g: dict) -> dict:
         e_idx = max((abs(float(np.mean(b["index"])) - 1.0) for b in g["rivernet"]["basins"] if len(b["index"])), default=0.0)
         val["index_mean_err"] = round(e_idx, 7)
         ok = ok and e_idx < 1e-6
-    return {"id": "IS-water", "name": "水账闭合（C6）：陆地径流 = 出口的径流累计，补给 = 出口的补给累计；凝结水、雨产的径流都不超过局地雨；逐日径流指数年均 = 1",
+    return {"id": "IS-water", "name": "水账闭合（C6）：陆地径流 = 出口的径流累计，补给 = 出口的补给累计；雨产的径流不超过局地雨；逐日径流指数年均 = 1",
             "value": val, "threshold": "相对误差 < 1e−4（径流权重取整到 1/16 mm、float32）、超出 0 格", "pass": bool(ok), "hard": True, "note": None}
 
 

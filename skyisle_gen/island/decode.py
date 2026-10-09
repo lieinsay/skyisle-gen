@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .groundwater import NOTE_HOTSPRING_CORE, NOTE_SPRING, SPRING_ZH
+from .groundwater import NOTE_SPRING, SPRING_ZH
 from .resources import (NOTE_FOSSIL, NOTE_HOTSPRING, NOTE_SALT, NOTE_SALTSPRING, NOTE_SULFUR, NOTE_VOID, ORE_NOTE, RES_FORM, RES_INDEX, RES_NAMES,
                         WORK_ZH, ZONE_NAMES, _shape)
 
@@ -76,8 +76,6 @@ def deposit(d: dict) -> dict:
     elif note == "spring_flow":
         out["note"] = NOTE_SPRING.format(d["note_arg"])
         out["flow_ls"] = d["note_arg"]
-    elif note == "hotspring_core":
-        out["note"] = NOTE_HOTSPRING_CORE.format(d["note_arg"])
     elif note:
         out["note"] = NOTE_ZH[note]
     if d.get("cleared"):

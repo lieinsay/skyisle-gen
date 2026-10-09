@@ -35,6 +35,7 @@ struct IslandHydro {
     int64_t lake_cells = 0;
     double max_acc = 0, river_thr = NaN;
     Channels ch;
+    ReachGeometry reach;
     Basins basins;
     bool cap_ran = false;
     int captures = 0;
@@ -66,6 +67,8 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
             if (recv[k] < 0) outs.push_back(static_cast<int32_t>(k));
         }
     const double total = static_cast<double>(cnt) * cell_km2;
+    // 独立试算：由地形与相邻流域大小决定袭夺，不预先指定大谷名额或面积配额。
+    const bool topographic = c.get("hydro.capture_topographic_v1", 0.0) > 0.0;
     std::stable_sort(outs.begin(), outs.end(), [&](int32_t a, int32_t b) { return A.v[a] > A.v[b]; });
     const int n_v = static_cast<int>(clip(std::nearbyint(total / c.get("hydro.capture_km2_per_valley")), c.get("hydro.capture_min_n"), c.get("hydro.capture_max_n")));
     std::vector<uint8_t> is_win(N, 0);
@@ -80,10 +83,10 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
             any = true;
         }
     }
-    if (!any) return 0;
+    if (!any && !topographic) return 0;
     const double chan = c.get("hydro.capture_chan_km2");
     std::vector<uint8_t> okw(N, 0);
-    for (size_t k = 0; k < N; ++k) okw[k] = (mk.v[k] && lab[k] >= 0 && is_win[lab[k]] && A.v[k] >= chan) ? 1 : 0;
+    for (size_t k = 0; k < N; ++k) okw[k] = (mk.v[k] && lab[k] >= 0 && (topographic || is_win[lab[k]]) && A.v[k] >= chan) ? 1 : 0;
     std::vector<std::vector<int32_t>> donors(N);
     for (size_t k = 0; k < N; ++k)
         if (mk.v[k] && recv[k] >= 0) donors[recv[k]].push_back(static_cast<int32_t>(k));
@@ -99,7 +102,7 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
     };
     std::vector<Cand> cand;
     for (int32_t o : outs) {
-        if (is_win[o] || A.v[o] < loser_min) continue;
+        if ((!topographic && is_win[o]) || A.v[o] < loser_min) continue;
         std::vector<int32_t> path{o};
         int32_t k = o;
         while (!donors[k].empty()) {
@@ -123,7 +126,8 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
                 for (int j = std::max(0, bj - Rc); j < std::min(Ww, bj + Rc + 1); ++j) {
                     const int32_t q = i * Ww + j;
                     const int64_t d2 = static_cast<int64_t>(i - bi) * (i - bi) + static_cast<int64_t>(j - bj) * (j - bj);
-                    if (okw[q] && d2 <= R2 && hr.v[q] <= z1 - margin) cand.push_back({d2, hr.v[q], q});
+                    if (okw[q] && d2 <= R2 && hr.v[q] <= z1 - margin &&
+                        (!topographic || (lab[q] != o && A.v[lab[q]] > A.v[o]))) cand.push_back({d2, hr.v[q], q});
                 }
             if (cand.empty()) continue;
             std::sort(cand.begin(), cand.end(), [](const Cand& x, const Cand& y) {
@@ -134,7 +138,7 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
             for (const Cand& cd : cand) {
                 const int32_t w = cd.q;
                 const int64_t ow = lab[w];
-                if (budget[ow] < A.v[b]) continue;
+                if (!topographic && budget[ow] < A.v[b]) continue;
                 const int wi = w / Ww, wj = w % Ww;
                 const int n = std::max(std::abs(wi - bi), std::abs(wj - bj));
                 std::vector<int32_t> cells;
@@ -157,7 +161,7 @@ int capture_rivers(GridD& h, const Mask& mk, const GridD& noise, double res_m, d
                     const double zz = z - noise.v[cc];
                     if (zz < h.v[cc]) h.v[cc] = zz;
                 }
-                budget[ow] -= A.v[b];
+                if (!topographic) budget[ow] -= A.v[b];
                 ++n_cap;
                 done = true;
                 break;
@@ -207,7 +211,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     const double oro = c.get("hydro.oro_rise_per_km", 0.0), wwgain = c.get("hydro.windward_gain", 0.0);
     const bool local_rain = oro != 0.0 || wwgain != 0.0;
     g.rain = GridD(H, W, 0.0);
-    GridD Gw;   // 山脉尺度的迎风坡（m/km），集水核（C4）也按它分迎背风
+    GridD Gw;   // 山脉尺度的迎风坡（m/km），用于局地降雨
     {
         for (size_t k = 0; k < N; ++k)
             if (land.v[k]) g.rain.v[k] = P_mm;
@@ -288,9 +292,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         }
         g.runoff_ratio = ps > 0 ? rs / ps : 0.0;
     }
-    // 集水核（C4，spec 13 第八节）：凝结水只进水账——渗进岩层，从泉与溪流出来，河的流量变大、雨量不变；runoff 含它，rain 与 runoff_ratio 不含
-    g.condense = condensation(g, Gw, c, g.core_s);
-    for (size_t k = 0; k < N; ++k) g.runoff.v[k] += g.condense.v[k];
+
     const double runoff = g.runoff_ratio;
     const double rq = 16.0;   // 径流加权汇流的量子（1/16 mm）：权重取整后求和与次序无关
     const int n_isl = static_cast<int>(g.islands.size());
@@ -340,6 +342,14 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                     for (int j = 0; j < w; ++j)
                         if (mk(i, j)) nz(i, j) = meander(i + R.r0, j + R.c0) + tilt(i + R.r0, j + R.c0);
                 R.captures = capture_rivers(hh, mk, nz, res_m, cell_km2, reach, c);
+                if (c.get("hydro.capture_topographic_v1", 0.0) > 0.0) {
+                    const int passes = std::max(1, std::min(4, static_cast<int>(c.get("hydro.capture_topographic_passes", 1.0))));
+                    for (int pass = 1; pass < passes; ++pass) {
+                        const int changed = capture_rivers(hh, mk, nz, res_m, cell_km2, reach, c);
+                        R.captures += changed;
+                        if (!changed) break;
+                    }
+                }
                 R.cap_ran = true;
             }
         }
@@ -451,6 +461,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         // 河道成形（B2：谷壁坡按河床那格露出的岩性的坍塌角；C2：谷底宽的岩性系数也按它，岛龄系数按本岛）
         const IslandRec& J = g.islands[k];
         GridD wall, flith;
+        Grid<uint8_t> source_lith(h,w,3);
         if (!g.strat_top.v.empty()) {
             wall = GridD(h, w, 0.0);
             flith = GridD(h, w, 1.0);
@@ -459,12 +470,20 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                 for (int j = 0; j < w; ++j)
                     if (mk(i, j)) {
                         const uint8_t li = lith_at(hh(i, j), g.strat_top(i + R.r0, j + R.c0), g.skel_top(i + R.r0, j + R.c0), J.strat);
+                        source_lith(i,j)=li;
                         wall(i, j) = lt.talus_deg[li];
                         if (li >= 1 && li - 1 < static_cast<int>(vl.size())) flith(i, j) = vl[li - 1];
                     }
         }
         R.ch = carve_channels(hh, R.hr, mk, R.lake, R.recv, R.Akm, R.river, R.stream, P_mm, runoff, J.rim_j, J.keel_j, res_m, year_s, c, k == 0,
                               local_rain ? &R.Q : nullptr, wall.v.empty() ? nullptr : &wall, flith.v.empty() ? nullptr : &flith, J.age_j);
+        if (c.get("hydro.reach_geometry_v1",0)>0) {
+            GridD flow(h,w,0);
+            for (size_t q=0;q<n;++q) flow.v[q]=R.Racc.v[q]*1000/year_s;
+            R.reach=reach_geometry(hh,mk,R.lake,R.recv,flow,source_lith,R.ch,res_m,year_s,c);
+            R.ch=carve_channels(hh,R.hr,mk,R.lake,R.recv,R.Akm,R.river,R.stream,P_mm,runoff,J.rim_j,J.keel_j,res_m,year_s,c,k==0,
+                &flow,wall.v.empty()?nullptr:&wall,flith.v.empty()?nullptr:&flith,J.age_j,&R.reach);
+        }
         R.cut = GridD(h, w, 0.0);
         R.h_final = GridD(h, w, NaN);
         for (size_t q = 0; q < n; ++q) {
@@ -490,6 +509,10 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
     g.floor_w = GridD(H, W, 0.0);
     g.confine = Grid<uint8_t>(H, W, 0);
     g.chan_slope = GridD(H, W, NaN);
+    if (c.get("hydro.reach_geometry_v1",0)>0) {
+        g.sed_source=GridD(H,W,0);g.sed_flux=GridD(H,W,0);
+        g.sed_deposit=GridD(H,W,0);g.sed_grain=GridD(H,W,0);
+    }
     g.floodplain = Grid<uint8_t>(H, W, 0);
     g.cut_m = GridD(H, W, 0.0);
     g.recv_i = GridI(H, W, -1);
@@ -526,6 +549,10 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
                 g.stream(gi, gj) = R.stream.v[q];
                 g.width_m(gi, gj) = R.ch.width.v[q];
                 g.depth_m(gi, gj) = R.ch.depth.v[q];
+                if (!R.reach.source.v.empty()) {
+                    g.sed_source(gi,gj)=R.reach.source.v[q];g.sed_flux(gi,gj)=R.reach.flux.v[q];
+                    g.sed_deposit(gi,gj)=R.reach.deposit.v[q];g.sed_grain(gi,gj)=R.reach.grain.v[q];
+                }
                 if (!R.ch.bed.v.empty()) {
                     g.bed_m(gi, gj) = R.ch.bed.v[q];
                     g.floor_w(gi, gj) = R.ch.floor_w.v[q];
@@ -643,7 +670,7 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
             soil[k] = clip(0.35 + 0.5 * age_arr[k], 0, 1) * clip(1.0 - slope.v[k] / szero, 0.0, 1.0) *
                       (0.7 + 0.3 * clip(std::log1p(g.acc_km2.v[k]) / 4.0, 0, 1));
             if (has_lith && g.lith.v[k] == LI_SERP) soil[k] *= serp_soil;   // 蛇纹岩土贫有毒（B3 秃山）
-            wet[k] = clip((g.rain.v[k] + g.condense.v[k]) / 1500.0, 0.2, 2.0) * (1.0 + wgain * expo[k]);   // 局地雨（关掉时 = P_mm）+ 集水核的凝结水（C4：湿的核山更湿）
+            wet[k] = clip(g.rain.v[k] / 1500.0, 0.2, 2.0) * (1.0 + wgain * expo[k]);   // 湿度只由局地雨决定（关掉局地雨时 = P_mm）
             near_water[k] = std::sqrt(clip(1.0 - dw.v[k] / (near_cells + 1.0), 0.0, 1.0));
         }
     const double alpine = c.get("landcover.alpine_temp_c"), rock_t = c.get("landcover.rock_temp_c"), rock_s = c.get("landcover.rock_slope_deg");
@@ -694,13 +721,6 @@ void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads) {
         if (wetland[k]) cv = LC_WET;
         if (g.cliff.v[k]) cv = LC_CLIFF;
         g.landcover.v[k] = cv;
-    }
-    // 云雾林（C4）：林地里凝结水多的格——核山常年顶着云雾、苔藓挂满（地表仍记林地，另一层标）
-    g.cloud_forest = Grid<uint8_t>(H, W, 0);
-    {
-        const double cmin = c.get("water.cloud_forest_min_mm"), fmin = c.get("water.cloud_forest_min_frac");
-        for (size_t k = 0; k < N; ++k)
-            g.cloud_forest.v[k] = (g.landcover.v[k] == LC_FOREST && g.condense.v[k] >= cmin && g.condense.v[k] >= fmin * g.rain.v[k]) ? 1 : 0;
     }
     // ---------- 可耕地：适宜度分位 ----------
     std::vector<double> suit(N, -1.0);

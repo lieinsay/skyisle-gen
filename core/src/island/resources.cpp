@@ -592,7 +592,7 @@ void build_resources(Group& g, const Config& c) {
         for (size_t q = 0; q < rv.size() && q < 12; ++q) mouths.push_back({{rv[q].mouth_r, rv[q].mouth_c}, pyround(rv[q].basin_km2, 1)});
     }
 
-    // C4 / C5：各岛集水核放进岩体的热（MW）、泉的岩性系数（按出露岩性，全岛平均乘泉的密度；泉的出水 = 该格顺流向累计的补给）
+    // C5：泉的岩性系数（按出露岩性，全岛平均乘泉的密度；泉的出水 = 该格顺流向累计的补给）
     const bool has_gw = !g.recharge_acc.v.empty();
     const double to_ls = 1e6 / std::max(1.0, g.year_s);
     const std::vector<double> spm = c.list("water.spring_lith_mult", {1.5, 0.5, 1.2, 0.3, 0.0});
@@ -601,13 +601,11 @@ void build_resources(Group& g, const Config& c) {
         const uint8_t li = g.lith.v[q];
         return (li >= 1 && li - 1 < static_cast<int>(spm.size())) ? spm[li - 1] : 1.0;
     };
-    std::vector<double> heat_mw(n_isl, 0.0), sp_mean(n_isl, 0.0), sp_cnt(n_isl, 0.0);
+    std::vector<double> sp_mean(n_isl, 0.0), sp_cnt(n_isl, 0.0);
     {
-        const double lat = 2.45e6 * 1000.0 / std::max(1.0, g.year_s), share = c.get("water.heat_share", 0.0);
         for (size_t q = 0; q < N; ++q) {
             const int id = g.island_id.v[q];
             if (id < 0) continue;
-            if (!g.condense.v.empty()) heat_mw[id] += g.condense.v[q] / 1000.0 * cell_km2 * 1e6 * lat * share / 1e6;
             sp_mean[id] += sp_mult(q);
             sp_cnt[id] += 1.0;
         }
@@ -1103,18 +1101,7 @@ void build_resources(Group& g, const Config& c) {
                 if (wl >= 0) add_work(RK_SALT, R.occ[oid], zm[wl] / W, zm[wl] % W, "");
             }
         }
-        // C4 核山温泉（spec 13 第八节第 7 条）：集水核凝结的热千分之一进岩体，大核山下深循环的水出得了温泉——处数 = 泊松(进岩体的热 / hotspring_mw)，
-        // 沿谷底（溪涧、河道格与它们的邻格，坡缓）、高出岸缘不到一半，按上游凝结水的多少挑；随机流 island:<节点>:hotspring_core:<岛号>（别的抽样次序不动）。
-        // 只在大核山（集水核强度 ≥ hotspring_core_min）
-        const bool big_core = k < static_cast<int>(g.core_s.size()) && g.core_s[k] >= c.get("water.hotspring_core_min", 0.0);
-        if (heat_mw[k] > 0.0 && c.get("water.hotspring_mw", 0.0) > 0.0 && big_core) {
-            Rng rh = part_rng(inp, "hotspring_core:" + std::to_string(k));
-            const int64_t nh = rh.poisson(heat_mw[k] / c.get("water.hotspring_mw"));
-            auto cand_c = [&](size_t q) { return in_mk(q) && peak_rel[q] < 0.5 && slope[q] < 15 && wet_edge.v[q] && !river.v[q] && !stream.v[q]; };   // 河 / 溪涧旁一格
-            auto sc_c = [&](size_t q) { return (0.2 + patchy[q]) * (has_gw ? std::log1p(g.recharge_acc.v[q]) : 1.0); };
-            place(RK_HOTSPRING, bx, cand_c, sc_c, nh, 0, cf("spring_sep_km"), [&](int, int, Rng&) { return std::string("core_hotspring"); },
-                  "hotspring_core", pyround(heat_mw[k], 1), rh, nullptr);
-        }
+
     }
 
     // ---------- 散：砂金（上游金 / 铜矿化带的平均品位，带给河边滩地）、石料 / 黏土 / 砂砾的赋存区 ----------
@@ -1329,7 +1316,7 @@ Json deposit_json(const Deposit& d) {
     j.set("grade", d.grade);
     if (!d.note.empty()) {
         j.set("note", d.note);
-        if (d.note == "waterfall_cave" || d.note == "spring_flow" || d.note == "hotspring_core") j.set("note_arg", d.note_arg);
+        if (d.note == "waterfall_cave" || d.note == "spring_flow") j.set("note_arg", d.note_arg);
     }
     if (d.cleared) j.set("cleared", true);
     if (d.has_area_before) j.set("area_before_clearing_km2", d.area_before);

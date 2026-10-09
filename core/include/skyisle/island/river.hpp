@@ -21,6 +21,16 @@ struct Channels {
     std::vector<std::vector<LinePt>> lines;   // 局部切片坐标
 };
 
+// 水沙沿实际 D8 图守恒输送；粒径是独立来源假设，不从水深反推。
+// v1 使用简化年均来源与 MPM 输沙容量、Parker 砾床几何，不是 Li 2023 全磨蚀模型。
+struct ReachGeometry {
+    GridD width, depth, source, flux, deposit, grain;
+};
+ReachGeometry reach_geometry(const GridD& h, const Mask& land, const Mask& lake,
+                             const std::vector<int64_t>& recv, const GridD& q,
+                             const Grid<uint8_t>& lith, const Channels& reference,
+                             double res_m, double year_s, const Config& c);
+
 // 一座岛（局部切片）的河道下切。h：掩膜外 NaN；hf：路由面；recv：D8 下游（扁平下标，−1 无）。
 Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const Mask& lake, const std::vector<int64_t>& recv,
                         const GridD& Akm, const Grid<uint8_t>& river_lvl, const Grid<uint8_t>& stream, double P_mm, double runoff, double rim,
@@ -28,7 +38,8 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
                         const GridD* Qin = nullptr,    // Qin：局地雨算出的年均流量（m³/s，P4）；空 = 汇流 × P_mm 的旧式
                         const GridD* wall_deg = nullptr,    // 谷壁坡（°，B2：河床那格露出的岩性的坍塌角）；空 = [island.hydro] gorge_deg
                         const GridD* floor_lith = nullptr,  // 谷底宽的岩性系数（C2，河床那格露出的岩性）；空 = 1
-                        double age = 0.5);                  // 岛龄（C2：谷底宽的岛龄系数）
+                        double age = 0.5,
+                        const ReachGeometry* geometry = nullptr); // 有则宽深联动重塑河床，原地形仍作为输入。
 
 std::vector<std::vector<LinePt>> trace_lines(const Mask& seed, const Mask& mk, const std::vector<int64_t>& recv, const GridD& width,
                                              const Grid<uint8_t>& lvl, const GridD& acc);

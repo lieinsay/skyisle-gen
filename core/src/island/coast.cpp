@@ -11,7 +11,7 @@ namespace skyisle::island {
 namespace {
 
 struct Seg {
-    double ax, ay, bx, by;   // 行、列（格心 = 整数）
+    double ax, ay, bx, by;   // x = 列、y = 行（格心 = 整数）
 };
 
 double seg_dist(const Seg& s, double y, double x) {
@@ -34,7 +34,7 @@ GridD coast_distance(const GridD& phi, double res_m) {
     std::vector<Seg> segs;
     std::vector<int32_t> head(static_cast<size_t>(H) * W, -1), next;
     auto add = [&](int bi, int bj, double ay, double ax, double by, double bx) {
-        segs.push_back({ay, ax, by, bx});
+        segs.push_back({ax, ay, bx, by});
         next.push_back(head[static_cast<size_t>(bi) * W + bj]);
         head[static_cast<size_t>(bi) * W + bj] = static_cast<int32_t>(segs.size() - 1);
     };

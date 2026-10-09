@@ -15,7 +15,7 @@ import numpy as np
 from ..config import CONFIG_DIR, _deep_merge, apply_sets
 
 ISLAND_STREAM = 21   # 与十步管线的流号 1–10 错开
-ISLAND_VERSION = "7"  # 岛群层的实现版本：改了 core/src/island/（或这里的输入拼装、写产物）就 +1。
+ISLAND_VERSION = "9"  # 连续河段水沙试验及独立材料输出；默认河槽算法不变。
                      # 2 = 水位面（B+A，四点四十九）：流向按潜水面、泉线分弥散渗出 / 泉 / 崖瀑、terrain.npz 多 wt_m / wt_depth_m
                      # 3 = 河宽口径分开（四点五十）：rivers.json 的 w_bf_m / d_bf_m 改成真平岸（代 q_bf）、新增 w_mean_m / d_mean_m；
                      #     terrain.npz 的 river_width_m / river_depth_m 改名 w_mean_m / d_mean_m（当时的「年均口径」，四点五十一 又改名为 w_ch_m / d_ch_m）
@@ -141,6 +141,9 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
         f"河 {'有' if inp['has_river'] else '无'} 岛龄 {inp['age']:.2f} 降水 {inp['precip']:.2f} 温差 {inp['season_range']:.1f} °C")
     from .engine import generate_cpp            # 行星计划 P6b：整群在 C++ 里算，g 拼回同形；写产物在下面
     g = generate_cpp(ctx, node, c, inp, year=year, res_m=res_m, steps=steps, log=log)
+    g["json"]["meta"]["capture_model"] = ("topographic-v1" if c["hydro"].get("capture_topographic_v1", False) else "legacy")
+    g["json"]["meta"]["channel_model"] = "reach-gravel-v1" if c["hydro"].get("reach_geometry_v1", False) else "mean-flow-v1"
+    g["json"]["meta"]["capture_passes"] = max(1, min(4, int(c["hydro"].get("capture_topographic_passes", 1)))) if c["hydro"].get("capture_topographic_v1", False) else 1
     g["timing"]["generate"] = time.perf_counter() - t0      # 不含写产物（png / 预览图）
     if not write:
         return g

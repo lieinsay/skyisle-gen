@@ -1,4 +1,4 @@
-// 集水核（C4）与地下水（C5）：见 groundwater.hpp。
+// 地下水（C5）：仅由降雨径流补给，见 groundwater.hpp。
 #include "skyisle/island/groundwater.hpp"
 
 #include "skyisle/flow.hpp"
@@ -12,9 +12,6 @@ namespace skyisle::island {
 namespace {
 
 double wc(const Config& c, const std::string& k) { return c.get("water." + k); }
-
-// 凝结 1 m/年放出的潜热（W/m²）：2.45 MJ/kg × 1000 kg/m³ / 一年的秒数（一年 336 天约 84 W/m²，spec 13 第八节第 7 条）
-double latent_w_per_m(double year_s) { return 2.45e6 * 1000.0 / std::max(1.0, year_s); }
 
 // 一格的含水层底：骨架顶面 + 最小含水厚（没有岩层时退回「岛底 + 0.4 × 崖高」，与泉线高程的口径同）
 inline double aquifer_floor(const Group& g, const IslandRec& J, size_t k, double min_thick) {
@@ -160,40 +157,6 @@ GridD water_table(const Group& g, const Config& c, const Mask& land, double min_
 
 }  // namespace
 
-GridD condensation(const Group& g, const GridD& Gw, const Config& c, std::vector<double>& core_s) {
-    const int H = g.H, W = g.W;
-    const size_t N = static_cast<size_t>(H) * W;
-    const int n = static_cast<int>(g.islands.size());
-    GridD out(H, W, 0.0);
-    core_s.assign(n, 0.0);
-    const double gain = wc(c, "core_gain");
-    if (!(gain > 0.0)) return out;
-    const double cell_km2 = g.res_km * g.res_km;
-    // 核的强度跟山走：高出岸缘的山体（km³）的立方根 / core_len_km——大山根深、核大；碎的小岛核弱（spec 13 第八节第 6 条）
-    std::vector<double> vol(n, 0.0);
-    for (size_t k = 0; k < N; ++k) {
-        const int id = g.island_id.v[k];
-        if (id < 0) continue;
-        vol[id] += std::max(0.0, g.height.v[k] - g.islands[id].rim_j) * cell_km2 / 1000.0;
-    }
-    const double lref = wc(c, "core_len_km"), smax = wc(c, "core_s_max");
-    for (int k = 0; k < n; ++k) core_s[k] = clip(std::cbrt(vol[k]) / lref, 0.0, smax);
-    // 落在核山的迎风高处（凝结是气流被山逼着抬升、贴着林子与岩面过去时截下来的）；跟着湿度走：像除湿器，空气干就凝得少
-    const double eexp = wc(c, "core_elev_exp"), wg = wc(c, "core_windward_gain"), hfull = wc(c, "core_hum_full_mm"), hexp = wc(c, "core_hum_exp");
-    const double gref = c.get("hydro.windward_ref_m_per_km");
-    for (size_t k = 0; k < N; ++k) {
-        const int id = g.island_id.v[k];
-        if (id < 0) continue;
-        const IslandRec& J = g.islands[id];
-        const double e = clip((g.height.v[k] - J.rim_j) / std::max(1.0, J.peak_j - J.rim_j), 0.0, 1.0);
-        const double wf = Gw.v.empty() ? 1.0 : clip(1.0 + wg * clip(Gw.v[k] / gref, -1.0, 1.0), 0.0, 2.0);
-        const double P = g.rain.v[k];
-        const double hum = np_pow(clip(P / hfull, 0.0, 1.0), hexp);
-        out.v[k] = P * std::min(1.0, gain * core_s[id] * np_pow(e, eexp) * wf * hum);   // 最多到局地雨的 1 倍（spec 13 第八节第 4 条）
-    }
-    return out;
-}
-
 void aquifer(Group& g, const Config& c) {
     const int H = g.H, W = g.W;
     const size_t N = static_cast<size_t>(H) * W;
@@ -201,7 +164,7 @@ void aquifer(Group& g, const Config& c) {
     const bool has_lith = !g.lith.v.empty() && !g.strat_top.v.empty();
     const std::vector<double> bl = c.list("water.bfi", {0.55, 0.25, 0.4, 0.2, 0.0});
     const double bdef = wc(c, "bfi_default");
-    // 基流比例按出露岩性（石灰岩岩溶、辉长岩裂隙、泥灰岩与蛇纹岩差、浮石闭孔不透水）；补给 = 雨的径流 × 基流比例 + 凝结水（凝结水全渗进岩层）
+    // 基流比例按出露岩性（石灰岩岩溶、辉长岩裂隙、泥灰岩与蛇纹岩差、浮石闭孔不透水）；补给 = 雨的径流 × 基流比例
     g.bfi = GridD(H, W, 0.0);
     g.recharge = GridD(H, W, 0.0);
     for (size_t k = 0; k < N; ++k) {
@@ -211,10 +174,9 @@ void aquifer(Group& g, const Config& c) {
             const uint8_t li = g.lith.v[k];
             b = (li >= 1 && li - 1 < static_cast<int>(bl.size())) ? bl[li - 1] : bdef;
         }
-        const double cond = g.condense.v.empty() ? 0.0 : g.condense.v[k];
-        const double rr = std::max(0.0, g.runoff.v[k] - cond);
+        const double rr = std::max(0.0, g.runoff.v[k]);
         g.bfi.v[k] = b;
-        g.recharge.v[k] = rr * b + cond;
+        g.recharge.v[k] = rr * b;
     }
     // ---------- 水位面（B，DESIGN-NOTES 四点四十九）----------
     // 稳态地下水位 ∇·(T∇h) = −R：排水口 = 河道 / 溪涧 / 湖 / 岸缘（固定水头 = 地表），渗出面 = 水位高过地表的格，
@@ -335,16 +297,6 @@ std::vector<int64_t> group_recv(const Group& g) {
         }
     }
     return recv;
-}
-
-double core_heat_mw(const Group& g, int island, const Config& c) {
-    if (g.condense.v.empty()) return 0.0;
-    const size_t N = static_cast<size_t>(g.H) * g.W;
-    const double cell_m2 = g.res_km * g.res_km * 1e6;
-    double s = 0.0;
-    for (size_t k = 0; k < N; ++k)
-        if (g.island_id.v[k] == island) s += g.condense.v[k] / 1000.0;
-    return s * cell_m2 * latent_w_per_m(g.year_s) * wc(c, "heat_share") / 1e6;
 }
 
 }  // namespace skyisle::island
