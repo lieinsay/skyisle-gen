@@ -5,6 +5,7 @@
 #include <cmath>
 #include <stdexcept>
 #include "skyisle/flow.hpp"
+#include "valley_profile.hpp"
 
 namespace skyisle::island {
 
@@ -231,7 +232,7 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
         const int64_t r = recv[k];
         if (r >= 0 && seed.v[r] && std::isnan(Sch[r])) Sch[r] = Sch[k];
     }
-    // 河谷剖面（C2，谷底宽照地球）：最近河道格的 河床 / 水深 / 谷底半宽 / 谷坡。
+    // 河谷剖面（C2，谷底宽照地球）：连续河段投影与沿段属性，避免 D8 倒角距离和最近格切换产生规则折面。
     // 谷底全宽 W = 河宽 + valley_floor_k_m × A^valley_floor_exp × 岩性系数 × 岛龄系数 × 比降系数（夹 valley_floor_max_m）：侧蚀把谷底展平，软岩、老岛宽，硬岩、新岛窄；
     // 比降系数 1 / (1 + (S / valley_slope_ref)^valley_slope_exp)：陡处下切快过侧蚀，谷底只剩河道（Montgomery & Buffington 1997 的河型：
     // < 1.5% 滩槽型不受限、1–3% 平床型、3–10% 阶梯深潭多半受限、> 10% 跌水）。
@@ -268,22 +269,32 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
     const int reach_cells = any_r ? static_cast<int>(std::ceil(c.get("hydro.valley_max_km") * 1000.0 / res_m)) : svc;
     GridD dist;
     Grid<int64_t> src;
+    // 只沿用原来的陆地/湖泊传播支撑；不把 valley_max_km 顺手改成新的硬截面。
     nearest_propagate(seed, reach_cells, res_m, &work, dist, src);
+    std::vector<detail::ValleySegment> segments;
+    auto point = [&](size_t k) {
+        return detail::ValleyPoint{static_cast<double>(k / W), static_cast<double>(k % W), bed[k], depth[k], width[k],
+            fp_half[k], tan_side[k], center_r.v[k] ? INF : static_cast<double>(svc), river_lvl.v[k]};
+    };
+    for (size_t k = 0; k < N; ++k) if (seed.v[k]) {
+        const int64_t r = recv[k];
+        // 没有河道下游的源点仍保留端点圆帽；不跨湖或补造不存在的河段。
+        segments.push_back({point(k), point(r >= 0 && seed.v[r] ? static_cast<size_t>(r) : k)});
+    }
+    const detail::ValleyProfiles profiles(std::move(segments), res_m);
     out.h_new = GridD(H, W);
     out.lvl = Grid<uint8_t>(H, W, 0);
     out.floodplain = Grid<uint8_t>(H, W, 0);
     for (size_t k = 0; k < N; ++k) {
-        bool has = work.v[k] && src.v[k] >= 0;
-        const size_t s = has ? static_cast<size_t>(src.v[k]) : 0;
-        const double bed_s = bed[s], dep_s = depth[s], fp_s = fp_half[s], tan_s = tan_side[s], w_s = width[s];
-        const bool isr_s = center_r.v[s] != 0;
-        const uint8_t lvl_s = river_lvl.v[s];
-        const double lim = isr_s ? INF : svc * res_m;
-        has = has && dist.v[k] <= lim;
-        const double valley = bed_s + dep_s + std::max(0.0, dist.v[k] - fp_s) * tan_s;
-        double hn = has ? std::min(h.v[k], valley) : h.v[k];
+        const auto p = work.v[k] && src.v[k] >= 0 ? profiles.sample(static_cast<double>(k / W), static_cast<double>(k % W)) : detail::ValleySample{};
+        const bool has = p.present;
+        const double bed_s = p.bed, dep_s = p.depth, fp_s = p.half_floor, w_s = p.width;
+        const bool isr_s = p.level > 0;
+        const uint8_t lvl_s = p.level;
+        // 溪涧的最后一格支撑连续退回原地面，不能在300m处凭候选消失立起断墙。
+        double hn = has ? std::min(h.v[k], h.v[k] + p.fade * (p.height - h.v[k])) : h.v[k];
         if (has && std::isnan(h.v[k])) hn = NaN;
-        const bool wide = has && isr_s && !center_r.v[k] && dist.v[k] < w_s / 2.0;
+        const bool wide = has && isr_s && !center_r.v[k] && p.distance < w_s / 2.0;
         const bool chan = center_r.v[k] || wide;
         // 河道格记平岸水面（C1：= 滩面 = 河床 + 水深；河床另存 bed）
         if (chan) hn = std::isnan(hn) || std::isnan(bed_s) ? NaN : std::min(hn, bed_s + dep_s);
@@ -294,7 +305,7 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
         out.width.v[k] = chan ? (center_r.v[k] ? width[k] : w_s) : (center_s.v[k] ? width[k] : 0.0);
         out.depth.v[k] = chan ? (center_r.v[k] ? depth[k] : dep_s) : (center_s.v[k] ? depth[k] : 0.0);
         // 漫滩 = 谷底里的岸上格（河与溪涧都算：溪涧的谷底多半不到一格）
-        out.floodplain.v[k] = (has && !chan && !seed.v[k] && dist.v[k] <= fp_s + 0.5 * res_m && hn <= bed_s + dep_s + 0.5) ? 1 : 0;
+        out.floodplain.v[k] = (has && !chan && !seed.v[k] && p.distance <= fp_s + 0.5 * res_m && hn <= bed_s + dep_s + 0.5) ? 1 : 0;
     }
     // 最高格不动（IS-summit）
     size_t top = 0;

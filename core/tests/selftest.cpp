@@ -16,6 +16,7 @@
 #include "skyisle/town/orient.hpp"
 #include "skyisle/town/raster.hpp"
 #include "skyisle/town/site.hpp"
+#include "../src/island/valley_profile.hpp"
 
 using namespace skyisle;
 
@@ -206,6 +207,53 @@ int main() {
             const auto distance = island::coast_distance(phi, 20.0);
             for (size_t k = 0; k < phi.size(); ++k)
                 CHECK(std::fabs(distance.v[k] - phi.v[k] * 20.0) < 1e-9);
+        }
+    }
+    {
+        // 河谷距离必须是欧氏几何：等半径(5,0)/(3,4)相同，45°直河到侧格的距离为1/sqrt(2)格。
+        using namespace skyisle::island::detail;
+        ValleyPoint p{0,0,1000,1,4,2,1,INF,1};
+        ValleyProfiles point({{p,p}},100);
+        CHECK(std::fabs(point.sample(5,0).height-point.sample(3,4).height)<1e-10);
+        CHECK(std::fabs(point.sample(3,4).distance-500)<1e-10);
+        ValleyPoint end=p;end.row=20;end.col=20;
+        ValleyProfiles diagonal({{p,end}},100);
+        auto side=diagonal.sample(9,10);
+        CHECK(std::fabs(side.distance-100/SQRT2)<1e-10);
+        CHECK(std::fabs(side.height-(1001+100/SQRT2-2))<1e-10);
+        // 投影到端点后是圆帽；没有假造端点以外的河床。
+        CHECK(std::fabs(diagonal.sample(23,24).distance-500)<1e-10);
+        CHECK(diagonal.sample(20,20).height==1001);
+        // L弯纵坡与不同谷底宽：最近段在内弯等距线上换边，亚格位移不允许切换成一道高差墙。
+        ValleyPoint upstream{-10,0,1100,1,2,10,.6,INF,1};
+        ValleyPoint join{0,0,1000,1,10,50,.6,INF,1};
+        ValleyPoint downstream{0,10,900,1,30,150,.6,INF,1};
+        ValleyProfiles bend({{upstream,join},{join,downstream}},100);
+        const auto a=bend.sample(-4-1e-6,4), b=bend.sample(-4+1e-6,4);
+        CHECK(std::fabs(a.height-b.height)<.002);
+        CHECK(std::fabs(a.width-b.width)<.001);
+        CHECK(std::fabs(bend.sample(-5,0).bed-1050)<1e-10);
+        CHECK(bend.sample(0,0).bed==1000 && bend.sample(0,0).width==10);
+        // 候选距离刚进入/退出一个格的混合支撑时，其权重必须从0连续增减。
+        ValleyPoint high{0,0,1200,1,4,2,1,INF,1}, low=high;low.col=10;low.bed=900;
+        ValleyProfiles neighbors({{high,high},{low,low}},100);
+        const double edge=(10-SQRT2)/2;
+        CHECK(std::fabs(neighbors.sample(0,edge-1e-6).height-neighbors.sample(0,edge+1e-6).height)<.002);
+        // 溪涧300m作用范围的末端以最后一个源格退回原面，半径外不切、不抬。
+        p.radius=3;p.level=0;
+        ValleyProfiles stream({{p,p}},100);
+        auto final_height=[&](double d) {auto s=stream.sample(0,d);return s.present?std::min(2000.,2000+s.fade*(s.height-2000)):2000.;};
+        CHECK(std::fabs(final_height(3-1e-6)-final_height(3+1e-6))<1e-7);
+        CHECK(final_height(3.1)==2000 && stream.sample(0,0).height==1001);
+        // 非正方网/多个源段的BVH距离逐点对暴力几何，并保持相同常数剖面。
+        std::vector<ValleySegment> isolated;
+        for(int i=0;i<17;++i) {auto s=p;s.row=(i*7)%19;s.col=(i*11)%23;s.radius=INF;isolated.push_back({s,s});}
+        ValleyProfiles tree(isolated,37);
+        for(int i=0;i<19;++i) for(int j=0;j<23;++j) {
+            double best=INF;for(const auto& s:isolated) best=std::min(best,std::hypot(i-s.a.row,j-s.a.col));
+            auto got=tree.sample(i,j);
+            CHECK(std::fabs(got.distance-37*best)<1e-10);
+            CHECK(std::fabs(got.height-(1001+std::max(0.,37*best-2)))<1e-8);
         }
     }
     {

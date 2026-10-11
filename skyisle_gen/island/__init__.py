@@ -15,7 +15,8 @@ import numpy as np
 from ..config import CONFIG_DIR, _deep_merge, apply_sets
 
 ISLAND_STREAM = 21   # 与十步管线的流号 1–10 错开
-ISLAND_VERSION = "9"  # 连续河段水沙试验及独立材料输出；默认河槽算法不变。
+ISLAND_VERSION = "10"  # 河谷连续段投影、参数场重建与溪涧作用边界连续退出。
+                     # 9 = 连续河段水沙试验及独立材料输出；默认河槽算法不变。
                      # 2 = 水位面（B+A，四点四十九）：流向按潜水面、泉线分弥散渗出 / 泉 / 崖瀑、terrain.npz 多 wt_m / wt_depth_m
                      # 3 = 河宽口径分开（四点五十）：rivers.json 的 w_bf_m / d_bf_m 改成真平岸（代 q_bf）、新增 w_mean_m / d_mean_m；
                      #     terrain.npz 的 river_width_m / river_depth_m 改名 w_mean_m / d_mean_m（当时的「年均口径」，四点五十一 又改名为 w_ch_m / d_ch_m）
