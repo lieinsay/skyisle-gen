@@ -5,8 +5,11 @@
 
 namespace skyisle::island {
 
+struct LodBlock;
 // steps：1 地形；2 + 水系与资源；3 + 四季与逐日曲线；4 + 逐日天气（year 年）；5 + 聚落（与 Python 版 generate 的 steps 同义）
-Group generate(const NodeInputs& inp, const PlanetView& pv, const Config& c, int year = 0, int steps = 5, double res_m = 0.0, int threads = 1);
+// lods 非空时，在原生水系完成、资源与聚落修改地表之前取各档粗版；不再另跑布局、地形或水系。
+Group generate(const NodeInputs& inp, const PlanetView& pv, const Config& c, int year = 0, int steps = 5, double res_m = 0.0, int threads = 1,
+               const std::vector<double>& lod_resolutions = {}, std::vector<LodBlock>* lods = nullptr);
 
 // 粗版：按 f × f 块降采样（右 / 下边补虚空到 f 的整数倍）
 struct LodBlock {

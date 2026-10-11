@@ -631,16 +631,17 @@ void bind_island(nb::module_& m) {
     m.def("make_config", [](nb::dict cfg) { return cfg_from(cfg); });
 
     // ---------------------------------------------------------------- 整群生成（P6b）：地形 → 水系 → 资源 → 四季 → 天气 → 聚落
-    m.def("generate", [](nb::dict inp, nb::handle planet, nb::handle cfg, int year, int steps, double res_m, int threads) {
+    m.def("generate", [](nb::dict inp, nb::handle planet, nb::handle cfg, int year, int steps, double res_m, int threads, const std::vector<double>& lod_resolutions) {
         const NodeInputs ni = inp_from(inp);
         PlanetView pv_tmp;
         Config c_tmp;
         const PlanetView& pv = pv_of(planet, pv_tmp);
         const Config& c = cfg_of(cfg, c_tmp);
         Group g;
+        std::vector<LodBlock> lods;
         {
             nb::gil_scoped_release rel;
-            g = generate(ni, pv, c, year, steps, res_m, threads);
+            g = generate(ni, pv, c, year, steps, res_m, threads, lod_resolutions, lod_resolutions.empty() ? nullptr : &lods);
         }
         nb::dict d;
         d["terrain"] = terrain_dict(g);
@@ -663,9 +664,20 @@ void bind_island(nb::module_& m) {
             d["settle_pop"] = g.settle_pop;
         }
         if (g.has_rnet) d["rivernet"] = rivernet_dict(g.rnet);
+        if (!lod_resolutions.empty()) {
+            nb::list entries;
+            for (LodBlock& b : lods) {
+                const double res = g.res_km * 1000.0 * b.f;
+                nb::dict entry = lod_dict(std::move(b));
+                entry["res_m"] = res;
+                entries.append(entry);
+            }
+            d["lods"] = entries;
+        }
         d["seconds"] = nb::make_tuple(g.sec_total, g.sec_hydro, g.sec_resources, g.sec_climate, g.sec_settle);
         return d;
-    }, "inp"_a, "planet"_a, "cfg"_a, "year"_a = 0, "steps"_a = 5, "res_m"_a = 0.0, "threads"_a = 1);
+    }, "inp"_a, "planet"_a, "cfg"_a, "year"_a = 0, "steps"_a = 5, "res_m"_a = 0.0, "threads"_a = 1,
+       "lod_resolutions"_a = std::vector<double>{});
 
     // 粗版的块降采样（lod._block_reduce）：输入群栅格的 island_id / height / landcover / river / lake
     m.def("block_reduce", [](ArrS2 island_id, ArrD2 height, ArrU2 landcover, ArrU2 river, ArrB2 lake, int f) {

@@ -131,7 +131,7 @@ def build_terrain(ctx, node: int, c: dict, inp: dict, res_m: float | None = None
 
 def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: str | None = None,
              sets: list[str] | None = None, steps: int = 9, log=print, return_state: bool = False, out_root: Path | None = None,
-             write: bool = True):
+             write: bool = True, lod_resolutions: list[float] | None = None):
     """生成一个岛群的全部产物，写到 out/<run>/islands/<node>/（out_root 给了就写到 out_root/<node>/，对照工具用）。返回目录。
     g["timing"] 记地形、水系两步与整群算法部分（generate，不含写产物）的用时（不进产物）。write=False：只算不写，返回 g（用时对照用）。"""
     from .output import write_preview, write_preview_main, write_terrain
@@ -141,7 +141,7 @@ def generate(ctx, node: int, year: int = 0, res_m: float | None = None, export: 
     log(f"[island {node}] 陆地 {inp['area_km2']:.0f} km²（主岛 {inp['main_area_km2']:.0f}）台面 {inp['height_m']:.0f} m 可耕 {inp['arable_frac']:.3f} "
         f"河 {'有' if inp['has_river'] else '无'} 岛龄 {inp['age']:.2f} 降水 {inp['precip']:.2f} 温差 {inp['season_range']:.1f} °C")
     from .engine import generate_cpp            # 行星计划 P6b：整群在 C++ 里算，g 拼回同形；写产物在下面
-    g = generate_cpp(ctx, node, c, inp, year=year, res_m=res_m, steps=steps, log=log)
+    g = generate_cpp(ctx, node, c, inp, year=year, res_m=res_m, steps=steps, log=log, lod_resolutions=lod_resolutions)
     g["json"]["meta"]["capture_model"] = ("topographic-v1" if c["hydro"].get("capture_topographic_v1", False) else "legacy")
     g["json"]["meta"]["channel_model"] = "reach-gravel-v1" if c["hydro"].get("reach_geometry_v1", False) else "mean-flow-v1"
     g["json"]["meta"]["capture_passes"] = max(1, min(4, int(c["hydro"].get("capture_topographic_passes", 1)))) if c["hydro"].get("capture_topographic_v1", False) else 1

@@ -366,7 +366,8 @@ def _hydro_from(c: dict, g: dict, R: dict, log=print) -> None:
 
 
 # ---------------------------------------------------------------- P6b：整群 generate（地形 → 水系 → 资源 → 四季 → 天气 → 聚落）
-def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float | None = None, steps: int = 9, log=print) -> dict:
+def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float | None = None, steps: int = 9, log=print,
+                 lod_resolutions: list[float] | None = None) -> dict:
     """整群在 C++ 里算完，拼回前端要的 g（与删掉的 Python 参考版同形；写产物由 island.generate 做）。"""
     from . import decode
     from .climate import set_climate
@@ -374,8 +375,9 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
     from .settle import set_settlements
     from .weather import set_weather
     t0 = time.perf_counter()
+    lod_args = {"lod_resolutions": list(lod_resolutions)} if lod_resolutions else {}
     R = core().generate(inputs(ctx, node, inp, full=steps >= 5), planet_obj(ctx), flat_config(c), int(year), int(steps),
-                        float(res_m or 0.0), threads(ctx))
+                        float(res_m or 0.0), threads(ctx), **lod_args)
     t_core = time.perf_counter() - t0
     secs = R["seconds"]
     g = _terrain_from(ctx, node, inp, R["terrain"], log, c)
@@ -437,6 +439,8 @@ def generate_cpp(ctx, node: int, c: dict, inp: dict, year: int = 0, res_m: float
         log(f"  河的数据（C++）：{rd['segments']} 段，河 {rd['length_km']['河']:.0f} km、溪涧 {rd['length_km']['溪涧']:.0f} km；"
             f"瀑布 {rd['falls']}；流域 {rd['basins']}，平岸 / 年均 {rd.get('bf_ratio_range', '—')}")
     g["timing"]["settle"] = float(secs[4])
+    if "lods" in R:
+        g["lods"] = {float(entry["res_m"]): {k: v for k, v in entry.items() if k != "res_m"} for entry in R["lods"]}
     return g
 
 

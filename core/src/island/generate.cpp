@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
+#include <stdexcept>
 
 #include "skyisle/island/build.hpp"
 #include "skyisle/island/climate.hpp"
@@ -21,12 +23,27 @@ double now_s() {
 }
 }  // namespace
 
-Group generate(const NodeInputs& inp, const PlanetView& pv, const Config& c, int year, int steps, double res_m, int threads) {
+Group generate(const NodeInputs& inp, const PlanetView& pv, const Config& c, int year, int steps, double res_m, int threads,
+               const std::vector<double>& lod_resolutions, std::vector<LodBlock>* lods) {
+    if (lods) {
+        lods->clear();
+        if (!lod_resolutions.empty() && steps < 2) throw std::invalid_argument("LOD requires the hydro stage");
+        for (double res : lod_resolutions) {
+            if (!std::isfinite(res) || res <= 0.0) throw std::invalid_argument("LOD resolution must be positive and finite");
+        }
+    }
     Group g = build_terrain(inp, pv, c, res_m, threads);
     finalize_islands(g);
     if (steps >= 2) {
         build_hydro(g, pv, c, threads);
         finalize_islands(g);
+        if (lods) {
+            std::vector<int> factors;
+            for (double res : lod_resolutions) factors.push_back(std::max(1, int(pyround(res / (g.res_km * 1000.0), 0))));
+            std::sort(factors.begin(), factors.end(), std::greater<int>());
+            factors.erase(std::unique(factors.begin(), factors.end()), factors.end());
+            for (int f : factors) lods->push_back(block_reduce(g, f));
+        }
         build_resources(g, c);
         detect_landforms(g, c);
     }
