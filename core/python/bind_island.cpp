@@ -127,6 +127,8 @@ PlanetView planet_from(const nb::dict& d) {
     PlanetView p;
     p.radius_km = dget(d, "radius_km");
     p.year_s = dget(d, "year_s");
+    if(d.contains("surface_radius_km"))p.surface_radius_km=dget(d,"surface_radius_km");
+    if(d.contains("land_frac_cap"))p.land_frac_cap=dget(d,"land_frac_cap");
     if (d.contains("plates")) {
         nb::dict q = nb::cast<nb::dict>(d["plates"]);
         p.plate_grid = llg_from(q);
@@ -775,6 +777,23 @@ void bind_island(nb::module_& m) {
         return terrain_dict(g);
     }, "inp"_a, "planet"_a, "cfg"_a, "res_m"_a = 0.0, "threads"_a = 1);
 
+    // 只完成同一原生布局，用于认证旧几何是否可保留；不计算地形与水文。
+    m.def("layout_summary", [](nb::dict inp,nb::handle planet,nb::handle cfg,double res_m,bool audit_only) {
+        const NodeInputs ni=inp_from(inp);PlanetView pv_tmp;Config c_tmp;
+        const PlanetView& pv=pv_of(planet,pv_tmp);const Config& c=cfg_of(cfg,c_tmp);Group g;
+        LayoutCertification cert;cert.audit_only=audit_only;std::string failure;
+        {nb::gil_scoped_release rel;try {g=build_terrain(ni,pv,c,res_m,1,true,&cert);}catch(const std::runtime_error& e){failure=e.what();}}
+        nb::dict d;d["changed"]=g.layout_changed;d["fingerprint"]=g.layout_fingerprint;
+        d["proposed_violation"]=cert.proposed_violation;d["proposed_gap300"]=cert.proposed_gap300;d["proposed_gap1000"]=cert.proposed_gap1000;
+        d["requires_repair"]=cert.requires_repair;d["audit_only"]=audit_only;
+        if(!failure.empty())d["error"]=failure;
+        d["proposed_fingerprint"]=g.proposed_fingerprint;d["res_km"]=g.res_km;
+        d["shape"]=nb::make_tuple(g.H,g.W);d["origin"]=nb::make_tuple(g.origin_x,g.origin_y);
+        d["seconds"]=g.sec_total;nb::list centers;
+        for(const auto& r:g.islands)centers.append(nb::make_tuple(r.cx,r.cy));d["centers"]=centers;
+        return d;
+    }, "inp"_a,"planet"_a,"cfg"_a,"res_m"_a=0.,"audit_only"_a=false);
+
     m.def("build_hydro", [](nb::dict state, nb::handle planet, nb::handle cfg, int threads) {
         Group g;
         g.inp = inp_from(nb::cast<nb::dict>(state["inp"]));
@@ -869,8 +888,17 @@ void bind_island(nb::module_& m) {
             cl.append(nb::make_tuple(q.seed_x, q.seed_y, q.strength, q.cells, q.peak, q.load, q.load_x, q.load_y, q.mean_above));
         return nb::make_tuple(grid_np(std::move(sc.h)), age_name(sc.kind), sc.rim, sc.peak, cl);
     });
-    m.def("territory_limits", [](nb::dict planet, int64_t node, double gap_km, double reach, double reach_km) {
-        const PlanetView pv = planet_from(planet);
+    m.def("territory_capacity", [](nb::handle planet,double gap_km,double reach,double reach_km) {
+        PlanetView tmp;const auto& pv=pv_of(planet,tmp);const CapacityModel* model;
+        {nb::gil_scoped_release rel;model=&capacity_model(pv,gap_km,reach,reach_km);}
+        nb::dict d;d["pressure_km"]=vec_np(model->pressure_km);d["usable_area_km2"]=vec_np(model->usable_area_km2);
+        d["radius_bound_km"]=vec_np(model->radius_bound_km);d["sweeps"]=model->sweeps;d["certificates"]=model->certificates;
+        d["added_pairs"]=model->added_pairs;d["worst_relative"]=model->worst_relative;d["max_pressure_km"]=model->max_pressure_km;
+        d["surface_radius_km"]=pv.surface_radius_km>0?pv.surface_radius_km:pv.radius_km;
+        std::vector<int32_t> counts;for(const auto& e:model->boundaries)counts.push_back(int32_t(e.size()));d["neighbours"]=vec_np(std::move(counts));return d;
+    });
+    m.def("territory_limits", [](nb::handle planet, int64_t node, double gap_km, double reach, double reach_km) {
+        PlanetView tmp;const PlanetView& pv=pv_of(planet,tmp);
         nb::list out;
         for (const Limit& L : limits(pv, node, gap_km, reach, reach_km)) {
             nb::dict e;

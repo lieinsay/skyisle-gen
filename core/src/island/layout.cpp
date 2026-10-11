@@ -6,8 +6,10 @@
 #include <queue>
 #include <set>
 #include <tuple>
+#include <stdexcept>
 
 #include "skyisle/island/territory.hpp"
+#include "layout_footprint.hpp"
 
 namespace skyisle::island {
 
@@ -140,7 +142,8 @@ double r_at_max(const std::vector<double>& prof, double theta) {
 }  // namespace
 
 std::vector<std::array<double, 2>> place_islands(Rng& rng, const std::vector<std::vector<double>>& profiles, const std::vector<double>& sizes,
-                                                 double axis, double kernel, int btype, const Config& c, const TerritoryPlace* territory) {
+                                                 double axis, double kernel, int btype, const Config& c, const TerritoryPlace* territory,
+                                                 const PlacementMasks* masks,bool propose_only) {
     const int n = static_cast<int>(profiles.size());
     std::vector<std::array<double, 2>> centers(n, {0.0, 0.0});
     if (territory) centers[0] = {territory->main_x, territory->main_y};
@@ -164,6 +167,10 @@ std::vector<std::array<double, 2>> place_islands(Rng& rng, const std::vector<std
     for (int k = 0; k < n; ++k) weights[k] = std::sqrt(sizes[k]);
     weights[0] *= c.get("layout.main_gravity");
     auto rat = [&](const std::vector<double>& p, double th) { return territory ? r_at_max(p, th) : r_at(p, th); };
+    std::vector<detail::LayoutFootprint> footprints;
+    if(masks)for(int k=0;k<n;++k)footprints.emplace_back((*masks->shapes)[k],(*masks->offsets)[k],masks->res_km);
+    if(!propose_only&&territory&&violation(centers[0][0],centers[0][1],(*territory->support)[0],*territory->lim)>1e-9)
+        throw std::runtime_error("岛群置放失败：主岛不在群界可行域内");
 
     auto gap_ok = [&](int k, double px, double py) {
         double worst = 1e9;
@@ -171,7 +178,8 @@ std::vector<std::array<double, 2>> place_islands(Rng& rng, const std::vector<std
             const double dx = px - centers[j][0], dy = py - centers[j][1];
             const double dist = py_hypot(dx, dy);
             const double th = std::atan2(dy, dx);
-            const double g = dist - rat(profiles[j], th) - rat(profiles[k], th + PI);
+            const double g = masks ? gap_lo : dist - rat(profiles[j], th) - rat(profiles[k], th + PI);
+            if(masks&&!footprints[k].separated(footprints[j],dx,dy,gap_lo))return -INF;
             worst = std::min(worst, g);
         }
         return worst;
@@ -197,13 +205,15 @@ std::vector<std::array<double, 2>> place_islands(Rng& rng, const std::vector<std
             if (!territory) gap *= 1.0 + 0.15 * static_cast<double>(attempt / 40);
             else gap *= std::max(0.3, 1.0 - 0.12 * static_cast<double>(attempt / 40));
             const double dist = rat(profiles[anchor], th) + gap + rat(profiles[k], th + PI);
-            const double px = centers[anchor][0] + dx * dist, py = centers[anchor][1] + dy * dist;
+            double px = centers[anchor][0] + dx * dist, py = centers[anchor][1] + dy * dist;
+            if(!propose_only&&territory&&violation(px,py,(*territory->support)[k],*territory->lim)>0)
+                project_fit((*territory->support)[k],*territory->lim,px,py);
             double g = gap_ok(k, px, py);
             if (territory) {
                 const double score = std::min(g - gap_lo, -violation(px, py, (*territory->support)[k], *territory->lim));
                 g = g >= gap_lo ? score + gap_lo : g - 1e6;
             }
-            if (g >= gap_lo) {
+            if (g >= gap_lo-(propose_only?0.:1e-9)) {
                 bx = px;
                 by = py;
                 best_gap = g;
@@ -217,6 +227,42 @@ std::vector<std::array<double, 2>> place_islands(Rng& rng, const std::vector<std
                 have = true;
             }
         }
+        if(!propose_only&&best_gap<gap_lo-1e-9&&territory&&masks) {
+            // 随机提出的位置只覆盖已有岛周围的环，狭长可行域内的空位可能从未被提出。
+            // 求平移可行域的顶点，按与最佳候选的距离搜索其原生网格；不放宽任何约束。
+            const auto& lim=*territory->lim;const auto& support=(*territory->support)[k];
+            const auto vertices=translation_vertices(support,lim);
+            if(!vertices.empty()) {
+                double lo_x=INF,lo_y=INF,hi_x=-INF,hi_y=-INF;
+                for(const auto& p:vertices) {lo_x=std::min(lo_x,p[0]);lo_y=std::min(lo_y,p[1]);hi_x=std::max(hi_x,p[0]);hi_y=std::max(hi_y,p[1]);}
+                const double step=masks->res_km;
+                const int x0=int(std::ceil(lo_x/step)),x1=int(std::floor(hi_x/step));
+                const int y0=int(std::ceil(lo_y/step)),y1=int(std::floor(hi_y/step));
+                const int W=x1-x0+1,H=y1-y0+1;
+                if(W>0&&H>0) {
+                    using Item=std::tuple<double,int,int>;
+                    std::priority_queue<Item,std::vector<Item>,std::greater<Item>> todo;
+                    std::vector<uint8_t> visited(size_t(W)*H,0);
+                    auto add=[&](int x,int y) {
+                        if(x<x0||x>x1||y<y0||y>y1)return;
+                        const size_t at=size_t(y-y0)*W+x-x0;if(visited[at])return;visited[at]=1;
+                        const double dx=x*step-bx,dy=y*step-by;todo.emplace(dx*dx+dy*dy,x,y);
+                    };
+                    add(std::clamp(int(std::nearbyint(bx/step)),x0,x1),std::clamp(int(std::nearbyint(by/step)),y0,y1));
+                    while(!todo.empty()) {
+                        const auto [cost,x,y]=todo.top();todo.pop();
+                        const double px=x*step,py=y*step;
+                        if(violation(px,py,support,lim)<=1e-9&&gap_ok(k,px,py)>=gap_lo) {
+                            bx=px;by=py;best_gap=gap_lo;break;
+                        }
+                        add(x-1,y);add(x+1,y);add(x,y-1);add(x,y+1);
+                    }
+                }
+            }
+        }
+        // 半径估计和最少越界仅可用于寻找位置，不能替代可行性。
+        if(!propose_only&&best_gap<gap_lo-1e-9)
+            throw std::runtime_error("岛群置放失败：岛"+std::to_string(k)+"没有满足岸距和群界的候选");
         centers[k] = {bx, by};
     }
     return centers;

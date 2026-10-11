@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
+#include <memory>
 #include <string>
 
 #include "skyisle/island/coast.hpp"
@@ -11,6 +13,7 @@
 #include "skyisle/island/layout.hpp"
 #include "skyisle/island/terrain.hpp"
 #include "skyisle/island/territory.hpp"
+#include "layout_footprint.hpp"
 
 namespace skyisle::island {
 
@@ -27,15 +30,77 @@ struct ShapeSet {
     std::vector<std::array<double, 2>> offsets;
 };
 
+uint64_t layout_hash(const ShapeSet& ss,const std::vector<std::array<double,2>>& centers,double res) {
+    uint64_t h=1469598103934665603ULL;
+    auto bytes=[&](const void* data,size_t n){const auto* b=static_cast<const uint8_t*>(data);for(size_t k=0;k<n;++k){h^=b[k];h*=1099511628211ULL;}};
+    bytes(&res,sizeof res);
+    for(size_t i=0;i<ss.shapes.size();++i) {
+        bytes(centers[i].data(),sizeof(double)*2);bytes(ss.offsets[i].data(),sizeof(double)*2);
+        const auto& s=ss.shapes[i];bytes(&s.mask.H,sizeof s.mask.H);bytes(s.mask.v.data(),s.mask.v.size());
+        bytes(s.phi.v.data(),s.phi.v.size()*sizeof(double));
+    }
+    return h;
+}
+
+double layout_violation(const ShapeSet& ss,const std::vector<std::array<double,2>>& centers,const std::vector<Limit>& lim,double res) {
+    double worst=-INF;
+    for(size_t i=0;i<ss.shapes.size();++i)worst=std::max(worst,violation(centers[i][0],centers[i][1],mask_support(ss.shapes[i],ss.offsets[i][0],ss.offsets[i][1],lim,res),lim));
+    return worst;
+}
+
+bool spaced_layout(const ShapeSet& ss,const std::vector<std::array<double,2>>& centers,double res,double gap) {
+    const size_t n=ss.shapes.size();
+    std::vector<std::unique_ptr<detail::LayoutFootprint>> f(n);std::vector<double> radius(n);
+    for(size_t i=0;i<n;++i)radius[i]=*std::max_element(ss.profiles[i].begin(),ss.profiles[i].end())+1.5*res*std::sqrt(2.);
+    for(size_t i=0;i<n;++i)for(size_t j=0;j<i;++j) {
+        const double dx=centers[i][0]-centers[j][0],dy=centers[i][1]-centers[j][1];
+        if(std::hypot(dx,dy)>=radius[i]+radius[j]+gap)continue;
+        if(!f[i])f[i]=std::make_unique<detail::LayoutFootprint>(ss.shapes[i],ss.offsets[i],res);
+        if(!f[j])f[j]=std::make_unique<detail::LayoutFootprint>(ss.shapes[j],ss.offsets[j],res);
+        if(!f[i]->separated(*f[j],dx,dy,gap))return false;
+    }
+    return true;
+}
+
+bool shape_can_fit(const Shape& shape,const std::array<double,2>& off,const std::vector<Limit>& lim,double res) {
+    const auto support=mask_support(shape,off[0],off[1],lim,res);
+    double x=0,y=0;if(nearest_fit(support,lim,x,y)<=1e-9)return true;
+    // 有限次投影的残差不能单独证明不可行；有界凸平移域的合法顶点也能认证。
+    for(const auto& p:translation_vertices(support,lim))if(violation(p[0],p[1],support,lim)<=1e-9)return true;
+    return false;
+}
+
+void fit_secondary_shapes(const NodeInputs& inp,const Config& c,ShapeSet& ss,const std::vector<double>& sizes,
+                          const std::vector<double>& elong,const std::vector<double>& thetas,const std::vector<Limit>& lim,double res) {
+    const int turns=std::max(1,static_cast<int>(c.get("territory.turns",8.)));
+    std::vector<double> stretch{1.};for(double f:c.list("territory.stretch",{1.,1.6,2.4}))if(f!=1.)stretch.push_back(f);
+    for(size_t k=1;k<ss.shapes.size();++k) {
+        if(shape_can_fit(ss.shapes[k],ss.offsets[k],lim,res))continue;
+        bool found=false;
+        for(double f:stretch) {
+            for(int turn=0;turn<turns;++turn) {
+                if(f==1.&&turn==0)continue;
+                Rng rng=part_rng(inp,"shape:"+std::to_string(k));
+                Shape shape=island_shape(rng,sizes[k],res,elong[k]*f,thetas[k]+turn*PI/turns,c);
+                std::array<double,2> off;std::vector<double> profile;radial_profile(shape.mask,res,off,profile);
+                if(!shape_can_fit(shape,off,lim,res))continue;
+                ss.shapes[k]=std::move(shape);ss.offsets[k]=off;ss.profiles[k]=std::move(profile);found=true;break;
+            }
+            if(found)break;
+        }
+        if(!found)throw std::runtime_error("岛群置放失败：副岛"+std::to_string(k)+"的既有走向与拉伸不能落在共同群界内");
+    }
+}
+
 // 势力范围：照旧摆好的布局若越过与邻群的分界线，就把主岛挪进来（放不下就转走向、拉长）、其余岛带约束重摆。
 // 没越界时什么都不动。返回是否重摆；重摆时改 centers 与 ss 的主岛那一项。
 void fit_territory(const NodeInputs& inp, const PlanetView& pv, const Config& c, ShapeSet& ss, std::vector<std::array<double, 2>>& centers,
                    const std::vector<double>& sizes, const std::vector<double>& elong, const std::vector<double>& thetas, double res_km,
-                   double axis, double kernel, int btype, Group& g) {
+                   double axis, double kernel, int btype, Group& g,bool propose_only=false) {
     TerritoryRec& rec = g.territory;
     const bool enabled = c.get("territory.enabled", 1.0) != 0.0;
     rec.gap_km = c.get("territory.gap_km", 3.0);
-    if (enabled) g.lim = limits(pv, inp.node, rec.gap_km, c.get("territory.reach", 3.0), c.get("territory.reach_km", 40.0));
+    if (enabled) g.lim = (propose_only?historical_limits:limits)(pv, inp.node, rec.gap_km, c.get("territory.reach", 3.0), c.get("territory.reach_km", 40.0));
     const std::vector<Limit>& lim = g.lim;
     rec.neighbours = static_cast<int>(lim.size());
     rec.constrained = false;
@@ -57,9 +122,9 @@ void fit_territory(const NodeInputs& inp, const PlanetView& pv, const Config& c,
         double ox, oy, v;
     };
     std::vector<Cand> cands;
-    int chosen = -1;
+    int old_chosen=-1;
     for (double f : stretches) {
-        const size_t tier0 = cands.size();
+        const size_t tier0=cands.size();
         for (int m = 0; m < turns; ++m) {
             Cand cd;
             cd.f = f;
@@ -76,44 +141,80 @@ void fit_territory(const NodeInputs& inp, const PlanetView& pv, const Config& c,
             }
             cd.s0 = mask_support(cd.shp, cd.off[0], cd.off[1], lim, res_km);
             cd.v = nearest_fit(cd.s0, lim, cd.ox, cd.oy);
-            const bool stop = f == 1.0 && m == 0 && cd.v <= 0.0;
+            const bool stop=propose_only&&f==1.&&m==0&&cd.v<=0;
             cands.push_back(std::move(cd));
-            if (stop) break;
+            if(stop)break;
         }
-        double best = INF;
-        for (size_t q = tier0; q < cands.size(); ++q)
-            if (cands[q].v <= 0.0) {
-                const double hyp = np_hypot(cands[q].ox, cands[q].oy);
-                if (hyp < best) {
-                    best = hyp;
-                    chosen = static_cast<int>(q);
-                }
+        if(propose_only) {
+            double best=INF;
+            for(size_t q=tier0;q<cands.size();++q)if(cands[q].v<=0) {
+                const double hyp=np_hypot(cands[q].ox,cands[q].oy);
+                if(hyp<best){best=hyp;old_chosen=int(q);}
             }
-        if (chosen >= 0) break;
+            if(old_chosen>=0)break;
+        }
     }
-    if (chosen < 0) {
-        double best = INF;
-        for (size_t q = 0; q < cands.size(); ++q)
-            if (cands[q].v < best) {
-                best = cands[q].v;
-                chosen = static_cast<int>(q);
-            }
+    if(propose_only) {
+        if(old_chosen<0) {
+            double best=INF;for(size_t q=0;q<cands.size();++q)if(cands[q].v<best){best=cands[q].v;old_chosen=int(q);}
+        }
+        Cand& ch=cands[old_chosen];ss.shapes[0]=ch.shp;ss.offsets[0]=ch.off;ss.profiles[0]=ch.prof;sup[0]=ch.s0;
+        std::vector<std::vector<double>> psup(n);for(int k=0;k<n;++k)psup[k]=profile_support(ss.profiles[k],lim,res_km);
+        TerritoryPlace tp;tp.lim=&lim;tp.support=&psup;tp.main_x=ch.ox;tp.main_y=ch.oy;tp.gap_min_km=c.get("territory.inner_gap_min_km",.3);
+        Rng rp=part_rng(inp,"place");centers=place_islands(rp,ss.profiles,sizes,axis,kernel,btype,c,&tp,nullptr,true);
+        double after=-INF;for(int k=0;k<n;++k)after=std::max(after,violation(centers[k][0],centers[k][1],sup[k],lim));
+        rec.constrained=true;rec.off_x=ch.ox;rec.off_y=ch.oy;rec.turn_deg=ch.m*180./turns;rec.stretch=ch.f;rec.before=before;rec.after=after;
+        return;
     }
-    Cand& ch = cands[chosen];
-    ss.shapes[0] = ch.shp;
-    ss.offsets[0] = ch.off;
-    ss.profiles[0] = ch.prof;
-    sup[0] = ch.s0;
+    struct Job {int shape;double x,y;};
+    std::vector<Job> jobs;
+    for(size_t q=0;q<cands.size();++q) {
+        const Cand& cd=cands[q];if(cd.v>1e-9)continue;
+        jobs.push_back({int(q),cd.ox,cd.oy});
+        const auto vertices=translation_vertices(cd.s0,lim);
+        if(vertices.empty())continue;
+        double x=0,y=0;for(const auto& p:vertices){x+=p[0];y+=p[1];}x/=vertices.size();y/=vertices.size();
+        jobs.push_back({int(q),x,y});
+        for(size_t v=0;v<vertices.size();++v) {
+            const auto& a=vertices[v];const auto& b=vertices[(v+1)%vertices.size()];
+            jobs.push_back({int(q),a[0],a[1]});
+            jobs.push_back({int(q),.5*(a[0]+b[0]),.5*(a[1]+b[1])});
+        }
+    }
+    // 先保留原走向/拉伸层级，再选主岛位移最小的完整合法布局；主岛自己可放下不代表全群能放下。
+    std::stable_sort(jobs.begin(),jobs.end(),[&](const Job& a,const Job& b) {
+        const double fa=cands[a.shape].f,fb=cands[b.shape].f;
+        if(fa!=fb)return fa<fb;
+        return np_hypot(a.x,a.y)<np_hypot(b.x,b.y);
+    });
     std::vector<std::vector<double>> psup(n);
-    for (int k = 0; k < n; ++k) psup[k] = profile_support(ss.profiles[k], lim, res_km);
+    for (int k = 0; k < n; ++k) psup[k] = mask_support(ss.shapes[k],ss.offsets[k][0],ss.offsets[k][1],lim,res_km);
     TerritoryPlace tp;
     tp.lim = &lim;
     tp.support = &psup;
-    tp.main_x = ch.ox;
-    tp.main_y = ch.oy;
     tp.gap_min_km = c.get("territory.inner_gap_min_km", 0.3);
-    Rng rp = part_rng(inp, "place");
-    centers = place_islands(rp, ss.profiles, sizes, axis, kernel, btype, c, &tp);
+    int chosen=-1;std::string last_failure;
+    // 容量与主岛可行性不代表一次贪心副岛摆放可行。第一遍保持旧候选流，
+    // 再用固定独立流重启完整布局；每次都验全部真实掩膜，间距和面积不变。
+    for(int restart=0;restart<8&&chosen<0;++restart)for(const auto& job:jobs) {
+        Cand& cd=cands[job.shape];
+        ss.shapes[0]=cd.shp;ss.offsets[0]=cd.off;ss.profiles[0]=cd.prof;psup[0]=cd.s0;
+        tp.main_x=job.x;tp.main_y=job.y;
+        const PlacementMasks masks{&ss.shapes,&ss.offsets,res_km};
+        Rng rp=part_rng(inp,restart==0?"place":"place:bounded-restart:"+std::to_string(restart));
+        try {centers=place_islands(rp,ss.profiles,sizes,axis,kernel,btype,c,&tp,&masks);}
+        catch(const std::runtime_error& e) {
+            if(std::string(e.what()).find("岛群置放失败：")!=0)throw;
+            last_failure=e.what();
+            continue;
+        }
+        chosen=job.shape;cd.ox=job.x;cd.oy=job.y;break;
+    }
+    if(chosen<0) {
+        double best_v=INF;for(const auto& cd:cands)best_v=std::min(best_v,cd.v);
+        throw std::runtime_error("岛群置放失败：现有主岛走向、拉伸与平移候选没有完整可行布局；主岛最小越界="+std::to_string(best_v)+"km，试摆="+std::to_string(jobs.size())+"；"+last_failure);
+    }
+    Cand& ch=cands[chosen];sup[0]=ch.s0;
     double after = -INF;
     for (int k = 0; k < n; ++k) after = std::max(after, violation(centers[k][0], centers[k][1], sup[k], lim));
     rec.constrained = true;
@@ -127,7 +228,7 @@ void fit_territory(const NodeInputs& inp, const PlanetView& pv, const Config& c,
 
 }  // namespace
 
-Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c, double res_m, int threads) {
+Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c, double res_m, int threads,bool layout_only,LayoutCertification* certification) {
     const double t_start = now_s();
     Group g;
     g.inp = inp;
@@ -170,7 +271,7 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
     std::vector<std::array<double, 2>> pre_c;
     {
         Rng rp = part_rng(inp, "place");
-        pre_c = place_islands(rp, pre_prof, sizes, axis, kernel, btype, c);
+        pre_c = place_islands(rp, pre_prof, sizes, axis, kernel, btype, c,nullptr,nullptr,true);
     }
     double ax_hi = -INF, ax_lo = INF, ay_hi = -INF, ay_lo = INF;
     for (int k = 0; k < n; ++k) {
@@ -194,11 +295,53 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
         radial_profile(ss.shapes[k].mask, res_km, ss.offsets[k], ss.profiles[k]);
     });
     std::vector<std::array<double, 2>> centers;
+    const Shape original_main=ss.shapes[0];const auto original_off=ss.offsets[0];const auto original_prof=ss.profiles[0];
     {
         Rng rp = part_rng(inp, "place");
-        centers = place_islands(rp, ss.profiles, sizes, axis, kernel, btype, c);
+        centers = place_islands(rp, ss.profiles, sizes, axis, kernel, btype, c,nullptr,nullptr,true);
     }
-    fit_territory(inp, pv, c, ss, centers, sizes, elong, thetas, res_km, axis, kernel, btype, g);
+    fit_territory(inp,pv,c,ss,centers,sizes,elong,thetas,res_km,axis,kernel,btype,g,true);
+    g.proposed_fingerprint=layout_hash(ss,centers,res_km);
+    if(c.get("territory.enabled",1.)!=0)g.lim=limits(pv,inp.node,c.get("territory.gap_km",3.),c.get("territory.reach",3.),c.get("territory.reach_km",40.));
+    const double gap=g.territory.constrained?c.get("territory.inner_gap_min_km",.3):c.get("layout.gap_min_km");
+    const double old_violation=layout_violation(ss,centers,g.lim,res_km);
+    if(certification) {
+        certification->proposed_violation=old_violation;
+        certification->proposed_gap300=spaced_layout(ss,centers,res_km,.3);
+        certification->proposed_gap1000=certification->proposed_gap300&&spaced_layout(ss,centers,res_km,1.);
+    }
+    const bool spaced=certification?(gap<=.3?certification->proposed_gap300:certification->proposed_gap1000):spaced_layout(ss,centers,res_km,gap);
+    const bool requires_repair=old_violation>1e-9||!spaced;
+    if(certification)certification->requires_repair=requires_repair;
+    if(requires_repair&&!(certification&&certification->audit_only)) {
+        fit_secondary_shapes(inp,c,ss,sizes,elong,thetas,g.lim,res_km);
+        bool complete=false;
+        std::vector<std::vector<double>> support(n);
+        for(int k=0;k<n;++k)support[k]=mask_support(ss.shapes[k],ss.offsets[k][0],ss.offsets[k][1],g.lim,res_km);
+        // 主岛已在新共同边内时，先保持旧主形和原位，只重新搜索副岛。
+        if(violation(centers[0][0],centers[0][1],support[0],g.lim)<=1e-9) {
+            TerritoryPlace tp;tp.lim=&g.lim;tp.support=&support;tp.main_x=centers[0][0];tp.main_y=centers[0][1];tp.gap_min_km=gap;
+            const PlacementMasks masks{&ss.shapes,&ss.offsets,res_km};
+            for(int restart=0;restart<8&&!complete;++restart) {
+                Rng rp=part_rng(inp,restart==0?"place":"place:canonical-restart:"+std::to_string(restart));
+                try {centers=place_islands(rp,ss.profiles,sizes,axis,kernel,btype,c,&tp,&masks);complete=true;}
+                catch(const std::runtime_error& e){if(std::string(e.what()).find("岛群置放失败：")!=0)throw;}
+            }
+            if(complete) {
+                auto& rec=g.territory;rec.constrained=true;rec.off_x=tp.main_x;rec.off_y=tp.main_y;
+                rec.before=old_violation;rec.after=layout_violation(ss,centers,g.lim,res_km);
+            }
+        }
+        if(!complete) {
+            ss.shapes[0]=original_main;ss.offsets[0]=original_off;ss.profiles[0]=original_prof;
+            Rng rp=part_rng(inp,"place");const PlacementMasks masks{&ss.shapes,&ss.offsets,res_km};
+            centers=place_islands(rp,ss.profiles,sizes,axis,kernel,btype,c,nullptr,&masks);
+            fit_territory(inp,pv,c,ss,centers,sizes,elong,thetas,res_km,axis,kernel,btype,g);
+        }
+    }
+    g.layout_fingerprint=layout_hash(ss,centers,res_km);g.layout_changed=g.layout_fingerprint!=g.proposed_fingerprint;
+    if(requires_repair&&certification&&certification->audit_only)g.layout_fingerprint=0;
+    g.territory.neighbours=int(g.lim.size());
     g.sec_layout = now_s() - t_start;
 
     // 贴图
@@ -217,6 +360,11 @@ Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c
     double y0 = std::ceil(ymax / res_km) * res_km;
     int W = static_cast<int>(std::ceil((xmax - x0) / res_km)) + 1;
     int H = static_cast<int>(std::ceil((y0 - ymin) / res_km)) + 1;
+    if(layout_only) {
+        g.H=H;g.W=W;g.x0=x0;g.y0=y0;g.origin_x=pyround(x0,3);g.origin_y=pyround(y0,3);g.islands.resize(n);
+        for(int k=0;k<n;++k){auto& r=g.islands[k];r.id=k;r.cx=centers[k][0];r.cy=centers[k][1];r.gcx=gcx[k];r.gcy=gcy[k];r.m=ss.shapes[k].mask.H;r.area_target=sizes[k];}
+        g.sec_total=now_s()-t_start;return g;
+    }
     GridD height(H, W, NaN);
     Grid<int16_t> island_id(H, W, -1);
     const double t_paste = now_s();

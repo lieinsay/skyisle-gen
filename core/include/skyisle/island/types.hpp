@@ -61,6 +61,8 @@ struct Calendar {
 // 行星层的网格与全体群（板块走向、势力范围、局地风）
 struct PlanetView {
     double radius_km = 6371.0;
+    double surface_radius_km = 0.0;     // 零点球半径；0 时用 radius_km（旧独立调用）。
+    double land_frac_cap = 0.35;       // 第三层可用共享域的容量上限，沿用③现有物理口径。
     double year_s = 336.0 * 24.0 * 3600.0;
     LatLonGrid plate_grid;
     std::vector<double> plate_K;        // boundary_kernel（float64）
@@ -313,6 +315,8 @@ struct WeatherYear {                  // weather.simulate_year 的数组
 // 群状态（Python 版的 g）
 struct Group {
     NodeInputs inp;
+    bool layout_changed=false;
+    uint64_t layout_fingerprint=0,proposed_fingerprint=0;
     int H = 0, W = 0;
     double res_km = 0.1, x0 = 0, y0 = 0;    // x0 / y0：栅格左上角（km，未四舍五入）
     double origin_x = 0, origin_y = 0;       // island.json 的 origin_km（四舍五入到 3 位，水系按它取噪声坐标）

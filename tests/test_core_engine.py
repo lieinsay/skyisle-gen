@@ -251,19 +251,19 @@ def test_sculpt_island_multicore(n_seed):
 
 
 def test_territory_limits_split():
-    """势力范围：两群各自画的分界线是同一条（t_k + t_j + 缝 = 群心距）、法向相反。"""
+    """共用球面边界的局部保守内近似可以收紧两侧，但不能缩小原有物理缝。"""
     rng = np.random.default_rng(4)
     n = 400
     lat, lon = rng.uniform(-60, 60, n), rng.uniform(-180, 180, n)
     area = rng.uniform(50, 5000, n)
     planet = {"radius_km": 6371.0, "year_s": 1.0, "islands": {"lat": lat, "lon": lon, "area": area}}
     for node in (0, 17, 399):
-        lk = core.territory_limits(planet, node, 3.0, 30.0, 2000.0)
+        lk = core.territory_limits(planet, node, 3.0, 3.0, 40.0)
         assert lk and all(L["dist_km"] > 0 and L["node"] != node for L in lk)
         L0 = lk[0]
-        lj = {L["node"]: L for L in core.territory_limits(planet, L0["node"], 3.0, 30.0, 2000.0)}
+        lj = {L["node"]: L for L in core.territory_limits(planet, L0["node"], 3.0, 3.0, 40.0)}
         assert node in lj
-        assert L0["limit_km"] + lj[node]["limit_km"] + 3.0 == pytest.approx(L0["dist_km"], abs=1e-6)
+        assert L0["limit_km"] + lj[node]["limit_km"] + 3.0 <= L0["dist_km"] + 1e-6
         u1, u2 = np.array(L0["u"]), np.array(lj[node]["u"])
         assert np.hypot(*u1) == pytest.approx(1.0) and u1 @ -u2 > 0.9
 

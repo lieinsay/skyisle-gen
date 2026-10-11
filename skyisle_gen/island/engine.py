@@ -184,7 +184,7 @@ def _terrain_from(ctx, node: int, inp: dict, R: dict, log=print, c: dict | None 
                      "before_km": round(float(T["before"]), 3), "after_km": round(float(T["after"]), 3)})
     if T["has_violation"]:
         terr["violation_km"] = round(float(T["violation"]), 3)
-        terr["note"] = "势力范围（C++ 的 territory.cpp）：与每个邻群按等效半径分界、各退 gap/2；violation_km ≤ 0 = 没越界（负值是最小余量）"
+        terr["note"] = "共同球面群界（C++ 的 territory.cpp）：等效半径分界加成对容量压力、各退 gap/2，实际可用域满足 A/land_frac_cap；violation_km ≤ 0 = 原生掩膜未越界（负值是最小余量）"
     constraints = {
         "area_km2": {"target": round(inp["area_km2"], 2), "actual": round(float(land.sum()) * res_km * res_km, 2)},
         "main_area_km2": {"target": round(inp["main_area_km2"], 2), "actual": islands_json[0]["area_km2"]},

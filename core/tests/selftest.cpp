@@ -8,6 +8,8 @@
 #include "skyisle/flow.hpp"
 #include "skyisle/grid.hpp"
 #include "skyisle/island/coast.hpp"
+#include "skyisle/island/layout.hpp"
+#include "skyisle/island/territory.hpp"
 #include "skyisle/island/river.hpp"
 #include "skyisle/rng.hpp"
 #include "skyisle/town/contour.hpp"
@@ -17,6 +19,8 @@
 #include "skyisle/town/raster.hpp"
 #include "skyisle/town/site.hpp"
 #include "../src/island/valley_profile.hpp"
+#include "../src/island/layout_footprint.hpp"
+#include "../src/island/territory_capacity.hpp"
 
 using namespace skyisle;
 
@@ -37,6 +41,47 @@ static int fails = 0;
     } while (0)
 
 int main() {
+    {
+        // 从原生 chart 内的点直接验球面共同边，而非断言近似公式本身。
+        const double R=6377.8,gap=3.;
+        for(double d:{10.,1000.,PI*R-30.})for(double t:{4.,30.,d*.3,d-30.})for(double B:{50.,200.}) {
+            const double b=island::detail::spherical_bound(t,d,gap,R,B);
+            const double alpha=std::clamp((t-d*.5)/R,-PI*.5+gap*.5/R,PI*.5-gap*.5/R);
+            for(int ix=-20;ix<=20;++ix)for(int iy=-20;iy<=20;++iy) {
+                const double x=B*ix/20.,y=B*iy/20.,r=std::hypot(x,y);
+                if(r>B||x>b)continue;
+                const double dot=-std::sin(d/(2*R))*std::cos(r/R)
+                    +std::cos(d/(2*R))*(r>0?x/r:0.)*std::sin(r/R);
+                CHECK(dot<=std::sin(alpha-gap/(2*R))+1e-12);
+            }
+        }
+        // 远方近对跖面在整个B域之外；不能被sec(B/R)误造出反向活跃面。
+        CHECK(island::detail::spherical_bound(PI*R-30.,PI*R-30.,gap,R,50.)>50.);
+    }
+    {
+        // 随机候选全在范围外时，不能把“最少越界”的位置当作合法输出。
+        Config c;
+        c.num={{"layout.gap_min_km",.3},{"layout.gap_max_km",10},{"layout.arc_elongation",1},
+               {"layout.divergent_spread",1},{"layout.main_gravity",3},{"layout.place_attempts",1}};
+        std::vector<std::vector<double>> profiles(2,std::vector<double>(72,1));
+        std::vector<island::Limit> lim={{1,10,1,0,4},{2,10,-1,0,4},{3,10,0,1,4},{4,10,0,-1,4}};
+        std::vector<std::vector<double>> support(2,std::vector<double>(4,1));
+        island::TerritoryPlace t;t.lim=&lim;t.support=&support;
+        Rng rng=entity_rng(42,21,"layout:bounded-fallback");
+        auto ctr=island::place_islands(rng,profiles,{3,1},0,0,island::CONVERGENT,c,&t);
+        CHECK(island::violation(ctr[1][0],ctr[1][1],support[1],lim)<=1e-9);
+        CHECK(std::hypot(ctr[1][0],ctr[1][1])>=2.3);
+        // 格心斜邻并不代表岸线有300m空隙；包络还包含亚格岸线及贴图取整。
+        island::Shape s;s.mask=Mask(1,1,1);s.xs={0};
+        island::detail::LayoutFootprint f(s,{0,0},.1);
+        CHECK(!f.separated(f,.1,.1,.3));
+        CHECK(!f.separated(f,.5,.5,.3));
+        CHECK(f.separated(f,.52,.52,.3));
+        island::Shape big;big.mask=Mask(5,5,1);big.xs={-.2,-.1,0,.1,.2};
+        island::detail::LayoutFootprint outer(big,{0,0},.1);
+        CHECK(!f.separated(outer,0,0,.3));
+        CHECK(f.separated(outer,1,0,.3));
+    }
     CHECK(crc32("island:2051:layout") == 4019611777u);
     {
         Rng r = entity_rng(42, 21, "island:2051:layout");

@@ -6,7 +6,13 @@
 namespace skyisle::island {
 
 // res_m ≤ 0 = 用配置的 res_m；threads ≤ 0 = 1。结果与线程数无关。
-Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c, double res_m = 0.0, int threads = 1);
+struct LayoutCertification {
+    double proposed_violation=0;
+    bool proposed_gap300=true,proposed_gap1000=true;
+    bool audit_only=false,requires_repair=false;
+};
+Group build_terrain(const NodeInputs& inp, const PlanetView& pv, const Config& c, double res_m = 0.0, int threads = 1,
+                    bool layout_only=false,LayoutCertification* certification=nullptr);
 void build_hydro(Group& g, const PlanetView& pv, const Config& c, int threads = 1);
 
 // 并行地对 [0, n) 做 fn(k)（threads ≤ 1 时顺序做）

@@ -41,6 +41,8 @@ island::Calendar island_calendar(const Planet& p) {
 island::PlanetView planet_view(const Planet& p, const Islands& isl, const Climate& c, const Config& cfg) {
     island::PlanetView v;
     v.radius_km = p.radius_km;
+    v.surface_radius_km = p.radius_km - (p.vert.present ? p.vert.sea_level_m / 1000.0 : 0.0);
+    v.land_frac_cap = cfg.get("s03.islands.land_frac_cap",0.35);
     const double yd = p.cal.present ? p.cal.year_days_solar : 336.0;
     const double hr = p.cal.present ? p.cal.solar_day_hr : 24.0;
     v.year_s = yd * hr * 3600.0;

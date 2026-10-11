@@ -4,10 +4,28 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <memory>
+#include <mutex>
+#include "territory_capacity.hpp"
 
 namespace skyisle::island {
 
-std::vector<Limit> limits(const PlanetView& pv, int64_t node, double gap_km, double reach, double reach_km) {
+const CapacityModel& capacity_model(const PlanetView& pv,double gap_km,double reach,double reach_km) {
+    struct Entry {double radius,surface,cap,gap,reach,reach_km;std::vector<double> lat,lon,area;CapacityModel model;};
+    static std::mutex mutex;static std::vector<std::unique_ptr<Entry>> cache;
+    std::lock_guard<std::mutex> lock(mutex);
+    for(const auto& e:cache)if(e->radius==pv.radius_km&&e->surface==pv.surface_radius_km&&e->cap==pv.land_frac_cap&&
+      e->gap==gap_km&&e->reach==reach&&e->reach_km==reach_km&&e->lat==pv.isl_lat&&e->lon==pv.isl_lon&&e->area==pv.isl_area)return e->model;
+    auto e=std::make_unique<Entry>();e->radius=pv.radius_km;e->surface=pv.surface_radius_km;e->cap=pv.land_frac_cap;
+    e->gap=gap_km;e->reach=reach;e->reach_km=reach_km;e->lat=pv.isl_lat;e->lon=pv.isl_lon;e->area=pv.isl_area;
+    e->model=detail::CapacitySolver(pv,gap_km,reach,reach_km).solve();cache.push_back(std::move(e));return cache.back()->model;
+}
+
+std::vector<Limit> limits(const PlanetView& pv,int64_t node,double gap_km,double reach,double reach_km) {
+    return capacity_model(pv,gap_km,reach,reach_km).boundaries.at(size_t(node));
+}
+
+std::vector<Limit> historical_limits(const PlanetView& pv, int64_t node, double gap_km, double reach, double reach_km) {
     const double R = pv.radius_km;
     const size_t n = pv.isl_lat.size();
     const double d2r = PI / 180.0;
@@ -93,11 +111,15 @@ double violation(double px, double py, const std::vector<double>& support, const
 double nearest_fit(const std::vector<double>& support, const std::vector<Limit>& lim, double& ox, double& oy, int iters) {
     ox = 0.0;
     oy = 0.0;
+    return project_fit(support,lim,ox,oy,iters);
+}
+
+double project_fit(const std::vector<double>& support, const std::vector<Limit>& lim, double& ox, double& oy, int iters) {
     if (lim.empty()) return -1e9;
     const size_t m = lim.size();
     std::vector<double> b(m), P0(m, 0.0), P1(m, 0.0);
     for (size_t i = 0; i < m; ++i) b[i] = lim[i].limit_km - support[i];
-    double x0 = 0.0, x1 = 0.0;
+    double x0 = ox, x1 = oy;
     // numpy 的 y @ U[i]（长 2 的点积走 BLAS ddot）= fma(y1, u1, y0·u0)；U @ x（dgemv）行数 ≥ 2 时 = fma(u0, x0, u1·x1)、1 行时同点积。
     // 越界量 v 在「恰好贴着分界线」时是 ±1e−15 量级，v ≤ 0 的判断差一位就翻（主岛挑哪个走向），所以照 numpy 的乘加次序算。
     for (int it = 0; it < iters; ++it)
@@ -119,6 +141,22 @@ double nearest_fit(const std::vector<double>& support, const std::vector<Limit>&
         worst = std::max(worst, ux - b[i]);
     }
     return worst;
+}
+
+std::vector<std::array<double,2>> translation_vertices(const std::vector<double>& support,const std::vector<Limit>& lim) {
+    std::vector<std::array<double,2>> vertices;
+    for(size_t a=0;a<lim.size();++a)for(size_t b=a+1;b<lim.size();++b) {
+        const double det=lim[a].ux*lim[b].uy-lim[b].ux*lim[a].uy;
+        if(std::fabs(det)<1e-12)continue;
+        const double qa=lim[a].limit_km-support[a],qb=lim[b].limit_km-support[b];
+        const double x=(qa*lim[b].uy-qb*lim[a].uy)/det,y=(qb*lim[a].ux-qa*lim[b].ux)/det;
+        if(violation(x,y,support,lim)<=1e-8)vertices.push_back({x,y});
+    }
+    if(vertices.empty())return vertices;
+    double cx=0,cy=0;for(const auto& p:vertices){cx+=p[0];cy+=p[1];}cx/=vertices.size();cy/=vertices.size();
+    std::stable_sort(vertices.begin(),vertices.end(),[&](const auto& a,const auto& b){
+        return std::atan2(a[1]-cy,a[0]-cx)<std::atan2(b[1]-cy,b[0]-cx);});
+    return vertices;
 }
 
 double raster_violation(const Group& g, const std::vector<Limit>& lim) {

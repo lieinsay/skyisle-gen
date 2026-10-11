@@ -24,9 +24,15 @@ struct TerritoryPlace {
     double main_x = 0, main_y = 0;
     double gap_min_km = 0.3;
 };
+struct PlacementMasks {
+    const std::vector<Shape>* shapes = nullptr;
+    const std::vector<std::array<double, 2>>* offsets = nullptr;
+    double res_km = 0;
+};
 std::vector<std::array<double, 2>> place_islands(Rng& rng, const std::vector<std::vector<double>>& profiles, const std::vector<double>& sizes,
                                                  double axis, double kernel, int btype, const Config& c,
-                                                 const TerritoryPlace* territory = nullptr);
+                                                 const TerritoryPlace* territory = nullptr, const PlacementMasks* masks = nullptr,
+                                                 bool propose_only = false);
 std::vector<double> surface_heights(Rng& rng, int n, double height_m, bool layered, const Config& c);
 std::vector<double> relief_targets(Rng& rng, const std::vector<double>& sizes, const std::vector<double>& ages, const Config& c);
 // 浮高的原始值（主岛 0；往下的等地形拟合出岸缘后由 build_terrain 按离下限的余量缩）：参数读 float.*（DESIGN-NOTES 四点二十八）

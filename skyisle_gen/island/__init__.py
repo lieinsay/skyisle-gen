@@ -15,7 +15,7 @@ import numpy as np
 from ..config import CONFIG_DIR, _deep_merge, apply_sets
 
 ISLAND_STREAM = 21   # 与十步管线的流号 1–10 错开
-ISLAND_VERSION = "11"  # 连续谷形保留陆湖边界、原河道覆盖与对应源平岸水面下界。
+ISLAND_VERSION = "12"  # 共同球面群界满足容量，并以原生掩膜认证群内岸距与完整布局。
                      # 9 = 连续河段水沙试验及独立材料输出；默认河槽算法不变。
                      # 2 = 水位面（B+A，四点四十九）：流向按潜水面、泉线分弥散渗出 / 泉 / 崖瀑、terrain.npz 多 wt_m / wt_depth_m
                      # 3 = 河宽口径分开（四点五十）：rivers.json 的 w_bf_m / d_bf_m 改成真平岸（代 q_bf）、新增 w_mean_m / d_mean_m；

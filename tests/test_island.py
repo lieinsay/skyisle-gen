@@ -472,7 +472,7 @@ def test_classify_all_small_world(small_ctx):
 
 # ---------------- 势力范围（C++ 的 territory，DESIGN-NOTES 四点二十二）与粗版（lod.py） ----------------
 def test_territory_split_is_consistent(small_ctx):
-    """邻群两边各画的分界线是同一条（k 离线 t_k、j 离线 t_j，t_k + t_j = 群心距），各退半道缝后两群之间正好隔 gap_km。"""
+    """容量压力共用成对边；球面 chart 的保守内近似可收紧边界，不能缩小群间缝。"""
     from skyisle_gen import island as isl
     c = isl.island_config(small_ctx)
     gap = float(c["territory"]["gap_km"])
@@ -481,12 +481,12 @@ def test_territory_split_is_consistent(small_ctx):
     planet = {"radius_km": radius, "year_s": 1.0,
               "islands": {"lat": I3["lat"].astype(np.float64), "lon": I3["lon"].astype(np.float64), "area": I3["area_km2"].astype(np.float64)}}
     k = _pick_node(small_ctx)
-    lk = core.territory_limits(planet, k, gap, 50.0, 5000.0)          # 小世界稀：放宽只为找到一对邻群
+    lk = core.territory_limits(planet, k, gap, 3.0, 40.0)            # 默认初始邻域；全 pair 认证负责闭合稀疏世界。
     assert lk
     j = lk[0]["node"]
-    lj = {L["node"]: L for L in core.territory_limits(planet, j, gap, 50.0, 5000.0)}
+    lj = {L["node"]: L for L in core.territory_limits(planet, j, gap, 3.0, 40.0)}
     assert k in lj
-    assert abs(lk[0]["limit_km"] + lj[k]["limit_km"] + gap - lk[0]["dist_km"]) < 1e-3
+    assert lk[0]["limit_km"] + lj[k]["limit_km"] + gap <= lk[0]["dist_km"] + 1e-3
     assert lj[k]["dist_km"] == pytest.approx(lk[0]["dist_km"], abs=1e-9)
     u1, u2 = np.array(lk[0]["u"]), np.array(lj[k]["u"])
     assert np.hypot(*u1) == pytest.approx(1.0) and u1 @ -u2 > 0.99     # 两边的法向相反（几百 km 内近似平面）
