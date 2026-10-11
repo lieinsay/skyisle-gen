@@ -282,28 +282,72 @@ Channels carve_channels(const GridD& h, const GridD& hf, const Mask& mk, const M
         segments.push_back({point(k), point(r >= 0 && seed.v[r] ? static_cast<size_t>(r) : k)});
     }
     const detail::ValleyProfiles profiles(std::move(segments), res_m);
+    const detail::ValleyDomain domain(work);
+    auto legacy_sample = [&](size_t k) {
+        detail::ValleySample p;
+        bool has = work.v[k] && src.v[k] >= 0;
+        const size_t s = has ? static_cast<size_t>(src.v[k]) : 0;
+        const double lim = center_r.v[s] ? INF : svc * res_m;
+        has = has && dist.v[k] <= lim;
+        p.height = h.v[k];
+        if (has) {
+            p.distance = dist.v[k]; p.bed = bed[s]; p.depth = depth[s]; p.width = width[s];
+            p.half_floor = fp_half[s]; p.level = river_lvl.v[s]; p.fade = 1; p.present = true;
+            const double valley = p.bed + p.depth + std::max(0.0, p.distance - p.half_floor) * tan_side[s];
+            p.height = std::isnan(h.v[k]) ? NaN : std::min(h.v[k], valley);
+            const bool wide = center_r.v[s] && !center_r.v[k] && p.distance < p.width / 2.0;
+            if (center_r.v[k] || wide) p.height = std::min(p.height, p.bed + p.depth);
+        }
+        if (seed.v[k]) p.height = bed[k] + depth[k];
+        return p;
+    };
+    GridD legacy_height(H, W), source_surface(H, W, NaN);
+    for (size_t k = 0; k < N; ++k) {
+        const auto old = legacy_sample(k);
+        legacy_height.v[k] = old.height;
+        if (old.present) source_surface.v[k] = old.bed + old.depth;
+    }
     out.h_new = GridD(H, W);
     out.lvl = Grid<uint8_t>(H, W, 0);
     out.floodplain = Grid<uint8_t>(H, W, 0);
     for (size_t k = 0; k < N; ++k) {
-        const auto p = work.v[k] && src.v[k] >= 0 ? profiles.sample(static_cast<double>(k / W), static_cast<double>(k % W)) : detail::ValleySample{};
+        auto p = work.v[k] && src.v[k] >= 0 ? profiles.sample(static_cast<double>(k / W), static_cast<double>(k % W)) : detail::ValleySample{};
+        const auto old = legacy_sample(k);
+        if (p.present) {
+            const double row = static_cast<double>(k / W), col = static_cast<double>(k % W);
+            const double alpha = domain.weight(row, col, p.distance / res_m);
+            // 混合最终地面而不是未裁剪的剖面，确保障碍区逐值回退原 masked 结果。
+            const double height = std::min(h.v[k], h.v[k] + p.fade * (p.height - h.v[k]));
+            p.height = detail::guarded_valley_height(domain, legacy_height, row, col, p.distance / res_m, height);
+            if (alpha <= 0) p = old;
+            else if (alpha < 1 && old.present) {
+                auto mix = [alpha](double a, double b) { return a + alpha * (b - a); };
+                p.distance = mix(old.distance, p.distance); p.bed = mix(old.bed, p.bed);
+                p.depth = mix(old.depth, p.depth); p.width = mix(old.width, p.width);
+                p.half_floor = mix(old.half_floor, p.half_floor);
+                // level 是离散来源标签；退场 source 的权重不再参与水面覆盖。
+                p.level = std::max(old.level, p.level);
+            }
+            p.fade = 1; // 两个最终地面均已各自应用原作用范围。
+        }
         const bool has = p.present;
-        const double bed_s = p.bed, dep_s = p.depth, fp_s = p.half_floor, w_s = p.width;
-        const bool isr_s = p.level > 0;
-        const uint8_t lvl_s = p.level;
+        const double bed_s = p.bed, dep_s = p.depth, fp_s = p.half_floor;
         // 溪涧的最后一格支撑连续退回原地面，不能在300m处凭候选消失立起断墙。
-        double hn = has ? std::min(h.v[k], h.v[k] + p.fade * (p.height - h.v[k])) : h.v[k];
+        double hn = has ? p.height : h.v[k];
         if (has && std::isnan(h.v[k])) hn = NaN;
-        const bool wide = has && isr_s && !center_r.v[k] && p.distance < w_s / 2.0;
+        // 河道覆盖仍按原 masked source/距离判定；连续谷形不能把汇入干流的溪涧源格改记成河道。
+        const bool wide = old.present && old.level > 0 && !center_r.v[k] && old.distance < old.width / 2.0;
         const bool chan = center_r.v[k] || wide;
         // 河道格记平岸水面（C1：= 滩面 = 河床 + 水深；河床另存 bed）
-        if (chan) hn = std::isnan(hn) || std::isnan(bed_s) ? NaN : std::min(hn, bed_s + dep_s);
+        if (has && !chan && !seed.v[k] && old.present)
+            hn = detail::bank_bounded_valley_height(source_surface, static_cast<double>(k / W), static_cast<double>(k % W), h.v[k], hn);
+        if (chan) hn = std::isnan(hn) || std::isnan(old.bed) ? NaN : std::min(hn, old.bed + old.depth);
         if (seed.v[k]) hn = bed[k] + depth[k];
-        if (chan || seed.v[k]) out.bed.v[k] = seed.v[k] ? bed[k] : bed_s;
+        if (chan || seed.v[k]) out.bed.v[k] = seed.v[k] ? bed[k] : old.bed;
         out.h_new.v[k] = hn;
-        out.lvl.v[k] = wide ? lvl_s : river_lvl.v[k];
-        out.width.v[k] = chan ? (center_r.v[k] ? width[k] : w_s) : (center_s.v[k] ? width[k] : 0.0);
-        out.depth.v[k] = chan ? (center_r.v[k] ? depth[k] : dep_s) : (center_s.v[k] ? depth[k] : 0.0);
+        out.lvl.v[k] = wide ? old.level : river_lvl.v[k];
+        out.width.v[k] = chan ? (center_r.v[k] ? width[k] : old.width) : (center_s.v[k] ? width[k] : 0.0);
+        out.depth.v[k] = chan ? (center_r.v[k] ? depth[k] : old.depth) : (center_s.v[k] ? depth[k] : 0.0);
         // 漫滩 = 谷底里的岸上格（河与溪涧都算：溪涧的谷底多半不到一格）
         out.floodplain.v[k] = (has && !chan && !seed.v[k] && p.distance <= fp_s + 0.5 * res_m && hn <= bed_s + dep_s + 0.5) ? 1 : 0;
     }

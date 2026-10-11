@@ -14,6 +14,81 @@ struct ValleyPoint {
     double radius = INF;  // 溪涧作用半径（格）；常年河沿用调用方的原传播范围。
     uint8_t level = 0;
 };
+
+// 精确到非 work 格方块的 clearance。只存陆地相邻障碍格；从 work 内到更深障碍的
+// 最短线段必先经过这些边界格。边界 BVH 不用格心距离，避免把半格海岸当作可穿过。
+class ValleyDomain {
+    struct Box { double r0,r1,c0,c1; int begin=0,end=0,left=-1,right=-1; };
+    std::vector<Box> boxes_, nodes_;
+    static double distance2(const Box& b,double row,double col) {
+        const double dr=std::max({b.r0-row,row-b.r1,0.0}),dc=std::max({b.c0-col,col-b.c1,0.0});
+        return dr*dr+dc*dc;
+    }
+    int build(int begin,int end) {
+        Box n{INF,-INF,INF,-INF,begin,end};
+        for(int k=begin;k<end;++k) {const auto& b=boxes_[k];n.r0=std::min(n.r0,b.r0);n.r1=std::max(n.r1,b.r1);n.c0=std::min(n.c0,b.c0);n.c1=std::max(n.c1,b.c1);}
+        const int index=static_cast<int>(nodes_.size());nodes_.push_back(n);
+        if(end-begin>8) {
+            const bool row=n.r1-n.r0>n.c1-n.c0;const int mid=(begin+end)/2;
+            std::nth_element(boxes_.begin()+begin,boxes_.begin()+mid,boxes_.begin()+end,[row](const auto& a,const auto& b){return row?a.r0<b.r0:a.c0<b.c0;});
+            const int left=build(begin,mid),right=build(mid,end);nodes_[index].left=left;nodes_[index].right=right;
+        }
+        return index;
+    }
+    void nearest(int index,double row,double col,double& best) const {
+        const auto& n=nodes_[index];if(distance2(n,row,col)>best)return;
+        if(n.left<0) {for(int k=n.begin;k<n.end;++k)best=std::min(best,distance2(boxes_[k],row,col));}
+        else {int a=n.left,b=n.right;if(distance2(nodes_[a],row,col)>distance2(nodes_[b],row,col))std::swap(a,b);nearest(a,row,col,best);nearest(b,row,col,best);}
+    }
+public:
+    explicit ValleyDomain(const Mask& work) {
+        for(int i=0;i<work.H;++i)for(int j=0;j<work.W;++j)if(!work(i,j)) {
+            bool boundary=false;
+            for(int di=-1;di<=1;++di)for(int dj=-1;dj<=1;++dj) {
+                const int r=i+di,c=j+dj;
+                boundary=boundary||(r>=0&&r<work.H&&c>=0&&c<work.W&&work(r,c));
+            }
+            if(boundary)boxes_.push_back({i-.5,i+.5,j-.5,j+.5});
+        }
+        // 栅格之外同样不是已提供的陆地。
+        boxes_.push_back({-1.5,-.5,-1.5,work.W+.5});
+        boxes_.push_back({work.H-.5,work.H+.5,-1.5,work.W+.5});
+        boxes_.push_back({-.5,work.H-.5,-1.5,-.5});
+        boxes_.push_back({-.5,work.H-.5,work.W-.5,work.W+.5});
+        build(0,static_cast<int>(boxes_.size()));
+    }
+    double clearance(double row,double col) const {double d=INF;nearest(0,row,col,d);return std::sqrt(d);}
+    double weight(double row,double col,double distance_cells) const {
+        // 候选投影均在 d_min+sqrt(2) 的圆内。只有该圆完全位于 work 才混入欧氏场；
+        // 下一原生格 smoothstep 过渡。d_min 与 clearance 连续，不新增影线或候选出生断墙。
+        return smoothstep(clip(clearance(row,col)-distance_cells-SQRT2,0.0,1.0));
+    }
+};
+
+// 原 masked 原生格场的双线性重建。finite 角点归一化保持岸边内部 C0；整数格仍逐值原样。
+inline double valley_bilinear(const GridD& field,double row,double col) {
+    row=clip(row,0.0,field.H-1.0);col=clip(col,0.0,field.W-1.0);
+    const int r=static_cast<int>(std::floor(row)),c=static_cast<int>(std::floor(col));
+    const double fr=row-r,fc=col-c;double sum=0,total=0;
+    for(int di=0;di<2;++di)for(int dj=0;dj<2;++dj) {
+        const double w=(di?fr:1-fr)*(dj?fc:1-fc);
+        const double v=field(std::min(r+di,field.H-1),std::min(c+dj,field.W-1));
+        if(w>0&&std::isfinite(v)){sum+=w*v;total+=w;}
+    }
+    return total>0?sum/total:NaN;
+}
+
+inline double guarded_valley_height(const ValleyDomain& domain,const GridD& legacy,
+                                   double row,double col,double distance_cells,double height) {
+    const double alpha=domain.weight(row,col,distance_cells),old=valley_bilinear(legacy,row,col);
+    return alpha<=0?old:alpha>=1?height:old+alpha*(height-old);
+}
+
+inline double bank_bounded_valley_height(const GridD& surface,double row,double col,double natural,double carved) {
+    const double floor=valley_bilinear(surface,row,col);
+    // 岸不能被邻段低水面刻到其原对应源的平岸水面之下；无 source 支撑不施加边界。
+    return std::isfinite(floor)?std::min(natural,std::max(carved,floor)):carved;
+}
 struct ValleySegment { ValleyPoint a, b; };
 struct ValleySample {
     double distance = INF, height = 0, bed = 0, depth = 0, width = 0, half_floor = 0, fade = 0;

@@ -234,6 +234,18 @@ int main() {
         CHECK(std::fabs(a.width-b.width)<.001);
         CHECK(std::fabs(bend.sample(-5,0).bed-1050)<1e-10);
         CHECK(bend.sample(0,0).bed==1000 && bend.sample(0,0).width==10);
+        // 邻段低面不能把对应源的岸刻到平岸水面以下；max 下界保持亚格连续。
+        GridD source_surface(3,3,811.6238055268682);
+        CHECK(bank_bounded_valley_height(source_surface,1,1,824.15,810.71)==source_surface(1,1));
+        CHECK(bank_bounded_valley_height(source_surface,1,1,814.77,814.77)==814.77);
+        CHECK(bank_bounded_valley_height(source_surface,1,1,800,790)==800);
+        source_surface(0,0)=NaN;
+        CHECK(std::fabs(bank_bounded_valley_height(source_surface,1-1e-6,1,824.15,810.71)-bank_bounded_valley_height(source_surface,1+1e-6,1,824.15,810.71))<1e-9);
+        GridD absent(3,3,NaN);CHECK(bank_bounded_valley_height(absent,1,1,824.15,810.71)==810.71);
+        GridD bend_surface(3,3,1101);
+        const double bend_a=bank_bounded_valley_height(bend_surface,1-1e-6,1,2000,bend.sample(-1-1e-6,1).height);
+        const double bend_b=bank_bounded_valley_height(bend_surface,1+1e-6,1,2000,bend.sample(-1+1e-6,1).height);
+        CHECK(bend_a>=1101 && bend_b>=1101 && std::fabs(bend_a-bend_b)<.002);
         // 候选距离刚进入/退出一个格的混合支撑时，其权重必须从0连续增减。
         ValleyPoint high{0,0,1200,1,4,2,1,INF,1}, low=high;low.col=10;low.bed=900;
         ValleyProfiles neighbors({{high,high},{low,low}},100);
@@ -254,6 +266,59 @@ int main() {
             auto got=tree.sample(i,j);
             CHECK(std::fabs(got.distance-37*best)<1e-10);
             CHECK(std::fabs(got.height-(1001+std::max(0.,37*best-2)))<1e-8);
+        }
+    }
+    {
+        using namespace skyisle::island::detail;
+        // 格方块 clearance 对照暴力几何，包括湖/虚空及网格外；不是距离格心。
+        Mask work(19,23,1);
+        for(int i=0;i<19;++i)for(int j=0;j<23;++j)if((i*11+j*7)%17==0)work(i,j)=0;
+        ValleyDomain domain(work);
+        for(int i=1;i<18;++i)for(int j=1;j<22;++j)if(work(i,j)) {
+            const double r=i+.13,c=j-.09;
+            double expected=std::min({r+.5,18.5-r,c+.5,22.5-c});
+            for(int a=0;a<19;++a)for(int b=0;b<23;++b)if(!work(a,b))
+                expected=std::min(expected,std::hypot(std::max(std::fabs(r-a)-.5,0.0),std::max(std::fabs(c-b)-.5,0.0)));
+            CHECK(std::fabs(domain.clearance(r,c)-expected)<1e-10);
+        }
+        // 支撑圆两条界面及原生格线两侧：旧标量场双线性后，新旧混合为 C0。
+        Mask stripe(41,41,1);for(int i=0;i<41;++i)stripe(i,0)=0;
+        ValleyDomain coast(stripe);GridD legacy(41,41);
+        for(int i=0;i<41;++i)for(int j=0;j<41;++j)legacy(i,j)=2000+5*i+3*j;
+        auto sample=[&](double c){const double d=10-c;return guarded_valley_height(coast,legacy,20,c,d,1001+100*d);};
+        for(double c:{(10.5+SQRT2)/2,(11.5+SQRT2)/2,6.0})
+            CHECK(std::fabs(sample(c-1e-6)-sample(c+1e-6))<.002);
+        CHECK(coast.weight(20,5,5)==0 && coast.weight(20,8,2)==1);
+        CHECK(valley_bilinear(legacy,20,6)==legacy(20,6));
+        // 无障碍45度直河保持原欧氏剖面，guard不能重新引入倒角距离。
+        ValleyPoint a{10,10,1000,1,4,2,1,INF,1},b=a;b.row=30;b.col=30;
+        ValleyProfiles diagonal({{a,b}},100);ValleyDomain open(Mask(41,41,1));
+        const auto side=diagonal.sample(19,20);
+        CHECK(open.weight(19,20,side.distance/100)==1);
+        CHECK(std::fabs(guarded_valley_height(open,legacy,19,20,side.distance/100,side.height)-(1001+100/SQRT2-2))<1e-10);
+        // 同岛凹岸与湖洞：旧 masked 路径选右源；欧氏近左源隔障碍，不能新切801m。
+        for(int kind=0;kind<2;++kind) {
+            const int H=13,W=13;GridD h(H,W,2000),area(H,W,1);
+            Mask land(H,W,1),lake(H,W,0);Grid<uint8_t> river(H,W,0),stream(H,W,0);
+            for(int i=0;i<11;++i) {if(kind==0){land(i,6)=0;h(i,6)=NaN;}else lake(i,6)=1;}
+            h(2,5)=1001;h(2,11)=1701;river(2,5)=river(2,11)=1;
+            std::vector<int64_t> recv(H*W,-1);Config c;
+            c.num={{"hydro.width_a",4},{"hydro.width_b",0},{"hydro.depth_c",1},{"hydro.depth_f",0},
+                {"hydro.bf_ratio_channel",1},{"hydro.incise_m",0},{"hydro.stream_incise_m",0},{"hydro.notch_m",0},
+                {"hydro.min_grade",0},{"hydro.stream_grade_max",.12},{"hydro.valley_slope_len_m",500},
+                {"hydro.gorge_deg",45},{"hydro.valley_side_open_deg",15},{"hydro.valley_floor_k_m",0},
+                {"hydro.valley_floor_exp",.4},{"hydro.valley_floor_max_m",3000},{"hydro.confine_gorge_ratio",2},
+                {"hydro.confine_open_ratio",8},{"hydro.valley_slope_ref",.02},{"hydro.valley_slope_exp",2},
+                {"hydro.stream_valley_cells",3},{"hydro.valley_max_km",2}};
+            const auto got=island::carve_channels(h,h,land,lake,recv,area,river,stream,1000,1,0,-300,100,31536000,c,true);
+            CHECK(got.h_new(2,7)==2000 && got.h_new(2,5)==1001 && got.h_new(2,11)==1701);
+            // 溪涧汇入常年河时，段的 max(level) 不能扩散成新的 river 源格。
+            river(2,5)=0;stream(2,10)=1;h(2,10)=1801;recv[2*W+10]=2*W+11;
+            const auto join=island::carve_channels(h,h,land,lake,recv,area,river,stream,1000,1,0,-300,100,31536000,c,true);
+            CHECK(join.lvl(2,10)==0 && join.lvl(2,11)==1);
+            CHECK(join.width(2,10)==4 && join.depth(2,10)==1);
+            CHECK(join.bed(2,10)==1712 && join.h_new(2,10)==1713);
+            CHECK(join.width(2,11)==4 && join.depth(2,11)==1 && join.bed(2,11)==1700);
         }
     }
     {
